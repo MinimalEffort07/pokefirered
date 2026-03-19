@@ -140,7 +140,7 @@ static bool8 TrySetTrainerBattleQuestLogEvent(u16, const u16 *);
 static const struct WindowTemplate sWindowTemplates[WIN_COUNT] = {
     [WIN_TOP_BAR] = {
         .bg = 0,
-        .tilemapLeft = 0, 
+        .tilemapLeft = 0,
         .tilemapTop = 0,
         .width = 30,
         .height = 2,
@@ -274,9 +274,9 @@ static void QLogCB_Playback(void)
 
     if (sPlaybackControl.endMode == END_MODE_NONE)
     {
-        if (gQuestLogPlaybackState != QL_PLAYBACK_STATE_STOPPED 
-         || sPlaybackControl.state == 1 
-         || (sPlaybackControl.cursor < ARRAY_COUNT(sEventData) 
+        if (gQuestLogPlaybackState != QL_PLAYBACK_STATE_STOPPED
+         || sPlaybackControl.state == 1
+         || (sPlaybackControl.cursor < ARRAY_COUNT(sEventData)
           && sEventData[sPlaybackControl.cursor] != NULL))
             QuestLog_PlayCurrentEvent();
         else
@@ -449,6 +449,10 @@ void TryStartQuestLogPlayback(u8 taskId)
 {
     u8 i;
 
+    SetMainCallback2(CB2_ContinueSavedGame);
+    DestroyTask(taskId);
+    return;
+
     QL_EnableRecordingSteps();
     sNumScenes = 0;
     for (i = 0; i < QUEST_LOG_SCENE_COUNT; i++)
@@ -546,7 +550,7 @@ static void QL_LoadObjectsAndTemplates(u8 sceneNum)
 {
     struct QuestLogScene *questLog = &gSaveBlock1Ptr->questLog[sceneNum];
     u16 i;
-    
+
     for (i = 0; i < OBJECT_EVENT_TEMPLATES_COUNT; i++)
     {
         if (questLog->objectEventTemplates[i].negx)
@@ -897,7 +901,7 @@ static void Task_AvoidDisplay(u8 taskId)
         if (!gPaletteFade.active)
         {
             gQuestLogPlaybackState = QL_PLAYBACK_STATE_STOPPED;
-            
+
             // Call the provided function (if any). In practice this is always QL_DestroyAbortedDisplay
             routine = (void (*)(void)) GetWordTaskArg(taskId, DATA_IDX_CALLBACK);
             if (routine != NULL)
