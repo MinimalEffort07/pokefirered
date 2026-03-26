@@ -1,0 +1,18 @@
+-I/usr/include/libpng16
+-I./include
+-I./tools/agbcc/include
+-DPNG_SKIP_SETJMP_CHECK
+-D__INTELLISENSE__
+-I tools/agbcc/include
+-I tools/agbcc
+-nostdinc
+-undef
+-std=gnu89
+-Wimplicit
+-Wparentheses
+-Werror
+-O2
+-L ../../tools/agbcc/lib
+-lgcc 
+-lc
+-m32
