@@ -15,7 +15,9 @@
 #include "overworld.h"
 #include "random.h"
 #include "data.h"
+#include "list_menu.h"
 #include "constants/songs.h"
+#include "constants/event_objects.h"
 
 #define INTRO_SPECIES SPECIES_NIDORAN_F
 
@@ -330,6 +332,269 @@ static const struct WindowTemplate sIntro_WindowTemplates[NUM_INTRO_WINDOWS + 1]
 
 static const u8 sTextColor_White[] = { 0, 1, 2, 0 };
 static const u8 sTextColor_DarkGray[] = { 0, 2, 3, 0 };
+
+// Character selection list names
+static const u8 sCharName_Red[] = _("RED");
+static const u8 sCharName_Green[] = _("GREEN");
+static const u8 sCharName_Brendan[] = _("BRENDAN");
+static const u8 sCharName_May[] = _("MAY");
+static const u8 sCharName_LittleBoy[] = _("LITTLE BOY");
+static const u8 sCharName_LittleGirl[] = _("LITTLE GIRL");
+static const u8 sCharName_Youngster[] = _("YOUNGSTER");
+static const u8 sCharName_Boy[] = _("BOY");
+static const u8 sCharName_BugCatcher[] = _("BUG CATCHER");
+static const u8 sCharName_SittingBoy[] = _("SITTING BOY");
+static const u8 sCharName_Lass[] = _("LASS");
+static const u8 sCharName_Woman1[] = _("WOMAN");
+static const u8 sCharName_BattleGirl[] = _("BATTLE GIRL");
+static const u8 sCharName_Man[] = _("MAN");
+static const u8 sCharName_Rocker[] = _("ROCKER");
+static const u8 sCharName_FatMan[] = _("FAT MAN");
+static const u8 sCharName_Woman2[] = _("LADY");
+static const u8 sCharName_Beauty[] = _("BEAUTY");
+static const u8 sCharName_BaldingMan[] = _("BALDING MAN");
+static const u8 sCharName_Woman3[] = _("GAL");
+static const u8 sCharName_OldMan1[] = _("OLD MAN");
+static const u8 sCharName_OldMan2[] = _("OLD MAN 2");
+static const u8 sCharName_OldManLying[] = _("LAZY OLD MAN");
+static const u8 sCharName_OldWoman[] = _("OLD WOMAN");
+static const u8 sCharName_TuberMWater[] = _("TUBER M");
+static const u8 sCharName_TuberF[] = _("TUBER F");
+static const u8 sCharName_TuberMLand[] = _("TUBER");
+static const u8 sCharName_Camper[] = _("CAMPER");
+static const u8 sCharName_Picnicker[] = _("PICNICKER");
+static const u8 sCharName_CooltrainerM[] = _("COOLTRAINER M");
+static const u8 sCharName_CooltrainerF[] = _("COOLTRAINER F");
+static const u8 sCharName_SwimmerMW[] = _("SWIMMER M");
+static const u8 sCharName_SwimmerFW[] = _("SWIMMER F");
+static const u8 sCharName_SwimmerML[] = _("SWIMMER M 2");
+static const u8 sCharName_SwimmerFL[] = _("SWIMMER F 2");
+static const u8 sCharName_WorkerM[] = _("WORKER M");
+static const u8 sCharName_WorkerF[] = _("WORKER F");
+static const u8 sCharName_RocketM[] = _("ROCKET M");
+static const u8 sCharName_RocketF[] = _("ROCKET F");
+static const u8 sCharName_GBAKid[] = _("GBA KID");
+static const u8 sCharName_SuperNerd[] = _("SUPER NERD");
+static const u8 sCharName_Biker[] = _("BIKER");
+static const u8 sCharName_Blackbelt[] = _("BLACKBELT");
+static const u8 sCharName_Scientist[] = _("SCIENTIST");
+static const u8 sCharName_Hiker[] = _("HIKER");
+static const u8 sCharName_Fisher[] = _("FISHER");
+static const u8 sCharName_Channeler[] = _("CHANNELER");
+static const u8 sCharName_Chef[] = _("CHEF");
+static const u8 sCharName_Policeman[] = _("POLICEMAN");
+static const u8 sCharName_Gentleman[] = _("GENTLEMAN");
+static const u8 sCharName_Sailor[] = _("SAILOR");
+static const u8 sCharName_Captain[] = _("CAPTAIN");
+static const u8 sCharName_Nurse[] = _("NURSE");
+static const u8 sCharName_Receptionist[] = _("RECEPTIONIST");
+static const u8 sCharName_UnionClerk[] = _("UNION CLERK");
+static const u8 sCharName_ReceptionistM[] = _("GREETER");
+static const u8 sCharName_Clerk[] = _("CLERK");
+static const u8 sCharName_Deliveryman[] = _("DELIVERYMAN");
+static const u8 sCharName_TowerDude[] = _("TOWER DUDE");
+static const u8 sCharName_ProfOak[] = _("PROF. OAK");
+static const u8 sCharName_Blue[] = _("BLUE");
+static const u8 sCharName_Bill[] = _("BILL");
+static const u8 sCharName_Lance[] = _("LANCE");
+static const u8 sCharName_Agatha[] = _("AGATHA");
+static const u8 sCharName_Daisy[] = _("DAISY");
+static const u8 sCharName_Lorelei[] = _("LORELEI");
+static const u8 sCharName_MrFuji[] = _("MR. FUJI");
+static const u8 sCharName_Bruno[] = _("BRUNO");
+static const u8 sCharName_Brock[] = _("BROCK");
+static const u8 sCharName_Misty[] = _("MISTY");
+static const u8 sCharName_LtSurge[] = _("LT. SURGE");
+static const u8 sCharName_Erika[] = _("ERIKA");
+static const u8 sCharName_Koga[] = _("KOGA");
+static const u8 sCharName_Sabrina[] = _("SABRINA");
+static const u8 sCharName_Blaine[] = _("BLAINE");
+static const u8 sCharName_Giovanni[] = _("GIOVANNI");
+static const u8 sCharName_Mom[] = _("MOM");
+static const u8 sCharName_Celio[] = _("CELIO");
+static const u8 sCharName_TVHost[] = _("TV HOST");
+static const u8 sCharName_GymGuy[] = _("GYM GUY");
+static const u8 sCharName_Seagallop[] = _("SEAGALLOP");
+static const u8 sCharName_Snorlax[] = _("SNORLAX");
+static const u8 sCharName_Spearow[] = _("SPEAROW");
+static const u8 sCharName_Cubone[] = _("CUBONE");
+static const u8 sCharName_Poliwrath[] = _("POLIWRATH");
+static const u8 sCharName_Clefairy[] = _("CLEFAIRY");
+static const u8 sCharName_Pidgeot[] = _("PIDGEOT");
+static const u8 sCharName_Jigglypuff[] = _("JIGGLYPUFF");
+static const u8 sCharName_Pidgey[] = _("PIDGEY");
+static const u8 sCharName_Chansey[] = _("CHANSEY");
+static const u8 sCharName_Omanyte[] = _("OMANYTE");
+static const u8 sCharName_Kangaskhan[] = _("KANGASKHAN");
+static const u8 sCharName_Pikachu[] = _("PIKACHU");
+static const u8 sCharName_Psyduck[] = _("PSYDUCK");
+static const u8 sCharName_NidoranF[] = _("NIDORAN F");
+static const u8 sCharName_NidoranM[] = _("NIDORAN M");
+static const u8 sCharName_Nidorino[] = _("NIDORINO");
+static const u8 sCharName_Meowth[] = _("MEOWTH");
+static const u8 sCharName_Seel[] = _("SEEL");
+static const u8 sCharName_Voltorb[] = _("VOLTORB");
+static const u8 sCharName_Slowpoke[] = _("SLOWPOKE");
+static const u8 sCharName_Slowbro[] = _("SLOWBRO");
+static const u8 sCharName_Machop[] = _("MACHOP");
+static const u8 sCharName_Wigglytuff[] = _("WIGGLYTUFF");
+static const u8 sCharName_Doduo[] = _("DODUO");
+static const u8 sCharName_Fearow[] = _("FEAROW");
+static const u8 sCharName_Machoke[] = _("MACHOKE");
+static const u8 sCharName_Lapras[] = _("LAPRAS");
+static const u8 sCharName_Zapdos[] = _("ZAPDOS");
+static const u8 sCharName_Moltres[] = _("MOLTRES");
+static const u8 sCharName_Articuno[] = _("ARTICUNO");
+static const u8 sCharName_Mewtwo[] = _("MEWTWO");
+static const u8 sCharName_Mew[] = _("MEW");
+static const u8 sCharName_Entei[] = _("ENTEI");
+static const u8 sCharName_Suicune[] = _("SUICUNE");
+static const u8 sCharName_Raikou[] = _("RAIKOU");
+static const u8 sCharName_Lugia[] = _("LUGIA");
+static const u8 sCharName_HoOh[] = _("HO-OH");
+static const u8 sCharName_Celebi[] = _("CELEBI");
+static const u8 sCharName_Kabuto[] = _("KABUTO");
+static const u8 sCharName_DeoxysD[] = _("DEOXYS D");
+static const u8 sCharName_DeoxysA[] = _("DEOXYS A");
+static const u8 sCharName_DeoxysN[] = _("DEOXYS N");
+static const u8 sCharName_SSAnne[] = _("SS ANNE");
+
+static const struct ListMenuItem sCharacterListItems[] = {
+    {sCharName_Red,           OBJ_EVENT_GFX_RED_NORMAL},
+    {sCharName_Green,         OBJ_EVENT_GFX_GREEN_NORMAL},
+    {sCharName_Brendan,       OBJ_EVENT_GFX_RS_BRENDAN},
+    {sCharName_May,           OBJ_EVENT_GFX_RS_MAY},
+    {sCharName_LittleBoy,     OBJ_EVENT_GFX_LITTLE_BOY},
+    {sCharName_LittleGirl,    OBJ_EVENT_GFX_LITTLE_GIRL},
+    {sCharName_Youngster,     OBJ_EVENT_GFX_YOUNGSTER},
+    {sCharName_Boy,           OBJ_EVENT_GFX_BOY},
+    {sCharName_BugCatcher,    OBJ_EVENT_GFX_BUG_CATCHER},
+    {sCharName_SittingBoy,    OBJ_EVENT_GFX_SITTING_BOY},
+    {sCharName_Lass,          OBJ_EVENT_GFX_LASS},
+    {sCharName_Woman1,        OBJ_EVENT_GFX_WOMAN_1},
+    {sCharName_BattleGirl,    OBJ_EVENT_GFX_BATTLE_GIRL},
+    {sCharName_Man,           OBJ_EVENT_GFX_MAN},
+    {sCharName_Rocker,        OBJ_EVENT_GFX_ROCKER},
+    {sCharName_FatMan,        OBJ_EVENT_GFX_FAT_MAN},
+    {sCharName_Woman2,        OBJ_EVENT_GFX_WOMAN_2},
+    {sCharName_Beauty,        OBJ_EVENT_GFX_BEAUTY},
+    {sCharName_BaldingMan,    OBJ_EVENT_GFX_BALDING_MAN},
+    {sCharName_Woman3,        OBJ_EVENT_GFX_WOMAN_3},
+    {sCharName_OldMan1,       OBJ_EVENT_GFX_OLD_MAN_1},
+    {sCharName_OldMan2,       OBJ_EVENT_GFX_OLD_MAN_2},
+    {sCharName_OldManLying,   OBJ_EVENT_GFX_OLD_MAN_LYING_DOWN},
+    {sCharName_OldWoman,      OBJ_EVENT_GFX_OLD_WOMAN},
+    {sCharName_TuberMWater,   OBJ_EVENT_GFX_TUBER_M_WATER},
+    {sCharName_TuberF,        OBJ_EVENT_GFX_TUBER_F},
+    {sCharName_TuberMLand,    OBJ_EVENT_GFX_TUBER_M_LAND},
+    {sCharName_Camper,        OBJ_EVENT_GFX_CAMPER},
+    {sCharName_Picnicker,     OBJ_EVENT_GFX_PICNICKER},
+    {sCharName_CooltrainerM,  OBJ_EVENT_GFX_COOLTRAINER_M},
+    {sCharName_CooltrainerF,  OBJ_EVENT_GFX_COOLTRAINER_F},
+    {sCharName_SwimmerMW,     OBJ_EVENT_GFX_SWIMMER_M_WATER},
+    {sCharName_SwimmerFW,     OBJ_EVENT_GFX_SWIMMER_F_WATER},
+    {sCharName_SwimmerML,     OBJ_EVENT_GFX_SWIMMER_M_LAND},
+    {sCharName_SwimmerFL,     OBJ_EVENT_GFX_SWIMMER_F_LAND},
+    {sCharName_WorkerM,       OBJ_EVENT_GFX_WORKER_M},
+    {sCharName_WorkerF,       OBJ_EVENT_GFX_WORKER_F},
+    {sCharName_RocketM,       OBJ_EVENT_GFX_ROCKET_M},
+    {sCharName_RocketF,       OBJ_EVENT_GFX_ROCKET_F},
+    {sCharName_GBAKid,        OBJ_EVENT_GFX_GBA_KID},
+    {sCharName_SuperNerd,     OBJ_EVENT_GFX_SUPER_NERD},
+    {sCharName_Biker,         OBJ_EVENT_GFX_BIKER},
+    {sCharName_Blackbelt,     OBJ_EVENT_GFX_BLACKBELT},
+    {sCharName_Scientist,     OBJ_EVENT_GFX_SCIENTIST},
+    {sCharName_Hiker,         OBJ_EVENT_GFX_HIKER},
+    {sCharName_Fisher,        OBJ_EVENT_GFX_FISHER},
+    {sCharName_Channeler,     OBJ_EVENT_GFX_CHANNELER},
+    {sCharName_Chef,          OBJ_EVENT_GFX_CHEF},
+    {sCharName_Policeman,     OBJ_EVENT_GFX_POLICEMAN},
+    {sCharName_Gentleman,     OBJ_EVENT_GFX_GENTLEMAN},
+    {sCharName_Sailor,        OBJ_EVENT_GFX_SAILOR},
+    {sCharName_Captain,       OBJ_EVENT_GFX_CAPTAIN},
+    {sCharName_Nurse,         OBJ_EVENT_GFX_NURSE},
+    {sCharName_Receptionist,  OBJ_EVENT_GFX_CABLE_CLUB_RECEPTIONIST},
+    {sCharName_UnionClerk,    OBJ_EVENT_GFX_UNION_ROOM_RECEPTIONIST},
+    {sCharName_ReceptionistM, OBJ_EVENT_GFX_UNUSED_MALE_RECEPTIONIST},
+    {sCharName_Clerk,         OBJ_EVENT_GFX_CLERK},
+    {sCharName_Deliveryman,   OBJ_EVENT_GFX_MG_DELIVERYMAN},
+    {sCharName_TowerDude,     OBJ_EVENT_GFX_TRAINER_TOWER_DUDE},
+    {sCharName_ProfOak,       OBJ_EVENT_GFX_PROF_OAK},
+    {sCharName_Blue,          OBJ_EVENT_GFX_BLUE},
+    {sCharName_Bill,          OBJ_EVENT_GFX_BILL},
+    {sCharName_Lance,         OBJ_EVENT_GFX_LANCE},
+    {sCharName_Agatha,        OBJ_EVENT_GFX_AGATHA},
+    {sCharName_Daisy,         OBJ_EVENT_GFX_DAISY},
+    {sCharName_Lorelei,       OBJ_EVENT_GFX_LORELEI},
+    {sCharName_MrFuji,        OBJ_EVENT_GFX_MR_FUJI},
+    {sCharName_Bruno,         OBJ_EVENT_GFX_BRUNO},
+    {sCharName_Brock,         OBJ_EVENT_GFX_BROCK},
+    {sCharName_Misty,         OBJ_EVENT_GFX_MISTY},
+    {sCharName_LtSurge,       OBJ_EVENT_GFX_LT_SURGE},
+    {sCharName_Erika,         OBJ_EVENT_GFX_ERIKA},
+    {sCharName_Koga,          OBJ_EVENT_GFX_KOGA},
+    {sCharName_Sabrina,       OBJ_EVENT_GFX_SABRINA},
+    {sCharName_Blaine,        OBJ_EVENT_GFX_BLAINE},
+    {sCharName_Giovanni,      OBJ_EVENT_GFX_GIOVANNI},
+    {sCharName_Mom,           OBJ_EVENT_GFX_MOM},
+    {sCharName_Celio,         OBJ_EVENT_GFX_CELIO},
+    {sCharName_TVHost,        OBJ_EVENT_GFX_TEACHY_TV_HOST},
+    {sCharName_GymGuy,        OBJ_EVENT_GFX_GYM_GUY},
+    {sCharName_Seagallop,     OBJ_EVENT_GFX_SEAGALLOP},
+    {sCharName_Snorlax,       OBJ_EVENT_GFX_SNORLAX},
+    {sCharName_Spearow,       OBJ_EVENT_GFX_SPEAROW},
+    {sCharName_Cubone,        OBJ_EVENT_GFX_CUBONE},
+    {sCharName_Poliwrath,     OBJ_EVENT_GFX_POLIWRATH},
+    {sCharName_Clefairy,      OBJ_EVENT_GFX_CLEFAIRY},
+    {sCharName_Pidgeot,       OBJ_EVENT_GFX_PIDGEOT},
+    {sCharName_Jigglypuff,    OBJ_EVENT_GFX_JIGGLYPUFF},
+    {sCharName_Pidgey,        OBJ_EVENT_GFX_PIDGEY},
+    {sCharName_Chansey,       OBJ_EVENT_GFX_CHANSEY},
+    {sCharName_Omanyte,       OBJ_EVENT_GFX_OMANYTE},
+    {sCharName_Kangaskhan,    OBJ_EVENT_GFX_KANGASKHAN},
+    {sCharName_Pikachu,       OBJ_EVENT_GFX_PIKACHU},
+    {sCharName_Psyduck,       OBJ_EVENT_GFX_PSYDUCK},
+    {sCharName_NidoranF,      OBJ_EVENT_GFX_NIDORAN_F},
+    {sCharName_NidoranM,      OBJ_EVENT_GFX_NIDORAN_M},
+    {sCharName_Nidorino,      OBJ_EVENT_GFX_NIDORINO},
+    {sCharName_Meowth,        OBJ_EVENT_GFX_MEOWTH},
+    {sCharName_Seel,          OBJ_EVENT_GFX_SEEL},
+    {sCharName_Voltorb,       OBJ_EVENT_GFX_VOLTORB},
+    {sCharName_Slowpoke,      OBJ_EVENT_GFX_SLOWPOKE},
+    {sCharName_Slowbro,       OBJ_EVENT_GFX_SLOWBRO},
+    {sCharName_Machop,        OBJ_EVENT_GFX_MACHOP},
+    {sCharName_Wigglytuff,    OBJ_EVENT_GFX_WIGGLYTUFF},
+    {sCharName_Doduo,         OBJ_EVENT_GFX_DODUO},
+    {sCharName_Fearow,        OBJ_EVENT_GFX_FEAROW},
+    {sCharName_Machoke,       OBJ_EVENT_GFX_MACHOKE},
+    {sCharName_Lapras,        OBJ_EVENT_GFX_LAPRAS},
+    {sCharName_Zapdos,        OBJ_EVENT_GFX_ZAPDOS},
+    {sCharName_Moltres,       OBJ_EVENT_GFX_MOLTRES},
+    {sCharName_Articuno,      OBJ_EVENT_GFX_ARTICUNO},
+    {sCharName_Mewtwo,        OBJ_EVENT_GFX_MEWTWO},
+    {sCharName_Mew,           OBJ_EVENT_GFX_MEW},
+    {sCharName_Entei,         OBJ_EVENT_GFX_ENTEI},
+    {sCharName_Suicune,       OBJ_EVENT_GFX_SUICUNE},
+    {sCharName_Raikou,        OBJ_EVENT_GFX_RAIKOU},
+    {sCharName_Lugia,         OBJ_EVENT_GFX_LUGIA},
+    {sCharName_HoOh,          OBJ_EVENT_GFX_HO_OH},
+    {sCharName_Celebi,        OBJ_EVENT_GFX_CELEBI},
+    {sCharName_Kabuto,        OBJ_EVENT_GFX_KABUTO},
+    {sCharName_DeoxysD,       OBJ_EVENT_GFX_DEOXYS_D},
+    {sCharName_DeoxysA,       OBJ_EVENT_GFX_DEOXYS_A},
+    {sCharName_DeoxysN,       OBJ_EVENT_GFX_DEOXYS_N},
+    {sCharName_SSAnne,        OBJ_EVENT_GFX_SS_ANNE},
+};
+
+static const struct WindowTemplate sCharacterListWindowTemplate = {
+    .bg = 0,
+    .tilemapLeft = 15,
+    .tilemapTop = 1,
+    .width = 14,
+    .height = 16,
+    .paletteNum = 15,
+    .baseBlock = 1
+};
 
 enum
 {
@@ -701,6 +966,7 @@ void StartNewGameScene(void)
 #define tPikachuPlatformSpriteId(i) data[7 + i] // Pikachu and the platform are built of three sprites,
                                  // data[8]     // so these are used to hold their sprite IDs
                                  // data[9]     //
+#define tListTaskId                 data[10]
 #define tMenuWindowId               data[13]
 #define tTextboxWindowId            data[14]
 #define tDelta                      data[15]
@@ -1286,21 +1552,38 @@ static void Task_OakSpeech_AskPlayerGender(u8 taskId)
 
 static void Task_OakSpeech_ShowGenderOptions(u8 taskId)
 {
+    struct ListMenuTemplate listTemplate;
+
     if (!IsTextPrinterActive(WIN_INTRO_TEXTBOX))
     {
-        gTasks[taskId].tMenuWindowId = AddWindow(&sIntro_WindowTemplates[WIN_INTRO_BOYGIRL]);
+        ClearDialogWindowAndFrame(WIN_INTRO_TEXTBOX, TRUE);
+        FillBgTilemapBufferRect_Palette0(0, 0, 0, 0, 30, 20);
+        CopyBgTilemapBufferToVram(0);
+        gTasks[taskId].tMenuWindowId = AddWindow(&sCharacterListWindowTemplate);
         PutWindowTilemap(gTasks[taskId].tMenuWindowId);
         DrawStdFrameWithCustomTileAndPalette(gTasks[taskId].tMenuWindowId, TRUE, GetStdWindowBaseTileNum(), 14);
         FillWindowPixelBuffer(gTasks[taskId].tMenuWindowId, PIXEL_FILL(1));
-        sOakSpeechResources->textColor[0] = 1;
-        sOakSpeechResources->textColor[1] = 2;
-        sOakSpeechResources->textColor[2] = 3;
-        AddTextPrinterParameterized3(gTasks[taskId].tMenuWindowId, FONT_NORMAL, 8, 1, sOakSpeechResources->textColor, 0, gText_Boy);
-        sOakSpeechResources->textColor[0] = 1;
-        sOakSpeechResources->textColor[1] = 2;
-        sOakSpeechResources->textColor[2] = 3;
-        AddTextPrinterParameterized3(gTasks[taskId].tMenuWindowId, FONT_NORMAL, 8, 17, sOakSpeechResources->textColor, 0, gText_Girl);
-        Menu_InitCursor(gTasks[taskId].tMenuWindowId, FONT_NORMAL, 0, 1, GetFontAttribute(FONT_NORMAL, FONTATTR_MAX_LETTER_HEIGHT) + 2, 2, 0);
+
+        listTemplate.items = sCharacterListItems;
+        listTemplate.moveCursorFunc = ListMenuDefaultCursorMoveFunc;
+        listTemplate.itemPrintFunc = NULL;
+        listTemplate.totalItems = ARRAY_COUNT(sCharacterListItems);
+        listTemplate.maxShowed = 8;
+        listTemplate.windowId = gTasks[taskId].tMenuWindowId;
+        listTemplate.header_X = 0;
+        listTemplate.item_X = 8;
+        listTemplate.cursor_X = 0;
+        listTemplate.upText_Y = 1;
+        listTemplate.cursorPal = 2;
+        listTemplate.fillValue = 1;
+        listTemplate.cursorShadowPal = 3;
+        listTemplate.lettersSpacing = 0;
+        listTemplate.itemVerticalPadding = 0;
+        listTemplate.scrollMultiple = LIST_MULTIPLE_SCROLL_DPAD;
+        listTemplate.fontId = FONT_NORMAL;
+        listTemplate.cursorKind = 0;
+
+        gTasks[taskId].tListTaskId = ListMenuInit(&listTemplate, 0, 0);
         CopyWindowToVram(gTasks[taskId].tMenuWindowId, COPYWIN_FULL);
         gTasks[taskId].func = Task_OakSpeech_HandleGenderInput;
     }
@@ -1308,21 +1591,20 @@ static void Task_OakSpeech_ShowGenderOptions(u8 taskId)
 
 static void Task_OakSpeech_HandleGenderInput(u8 taskId)
 {
-    s8 input = Menu_ProcessInputNoWrapAround();
-    switch (input)
-    {
-    case 0: // BOY
-        gSaveBlock2Ptr->playerGender = MALE;
-        break;
-    case 1: // GIRL
-        gSaveBlock2Ptr->playerGender = FEMALE;
-        break;
-    case MENU_B_PRESSED:
-    case MENU_NOTHING_CHOSEN:
+    s32 input = ListMenu_ProcessInput(gTasks[taskId].tListTaskId);
+    if (input == LIST_NOTHING_CHOSEN)
         return;
-    }
-    gTasks[taskId].func = Task_OakSpeech_ClearGenderWindows;
+    if (input == LIST_CANCEL)
+        return;
 
+    // Store the chosen avatar GFX ID
+    gSaveBlock2Ptr->playerAvatarGfxId = (u8)input;
+    // Set gender to MALE since we no longer have a binary gender choice
+    // (bike/surf/etc. will use Red's variants)
+    gSaveBlock2Ptr->playerGender = MALE;
+
+    DestroyListMenuTask(gTasks[taskId].tListTaskId, NULL, NULL);
+    gTasks[taskId].func = Task_OakSpeech_ClearGenderWindows;
 }
 
 static void Task_OakSpeech_ClearGenderWindows(u8 taskId)
@@ -1339,10 +1621,8 @@ static void Task_OakSpeech_ClearGenderWindows(u8 taskId)
 
 static void Task_OakSpeech_LoadPlayerPic(u8 taskId)
 {
-    if (gSaveBlock2Ptr->playerGender == MALE)
-        LoadTrainerPic(MALE_PLAYER_PIC, 0);
-    else
-        LoadTrainerPic(FEMALE_PLAYER_PIC, 0);
+    // Always show Red's portrait since we don't have portraits for all characters
+    LoadTrainerPic(MALE_PLAYER_PIC, 0);
     CreateFadeOutTask(taskId, 2);
     gTasks[taskId].tTimer = 32;
     gTasks[taskId].func = Task_OakSpeech_YourNameWhatIsIt;

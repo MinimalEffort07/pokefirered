@@ -1153,6 +1153,9 @@ u8 GetRivalAvatarGraphicsIdByStateIdAndGender(u8 state, u8 gender)
 
 u8 GetPlayerAvatarGraphicsIdByStateIdAndGender(u8 state, u8 gender)
 {
+    // For normal walking state, use the custom avatar if one was chosen
+    if (state == PLAYER_AVATAR_GFX_NORMAL)
+        return gSaveBlock2Ptr->playerAvatarGfxId;
     return sPlayerAvatarGfxIds[state][gender];
 }
 
@@ -1254,12 +1257,16 @@ u8 GetPlayerAvatarStateTransitionByGraphicsId(u8 graphicsId, u8 gender)
 {
     u8 i;
 
+    // Custom avatar is always on-foot
+    if (graphicsId == gSaveBlock2Ptr->playerAvatarGfxId)
+        return PLAYER_AVATAR_FLAG_ON_FOOT;
+
     for (i = 0; i < NELEMS(*sPlayerAvatarGfxToStateFlag); i++)
     {
         if (sPlayerAvatarGfxToStateFlag[gender][i][0] == graphicsId)
             return sPlayerAvatarGfxToStateFlag[gender][i][1];
     }
-    return 1;
+    return PLAYER_AVATAR_FLAG_ON_FOOT;
 }
 
 u8 GetPlayerAvatarGraphicsIdByCurrentState(void)
@@ -1270,9 +1277,14 @@ u8 GetPlayerAvatarGraphicsIdByCurrentState(void)
     for (i = 0; i < NELEMS(*sPlayerAvatarGfxToStateFlag); i++)
     {
         if (sPlayerAvatarGfxToStateFlag[gPlayerAvatar.gender][i][1] & flags)
+        {
+            // For on-foot state, use the custom avatar
+            if (sPlayerAvatarGfxToStateFlag[gPlayerAvatar.gender][i][1] == PLAYER_AVATAR_FLAG_ON_FOOT)
+                return gSaveBlock2Ptr->playerAvatarGfxId;
             return sPlayerAvatarGfxToStateFlag[gPlayerAvatar.gender][i][0];
+        }
     }
-    return 0;
+    return gSaveBlock2Ptr->playerAvatarGfxId;
 }
 
 void SetPlayerAvatarExtraStateTransition(u8 graphicsId, u8 extras)
