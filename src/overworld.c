@@ -1685,6 +1685,19 @@ void CB2_ContinueSavedGame(void)
     ResetSafariZoneFlag_();
     LoadSaveblockMapHeader();
     LoadSaveblockObjEventScripts();
+    // Ensure saved player avatar is applied to the stored object events
+    {
+        u8 i;
+        u8 savedGfxId = gSaveBlock2Ptr->playerAvatarGfxId;
+        for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
+        {
+            if (gSaveBlock1Ptr->objectEvents[i].active && gSaveBlock1Ptr->objectEvents[i].isPlayer)
+            {
+                gSaveBlock1Ptr->objectEvents[i].graphicsId = savedGfxId;
+                break;
+            }
+        }
+    }
     UnfreezeObjectEvents();
     Overworld_ResetStateOnContinue();
     InitMapFromSavedGame();
