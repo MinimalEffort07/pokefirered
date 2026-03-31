@@ -5335,8 +5335,16 @@ void InitMovementNormal(struct ObjectEvent *objectEvent, struct Sprite *sprite, 
 
 void StartRunningAnim(struct ObjectEvent *objectEvent, struct Sprite *sprite, u8 direction)
 {
+    u8 animNum;
     InitNpcForMovement(objectEvent, sprite, direction, MOVE_SPEED_FAST_1);
-    SetStepAnimHandleAlternation(objectEvent, sprite, GetRunningDirectionAnimNum(objectEvent->facingDirection));
+    // Custom avatars don't have run animations, use fastest walk instead
+    if (objectEvent->isPlayer
+        && gSaveBlock2Ptr->playerAvatarGfxId != OBJ_EVENT_GFX_RED_NORMAL
+        && gSaveBlock2Ptr->playerAvatarGfxId != OBJ_EVENT_GFX_GREEN_NORMAL)
+        animNum = GetMoveDirectionFastestAnimNum(objectEvent->facingDirection);
+    else
+        animNum = GetRunningDirectionAnimNum(objectEvent->facingDirection);
+    SetStepAnimHandleAlternation(objectEvent, sprite, animNum);
 }
 
 bool8 UpdateMovementNormal(struct ObjectEvent *objectEvent, struct Sprite *sprite)
@@ -6531,8 +6539,16 @@ void InitNpcForRunSlow(struct ObjectEvent *objectEvent, struct Sprite *sprite, u
 
 void InitRunSlow(struct ObjectEvent *objectEvent, struct Sprite *sprite, u8 direction)
 {
+    u8 animNum;
     InitNpcForRunSlow(objectEvent, sprite, direction);
-    SetStepAnimHandleAlternation(objectEvent, sprite, GetRunningDirectionAnimNum(objectEvent->facingDirection));
+    // Custom avatars don't have run animations, use fastest walk instead
+    if (objectEvent->isPlayer
+        && gSaveBlock2Ptr->playerAvatarGfxId != OBJ_EVENT_GFX_RED_NORMAL
+        && gSaveBlock2Ptr->playerAvatarGfxId != OBJ_EVENT_GFX_GREEN_NORMAL)
+        animNum = GetMoveDirectionFastestAnimNum(objectEvent->facingDirection);
+    else
+        animNum = GetRunningDirectionAnimNum(objectEvent->facingDirection);
+    SetStepAnimHandleAlternation(objectEvent, sprite, animNum);
 }
 
 bool8 UpdateRunSlow(struct ObjectEvent *objectEvent, struct Sprite *sprite)
