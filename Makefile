@@ -102,6 +102,11 @@ endif
 ifeq ($(DINFO),1)
   override CFLAGS += -g
 endif
+# Enable gameplay debug features (make debug)
+ifeq ($(POKEMON_DEBUG),1)
+  override CPPFLAGS += -DDEBUG_GAMEPLAY
+  override ASFLAGS += --defsym DEBUG_GAMEPLAY=1
+endif
 
 # Variable filled out in other make files
 AUTO_GEN_TARGETS :=
@@ -379,3 +384,13 @@ $(ROM): $(ELF)
 # Symbol file (`make syms`)
 $(SYM): $(ELF)
 	$(OBJDUMP) -t $< | sort -u | grep -E "^0[2389]" | $(PERL) -p -e 's/^(\w{8}) (\w).{6} \S+\t(\w{8}) (\S+)$$/\1 \2 \3 \4/g' > $@
+
+# Debug build with gameplay debug features enabled
+debug:
+	@if [ ! -f .pokemon_debug ]; then touch .pokemon_debug; $(MAKE) clean || true; fi
+	$(MAKE) POKEMON_DEBUG=1
+
+# Normal build - clean if switching from debug
+release:
+	@if [ -f .pokemon_debug ]; then rm -f .pokemon_debug; $(MAKE) clean || true; fi
+	$(MAKE)

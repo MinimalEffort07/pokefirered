@@ -52,6 +52,8 @@
 #include "constants/maps.h"
 #include "constants/region_map_sections.h"
 #include "constants/songs.h"
+#include "constants/layouts.h"
+#include "mt_moon_gen.h"
 #include "constants/sound.h"
 
 #define PLAYER_LINK_STATE_IDLE 0x80
