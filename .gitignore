@@ -65,3 +65,4 @@ prefabs.json
 build-cmake-*/
 .cache/
 CMakeLists.txt
+.pokemon_debug

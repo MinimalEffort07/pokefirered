@@ -387,7 +387,19 @@ PalletTown_Movement_SignLadyMoveOutOfWayLeft::
 	step_end
 
 PalletTown_EventScript_FatMan::
-	msgbox PalletTown_Text_CanStoreItemsAndMonsInPC, MSGBOX_NPC
+    giveitem ITEM_MAX_REPEL, 99
+    givemon SPECIES_OMANYTE, 100
+	lock
+	msgbox PalletTown_Text_WarpToMtMoon, MSGBOX_YESNO
+	compare VAR_RESULT, YES
+	goto_if_eq PalletTown_EventScript_FatManWarp
+	release
+	end
+
+PalletTown_EventScript_FatManWarp::
+	release
+	warp MAP_ROUTE4, 19, 4
+	waitstate
 	end
 
 PalletTown_EventScript_OaksLabSign::

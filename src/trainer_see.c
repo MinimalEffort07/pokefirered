@@ -88,6 +88,9 @@ static const TrainerSeeFunc sTrainerSeeFuncList2[] = {
 bool8 CheckForTrainersWantingBattle(void)
 {
     u8 i;
+#ifdef DEBUG_GAMEPLAY
+    return FALSE;
+#endif
     if (QL_IsTrainerSightDisabled() == TRUE)
         return FALSE;
 

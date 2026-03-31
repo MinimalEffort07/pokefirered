@@ -5,6 +5,8 @@
 #include "new_menu_helpers.h"
 #include "quest_log.h"
 #include "fieldmap.h"
+#include "mt_moon_gen.h"
+#include "constants/layouts.h"
 
 struct ConnectionFlags
 {
@@ -90,6 +92,8 @@ const struct MapHeader * GetMapHeaderFromConnection(const struct MapConnection *
 void InitMap(void)
 {
     InitMapLayoutData(&gMapHeader);
+    if (gMapHeader.mapLayoutId == LAYOUT_MT_MOON_1F || gMapHeader.mapLayoutId == LAYOUT_MT_MOON_B1F)
+        GenerateMtMoonCave();
     RunOnLoadMapScript();
 }
 
