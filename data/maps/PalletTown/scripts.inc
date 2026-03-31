@@ -387,12 +387,15 @@ PalletTown_Movement_SignLadyMoveOutOfWayLeft::
 	step_end
 
 PalletTown_EventScript_FatMan::
-    giveitem ITEM_MAX_REPEL, 99
-    givemon SPECIES_OMANYTE, 100
 	lock
+    setflag FLAG_SYS_POKEDEX_GET
+    givemon SPECIES_SQUIRTLE, 100
 	msgbox PalletTown_Text_WarpToMtMoon, MSGBOX_YESNO
 	compare VAR_RESULT, YES
 	goto_if_eq PalletTown_EventScript_FatManWarp
+	msgbox PalletTown_Text_StartMultiplayer, MSGBOX_YESNO
+	compare VAR_RESULT, YES
+	goto_if_eq PalletTown_EventScript_FatManMultiplayer
 	release
 	end
 
@@ -400,6 +403,12 @@ PalletTown_EventScript_FatManWarp::
 	release
 	warp MAP_ROUTE4, 19, 4
 	waitstate
+	end
+
+PalletTown_EventScript_FatManMultiplayer::
+	special Special_StartMultiplayer
+	msgbox PalletTown_Text_MultiplayerStarted, MSGBOX_DEFAULT
+	release
 	end
 
 PalletTown_EventScript_OaksLabSign::

@@ -23,6 +23,13 @@ PalletTown_Text_CanStoreItemsAndMonsInPC::
 PalletTown_Text_WarpToMtMoon::
     .string "Warp to MT. MOON?$"
 
+PalletTown_Text_StartMultiplayer::
+    .string "Start MULTIPLAYER mode?$"
+
+PalletTown_Text_MultiplayerStarted::
+    .string "MULTIPLAYER mode activated!\n"
+    .string "Waiting for other players...$"
+
 PalletTown_Text_OakPokemonResearchLab::
     .string "OAK POKéMON RESEARCH LAB$"
 

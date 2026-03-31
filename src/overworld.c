@@ -54,6 +54,7 @@
 #include "constants/songs.h"
 #include "constants/layouts.h"
 #include "mt_moon_gen.h"
+#include "multiplayer.h"
 #include "constants/sound.h"
 
 #define PLAYER_LINK_STATE_IDLE 0x80
@@ -786,6 +787,7 @@ static void LoadMapFromWarp(bool32 unused)
 {
     bool8 isOutdoors;
 
+    DespawnRemotePlayerSprites();
     LoadCurrentMapData();
     LoadObjEventTemplatesFromHeader();
     isOutdoors = IsMapTypeOutdoors(gMapHeader.mapType);
@@ -1451,6 +1453,7 @@ void CB1_Overworld(void)
             DoCB1_Overworld_QuestLogPlayback();
         else
             DoCB1_Overworld(gMain.newKeys, gMain.heldKeys);
+        UpdateMultiplayerState();
     }
 }
 
@@ -2148,6 +2151,7 @@ static void InitObjectEventsLocal(void)
     SetPlayerAvatarTransitionFlags(player->transitionFlags);
     ResetInitialPlayerAvatarState();
     TrySpawnObjectEvents(0, 0);
+    SpawnRemotePlayerSprites();
     TryRunOnWarpIntoMapScript();
 }
 
