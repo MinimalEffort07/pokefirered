@@ -2158,6 +2158,7 @@ static void InitObjectEventsLocal(void)
 static void ReloadObjectsAndRunReturnToFieldMapScript(void)
 {
     SpawnObjectEventsOnReturnToField(0, 0);
+    SpawnRemotePlayerSprites();
     RunOnReturnToFieldMapScript();
 }
 
