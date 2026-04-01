@@ -29,6 +29,9 @@ static EWRAM_DATA u8 sFrame = 0;
 static EWRAM_DATA u16 sRecvBuffer[MP_MAX_PLAYERS] = {0};
 static EWRAM_DATA bool8 sTransferDone = FALSE;
 
+// Magic tag stored in sprite->data[7] to identify our remote player sprites
+#define MP_SPRITE_TAG 0x4D50  // "MP"
+
 static void SpriteCB_RemotePlayer(struct Sprite *sprite);
 
 static void MP_SerialCallback(void)
@@ -112,6 +115,7 @@ static void SpawnRemoteSprite(u8 remoteIdx)
         sprite = &gSprites[objEvent->spriteId];
         sprite->coordOffsetEnabled = TRUE;
         sprite->data[0] = remoteIdx;
+        sprite->data[7] = MP_SPRITE_TAG;  // tag so we can identify our sprites
         rp->spriteSpawned = TRUE;
         rp->displayX = objEvent->initialCoords.x;
         rp->displayY = objEvent->initialCoords.y;
@@ -127,9 +131,17 @@ static void DespawnRemoteSprite(u8 remoteIdx)
         return;
 
     objEvent = &gObjectEvents[rp->objEventId];
-    if (objEvent->spriteId != MAX_SPRITES)
-        DestroySprite(&gSprites[objEvent->spriteId]);
-
+    // Only destroy if the ObjectEvent still belongs to us
+    if (objEvent->active && objEvent->spriteId < MAX_SPRITES)
+    {
+        struct Sprite *sprite = &gSprites[objEvent->spriteId];
+        if (sprite->inUse)
+        {
+            sprite->callback = SpriteCallbackDummy;
+            DestroySprite(sprite);
+        }
+        objEvent->spriteId = MAX_SPRITES;
+    }
     objEvent->active = FALSE;
     rp->spriteSpawned = FALSE;
 }
@@ -158,9 +170,9 @@ static void UpdateRemoteSprite(u8 remoteIdx)
     dx = targetPixelX - rp->displayX;
     dy = targetPixelY - rp->displayY;
 
-    if (dx == 0 && dy == 0)
+    if ((dx == 0 && dy == 0) || (rp->flags & MP_FLAG_IN_BATTLE))
     {
-        // Already at target - just update coords
+        // At target or in battle - stay still
         objEvent->currentCoords.x = rp->x + MAP_OFFSET;
         objEvent->currentCoords.y = rp->y + MAP_OFFSET;
         objEvent->initialCoords.x = rp->displayX;
@@ -184,6 +196,7 @@ static void UpdateRemoteSprite(u8 remoteIdx)
     // If not, snap to target to avoid backward walking.
     {
         bool8 directionMatches = FALSE;
+        s16 speed;
 
         switch (rp->direction)
         {
@@ -195,9 +208,19 @@ static void UpdateRemoteSprite(u8 remoteIdx)
 
         if (directionMatches)
         {
-            // Moving forward in facing direction - smooth 1px step
-            rp->displayX += moveX;
-            rp->displayY += moveY;
+            // Move faster when further behind to stay in sync
+            // (compensates for 3-frame transmission delay)
+            speed = (abs(dx) + abs(dy) > 8) ? 2 : 1;
+            rp->displayX += moveX * speed;
+            rp->displayY += moveY * speed;
+
+            // Don't overshoot
+            if ((moveX > 0 && rp->displayX > targetPixelX) ||
+                (moveX < 0 && rp->displayX < targetPixelX))
+                rp->displayX = targetPixelX;
+            if ((moveY > 0 && rp->displayY > targetPixelY) ||
+                (moveY < 0 && rp->displayY < targetPixelY))
+                rp->displayY = targetPixelY;
         }
         else
         {
@@ -230,10 +253,19 @@ static void SpriteCB_RemotePlayer(struct Sprite *sprite)
     targetPixelX += 8;
     isMoving = (rp->displayX != targetPixelX || rp->displayY != targetPixelY);
 
-    if (isMoving)
-        StartSpriteAnimIfDifferent(sprite, GetMoveDirectionAnimNum(rp->direction));
-    else
+    if (rp->flags & MP_FLAG_IN_BATTLE)
+    {
+        // In battle - frozen facing pose
         StartSpriteAnimIfDifferent(sprite, GetFaceDirectionAnimNum(rp->direction));
+    }
+    else if (isMoving)
+    {
+        StartSpriteAnimIfDifferent(sprite, GetMoveDirectionAnimNum(rp->direction));
+    }
+    else
+    {
+        StartSpriteAnimIfDifferent(sprite, GetFaceDirectionAnimNum(rp->direction));
+    }
 
     UpdateObjectEventSpriteInvisibility(sprite, FALSE);
 }
@@ -274,7 +306,34 @@ void UpdateMultiplayerState(void)
     if (!gMultiplayerEnabled)
         return;
 
+    // Re-initialize SIO every frame in case battle/menu reset it
+    SetSerialCallback(MP_SerialCallback);
+    REG_RCNT = 0;
+    REG_SIOCNT = SIO_MULTI_MODE | SIO_115200_BPS | SIO_INTR_ENABLE;
+    EnableInterrupts(INTR_FLAG_SERIAL);
+
     sLocalId = ReadLocalId();
+
+    // Check for sprites destroyed by battle/menu transitions.
+    // Use the magic tag in sprite data[7] to verify the sprite still belongs to us.
+    for (i = 0; i < MP_MAX_REMOTE; i++)
+    {
+        if (sRemotePlayers[i].spriteSpawned)
+        {
+            struct ObjectEvent *obj = &gObjectEvents[sRemotePlayers[i].objEventId];
+            bool8 valid = FALSE;
+
+            if (obj->active && obj->spriteId < MAX_SPRITES)
+            {
+                struct Sprite *spr = &gSprites[obj->spriteId];
+                if (spr->inUse && spr->data[7] == MP_SPRITE_TAG)
+                    valid = TRUE;
+            }
+
+            if (!valid)
+                sRemotePlayers[i].spriteSpawned = FALSE;
+        }
+    }
 
     if (sTransferDone)
     {
@@ -305,14 +364,14 @@ void UpdateMultiplayerState(void)
 
             if (recv & PKT_TYPE_MASK)
             {
-                // Odd frame: bit15=1, bits14-8=y(7), bit7=active, bits6-0=gfxId(7)
-                rp->y = (recv >> 8) & 0x7F;
-                rp->flags = (recv >> 7) & 0x1;
-                rp->graphicsId = recv & 0x7F;
+                // Type 2 (bit15=1): gfxId(7)+dir(4)+inBattle(1)+active(1)
+                rp->graphicsId = (recv >> 8) & 0x7F;
+                rp->direction = (recv >> 4) & 0xF;
+                rp->flags = recv & 0x3;  // bits 0-1: active + inBattle
 
+                // Full cycle received - update sprite visibility
                 if (rp->flags & MP_FLAG_ACTIVE)
                 {
-                    rp->mapGroup = gSaveBlock1Ptr->location.mapGroup;
                     if (IsRemotePlayerOnSameMap(remoteIdx))
                     {
                         if (!rp->spriteSpawned)
@@ -321,13 +380,20 @@ void UpdateMultiplayerState(void)
                     else
                         DespawnRemoteSprite(remoteIdx);
                 }
+                else
+                    DespawnRemoteSprite(remoteIdx);
+            }
+            else if (recv & (1 << 14))
+            {
+                // Type 1 (bits15-14=01): position - y(7)+x(7)
+                rp->y = (recv >> 7) & 0x7F;
+                rp->x = recv & 0x7F;
             }
             else
             {
-                // Even frame: bit15=0, bits14-10=mapNum(5), bits9-7=dir(3), bits6-0=x(7)
-                rp->mapNum = (recv >> 10) & 0x1F;
-                rp->direction = (recv >> 7) & 0x7;
-                rp->x = recv & 0x7F;
+                // Type 0 (bits15-14=00): map - mapNum(7)+mapGroup(6)
+                rp->mapNum = (recv >> 7) & 0x7F;
+                rp->mapGroup = recv & 0x3F;
             }
         }
     }
@@ -338,21 +404,47 @@ void UpdateMultiplayerState(void)
             UpdateRemoteSprite(i);
 
     // Send our data
-    // Even frame (bit15=0): bits14-10=mapNum(5), bits9-7=direction(3), bits6-0=x(7)
-    // Odd frame  (bit15=1): bits14-8=y(7), bit7=active, bits6-0=gfxId(7)
-    if (sFrame & 1)
+    // Even frame (bit15=0): bits14-9=mapGroup(6), bits8-6=x(3 high), bits5-0=mapNum_low(6)
+    // Odd frame  (bit15=1): bits14-11=x_low4+y_high1, bits10-4=y(7), bits3-1=dir(3), bit0=active
+    //
+    // Simpler packing:
+    //   Even: bit15=0, bits14-8=mapNum(7), bits7-6=mapGroup(2 low), bits5-0=x(6)
+    //   Odd:  bit15=1, bits14-8=y(7), bits7-4=gfxId_low(4), bits3-1=dir(3), bit0=active
+    //
+    // This gives: mapNum 0-127, mapGroup low 2 bits, x 0-63, y 0-127, gfxId 0-15, dir 0-7
+    // For full mapGroup+mapNum we use a 3-frame cycle instead.
+    //
+    // Actually let's just use 3 frame types:
+    //   Frame%3==0: bit15=0,bit14=0: mapGroup(6)+mapNum(7) = 13 bits
+    //   Frame%3==1: bit15=0,bit14=1: x(7)+y(7) = 14 bits
+    //   Frame%3==2: bit15=1:         gfxId(7)+dir(3)+active(1) = 11 bits
+
+    switch (sFrame % 3)
     {
-        sendVal = PKT_TYPE_DIR
-                | ((gSaveBlock1Ptr->pos.y & 0x7F) << 8)
-                | (1 << 7)  // active flag
-                | (gSaveBlock2Ptr->playerAvatarGfxId & 0x7F);
-    }
-    else
-    {
-        sendVal = PKT_TYPE_POS
-                | ((gSaveBlock1Ptr->location.mapNum & 0x1F) << 10)
-                | ((GetPlayerFacingDirection() & 0x7) << 7)
+    case 0:
+        // Map info: bits15-14=00, bits13-7=mapNum(7), bits6-0=mapGroup(7... only need 6)
+        sendVal = ((gSaveBlock1Ptr->location.mapNum & 0x7F) << 7)
+                | (gSaveBlock1Ptr->location.mapGroup & 0x3F);
+        break;
+    case 1:
+        // Position: bits15-14=01, bits13-7=y(7), bits6-0=x(7)
+        sendVal = (1 << 14)
+                | ((gSaveBlock1Ptr->pos.y & 0x7F) << 7)
                 | (gSaveBlock1Ptr->pos.x & 0x7F);
+        break;
+    case 2:
+    default:
+        // Appearance: bit15=1, bits14-8=gfxId(7), bits7-4=dir(4), bit1=inBattle, bit0=active
+        {
+            u8 flags = MP_FLAG_ACTIVE;
+            if (gMain.inBattle)
+                flags |= MP_FLAG_IN_BATTLE;
+            sendVal = PKT_TYPE_DIR
+                    | ((gSaveBlock2Ptr->playerAvatarGfxId & 0x7F) << 8)
+                    | ((GetPlayerFacingDirection() & 0xF) << 4)
+                    | flags;
+        }
+        break;
     }
 
     REG_SIOMLT_SEND = sendVal;

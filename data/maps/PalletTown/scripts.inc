@@ -168,14 +168,20 @@ PalletTown_Movement_PlayerWalkToLabFromHouse::
 
 PalletTown_EventScript_OakTriggerLeft::
 	lockall
+	goto_if_set FLAG_SYS_POKEMON_GET, PalletTown_EventScript_OakTriggerSkip
 	setvar VAR_TEMP_1, 0
 	goto PalletTown_EventScript_OakTrigger
 	end
 
 PalletTown_EventScript_OakTriggerRight::
 	lockall
+	goto_if_set FLAG_SYS_POKEMON_GET, PalletTown_EventScript_OakTriggerSkip
 	setvar VAR_TEMP_1, 1
 	goto PalletTown_EventScript_OakTrigger
+	end
+
+PalletTown_EventScript_OakTriggerSkip::
+	releaseall
 	end
 
 PalletTown_EventScript_OakTrigger::

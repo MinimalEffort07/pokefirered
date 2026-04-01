@@ -16,7 +16,15 @@
 #include "pokedex.h"
 #include "text_window.h"
 #include "text_window_graphics.h"
+#include "random.h"
+#include "new_game.h"
+#include "load_save.h"
+#include "script_pokemon_util.h"
 #include "constants/songs.h"
+#include "constants/event_objects.h"
+#include "constants/flags.h"
+#include "constants/vars.h"
+#include "constants/species.h"
 
 enum MainMenuType
 {
@@ -471,7 +479,47 @@ static void Task_ExecuteMainMenuSelection(u8 taskId)
             gExitStairsMovementDisabled = FALSE;
             FreeAllWindowBuffers();
             DestroyTask(taskId);
+#ifdef DEBUG_GAMEPLAY
+            {
+                static const u8 sDebugNames[][PLAYER_NAME_LENGTH + 1] = {
+                    _("RED"), _("ASH"), _("FIRE"), _("MAX"),
+                };
+                static const u8 sDebugRivalNames[][PLAYER_NAME_LENGTH + 1] = {
+                    _("BLUE"), _("GARY"), _("GREEN"), _("KAMON"),
+                };
+                // Walkable avatar sprites only (no items/objects/bikes/surf etc)
+                static const u8 sDebugAvatars[] = {
+                    OBJ_EVENT_GFX_RED_NORMAL, OBJ_EVENT_GFX_GREEN_NORMAL,
+                    OBJ_EVENT_GFX_YOUNGSTER, OBJ_EVENT_GFX_LASS,
+                    OBJ_EVENT_GFX_BUG_CATCHER, OBJ_EVENT_GFX_HIKER,
+                    OBJ_EVENT_GFX_PROF_OAK, OBJ_EVENT_GFX_BLUE,
+                    OBJ_EVENT_GFX_ROCKET_M, OBJ_EVENT_GFX_ROCKET_F,
+                    OBJ_EVENT_GFX_BROCK, OBJ_EVENT_GFX_MISTY,
+                    OBJ_EVENT_GFX_PIKACHU, OBJ_EVENT_GFX_NURSE,
+                };
+                u8 nameIdx;
+                SetSaveBlocksPointers();
+                ResetMenuAndMonGlobals();
+                Save_ResetSaveCounters();
+                // Player identity
+                gSaveBlock2Ptr->playerGender = MALE;
+                gSaveBlock2Ptr->playerAvatarGfxId = sDebugAvatars[Random() % ARRAY_COUNT(sDebugAvatars)];
+                nameIdx = Random() % ARRAY_COUNT(sDebugNames);
+                StringCopy(gSaveBlock2Ptr->playerName, sDebugNames[nameIdx]);
+                nameIdx = Random() % ARRAY_COUNT(sDebugRivalNames);
+                StringCopy(gSaveBlock1Ptr->rivalName, sDebugRivalNames[nameIdx]);
+                // Set flags so Oak doesn't stop us and we can leave Pallet Town
+                FlagSet(FLAG_SYS_POKEMON_GET);
+                FlagSet(FLAG_SYS_POKEDEX_GET);
+                // Set scene past all Pallet Town intro triggers
+                VarSet(VAR_MAP_SCENE_PALLET_TOWN_OAK, 10);
+                // Give a level 100 Squirtle
+                ScriptGiveMon(SPECIES_SQUIRTLE, 100, 0, 0, 0, 0);
+                SetMainCallback2(CB2_NewGame);
+            }
+#else
             StartNewGameScene();
+#endif
             break;
         case MAIN_MENU_CONTINUE:
             gPlttBufferUnfaded[0] = RGB_BLACK;
