@@ -1,3 +1,14 @@
+/**
+ * @file trainer_fan_club.c
+ * @brief Trainer Fan Club — NPC Dialogue Based on Player's Battle History
+ *
+ * FILE OVERVIEW:
+ * This file implements the Trainer Fan Club feature, where NPCs in the Fan Club
+ * building comment on the player's recent battles, favorite Pokemon, and battle
+ * style. The dialogue is dynamically generated based on battle statistics and
+ * event flags, giving the impression that NPCs are aware of the player's
+ * in-game accomplishments.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

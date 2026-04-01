@@ -1,3 +1,52 @@
+/*
+ * =Pokemon FireRed Field Map / Metatile System=
+ *
+ * This file manages the game's 2D tile-based map system. It handles:
+ *   - Loading map layout data (metatile grids) into a virtual map buffer
+ *   - Connecting adjacent maps seamlessly (the "connection" system)
+ *   - Reading metatile properties (collision, behavior, elevation, terrain)
+ *   - Saving/restoring map state across map transitions
+ *   - Loading tileset graphics and palettes into VRAM
+ *   - Camera movement and map boundary detection
+ *
+ * GBA CONTEXT - THE METATILE SYSTEM:
+ * The GBA renders backgrounds using 8x8 pixel tiles stored in VRAM. However,
+ * building a map from individual 8x8 tiles would be extremely tedious and
+ * memory-intensive. Instead, Pokemon uses a two-level tile system:
+ *
+ * 1. TILES (8x8 pixels): The atomic graphical unit, stored in VRAM tilesets.
+ * 2. METATILES (16x16 pixels): Groups of four 8x8 tiles arranged in a 2x2 grid.
+ *    Each metatile also has associated attributes (collision, behavior, etc.)
+ *    stored in metatile_attributes.bin files.
+ *
+ * The map layout is a 2D grid of metatile IDs. Each entry in the grid is a u16
+ * that encodes three things:
+ *   - Bits 0-9:  Metatile ID (which 16x16 tile to draw, max 1024 metatiles)
+ *   - Bit 10:    Collision flag (1 = impassable, 0 = walkable)
+ *   - Bits 12-15: Elevation/height (for bridges, ledges, etc.)
+ *
+ * VIRTUAL MAP (VMap):
+ * The game doesn't just load the current map -- it creates a larger "virtual
+ * map" buffer (gBackupMapData) that includes the current map PLUS a border
+ * region (MAP_OFFSET tiles on each side). This border region is filled with
+ * data from connected neighboring maps, enabling seamless scrolling between
+ * maps without loading screens. The VMap is the authoritative data source
+ * for all map queries (collision checks, metatile lookups, etc.)
+ *
+ * CONNECTIONS:
+ * Maps can be connected in four cardinal directions. When the camera reaches
+ * the edge of the current map, the engine detects which connected map should
+ * appear and loads its data into the VMap border region. This creates the
+ * illusion of one continuous world even though the game data is split into
+ * many individual map files.
+ *
+ * TILESETS:
+ * Each map uses exactly two tilesets: a primary and a secondary. The primary
+ * tileset contains common tiles (grass, water, trees) shared across many maps.
+ * The secondary tileset contains map-specific tiles (unique buildings, etc.)
+ * Metatile IDs 0-511 reference the primary tileset; IDs 512+ reference the
+ * secondary tileset.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "overworld.h"
@@ -8,6 +57,8 @@
 #include "mt_moon_gen.h"
 #include "constants/layouts.h"
 
+/* Bitfield tracking which cardinal directions have connected maps.
+ * Used to determine whether to allow camera movement past map edges. */
 struct ConnectionFlags
 {
     u8 south:1;
@@ -16,11 +67,28 @@ struct ConnectionFlags
     u8 east:1;
 };
 
+/* VMap (Virtual Map) - the combined map buffer that holds the current map plus
+ * border data from connected maps. All map queries go through this structure. */
 COMMON_DATA struct BackupMapLayout VMap = {0};
+
+/* The actual metatile data buffer for the virtual map. VIRTUAL_MAP_SIZE is large
+ * enough to hold the biggest possible map plus its border regions. Stored in
+ * EWRAM (External Work RAM, 256KB) because it's too large for IWRAM (32KB). */
 EWRAM_DATA u16 gBackupMapData[VIRTUAL_MAP_SIZE] = {};
+
+/* The current map's header, containing pointers to layout data, events,
+ * scripts, connections, and tileset references. Loaded when entering a map. */
 EWRAM_DATA struct MapHeader gMapHeader = {};
+
+/* Camera state tracking. When the camera moves to a connected map, the
+ * x/y fields record the position delta for smooth scrolling transitions. */
 EWRAM_DATA struct Camera gCamera = {};
+
+/* Tracks which directions have valid map connections from the current map. */
 static EWRAM_DATA struct ConnectionFlags gMapConnectionFlags = {};
+
+/* Global palette tint mode, used by the Quest Log system to apply visual
+ * effects (grayscale, sepia) to field map palettes during playback. */
 EWRAM_DATA u8 gGlobalFieldTintMode = QL_TINT_NONE;
 
 static const struct ConnectionFlags sDummyConnectionFlags = {};
@@ -60,8 +128,17 @@ static u32 GetAttributeByMetatileIdAndMapLayout(const struct MapLayout *, u16, u
 
 #define GetMapGridBlockAt(x, y) (AreCoordsWithinMapGridBounds(x, y) ? VMap.map[x + VMap.Xsize * y] : GetBorderBlockAt(x, y))
 
-// Masks/shifts for metatile attributes
-// This is the format of the data stored in each data/tilesets/*/*/metatile_attributes.bin file
+/* Masks and shifts for extracting individual fields from metatile attribute words.
+ * Each metatile has a 32-bit attribute word packed with multiple fields:
+ *   Bits 0-8:   BEHAVIOR (e.g., "tall grass", "water", "warp tile", "ledge")
+ *   Bits 9-13:  TERRAIN type (for encounter determination)
+ *   Bits 14-17: Attribute 2 (context-dependent)
+ *   Bits 18-23: Attribute 3 (context-dependent)
+ *   Bits 24-26: ENCOUNTER_TYPE (grass, water, etc.)
+ *   Bits 27-28: Attribute 5 (context-dependent)
+ *   Bits 29-30: LAYER_TYPE (controls which BG layer the metatile renders on)
+ *   Bit 31:     Attribute 7 (context-dependent)
+ * This format is stored in each tileset's metatile_attributes.bin file. */
 static const u32 sMetatileAttrMasks[METATILE_ATTRIBUTE_COUNT] = {
     [METATILE_ATTRIBUTE_BEHAVIOR]       = 0x000001ff, // Bits 0-8
     [METATILE_ATTRIBUTE_TERRAIN]        = 0x00003e00, // Bits 9-13
@@ -84,11 +161,29 @@ static const u8 sMetatileAttrShifts[METATILE_ATTRIBUTE_COUNT] = {
     [METATILE_ATTRIBUTE_7]              = 31
 };
 
+/**
+ * FUNCTION: GetMapHeaderFromConnection
+ *
+ * PURPOSE: Given a map connection entry, look up and return the full MapHeader
+ *          for the connected map. Map connections store only the group/number
+ *          ID pair; this function resolves that to the actual header data.
+ */
 const struct MapHeader * GetMapHeaderFromConnection(const struct MapConnection * connection)
 {
     return Overworld_GetMapHeaderByGroupAndId(connection->mapGroup, connection->mapNum);
 }
 
+/**
+ * FUNCTION: InitMap
+ *
+ * PURPOSE: Initialize the map data for a fresh map entry (not loaded from save).
+ *          This is called when entering a map for the first time via warping.
+ *
+ * HOW IT WORKS:
+ * 1. Loads the map layout data and connected map data into the VMap buffer.
+ * 2. If this is Mt. Moon, runs the procedural cave generator (a custom feature).
+ * 3. Runs the map's on-load script (e.g., setting up NPCs, triggers).
+ */
 void InitMap(void)
 {
     InitMapLayoutData(&gMapHeader);
@@ -97,6 +192,13 @@ void InitMap(void)
     RunOnLoadMapScript();
 }
 
+/**
+ * FUNCTION: InitMapFromSavedGame
+ *
+ * PURPOSE: Initialize map data when loading a saved game. Unlike InitMap,
+ *          this also restores any dynamic metatile changes the player made
+ *          before saving (e.g., moved boulders, opened doors).
+ */
 void InitMapFromSavedGame(void)
 {
     InitMapLayoutData(&gMapHeader);
@@ -104,6 +206,24 @@ void InitMapFromSavedGame(void)
     RunOnLoadMapScript();
 }
 
+/**
+ * FUNCTION: InitMapLayoutData
+ *
+ * PURPOSE: Set up the Virtual Map (VMap) buffer with the current map's metatile
+ *          data plus border data from all connected neighboring maps.
+ *
+ * HOW IT WORKS:
+ * 1. Fills the entire VMap buffer with MAPGRID_UNDEFINED (a sentinel value
+ *    meaning "no valid tile here"). Uses CpuFastFill16 for speed.
+ * 2. Sets VMap dimensions to the map's width/height PLUS border padding
+ *    (MAP_OFFSET_W and MAP_OFFSET_H, typically 15 and 14 tiles).
+ * 3. Asserts the VMap fits within VIRTUAL_MAP_SIZE to prevent buffer overflow.
+ * 4. Copies the actual map data into the center of the VMap buffer.
+ * 5. Fills border regions with data from connected maps.
+ *
+ * The result is a single large metatile grid where the current map is centered
+ * and surrounded by neighboring map data for seamless scrolling.
+ */
 static void InitMapLayoutData(struct MapHeader * mapHeader)
 {
     const struct MapLayout * mapLayout = mapHeader->mapLayout;
@@ -116,6 +236,18 @@ static void InitMapLayoutData(struct MapHeader * mapHeader)
     InitBackupMapLayoutConnections(mapHeader);
 }
 
+/**
+ * FUNCTION: InitBackupMapLayoutData
+ *
+ * PURPOSE: Copy the raw map layout data into the center of the VMap buffer,
+ *          offset by the border padding so connected maps can fill the edges.
+ *
+ * HOW IT WORKS:
+ * The destination starts at VMap.map + (Xsize * 7 + MAP_OFFSET), which skips
+ * past the top border rows (7 tiles) and the left border columns (MAP_OFFSET).
+ * It then copies one row at a time, advancing the destination pointer by
+ * the full VMap width (which includes border padding on both sides).
+ */
 static void InitBackupMapLayoutData(const u16 *map, u16 width, u16 height)
 {
     s32 y;
@@ -130,6 +262,19 @@ static void InitBackupMapLayoutData(const u16 *map, u16 width, u16 height)
     }
 }
 
+/**
+ * FUNCTION: InitBackupMapLayoutConnections
+ *
+ * PURPOSE: Fill the border regions of the VMap with metatile data from
+ *          connected neighboring maps in all four cardinal directions.
+ *
+ * HOW IT WORKS:
+ * Iterates through all of the current map's connection entries. For each
+ * connection direction (north, south, east, west), it calls the appropriate
+ * Fill*Connection function to copy a strip of the connected map's layout
+ * data into the VMap border. The connection offset field handles alignment
+ * between maps of different sizes.
+ */
 static void InitBackupMapLayoutConnections(struct MapHeader *mapHeader)
 {
     s32 count;
@@ -174,6 +319,18 @@ static void InitBackupMapLayoutConnections(struct MapHeader *mapHeader)
     }
 }
 
+/**
+ * FUNCTION: FillConnection
+ *
+ * PURPOSE: Copy a rectangular region of metatile data from a connected map
+ *          into the VMap buffer at the specified position.
+ *
+ * PARAMETERS:
+ * @param x, y                - Destination position in the VMap buffer
+ * @param connectedMapHeader  - The neighboring map to copy data from
+ * @param x2, y2              - Source position within the connected map's layout
+ * @param width, height       - Size of the region to copy (in metatiles)
+ */
 static void FillConnection(s32 x, s32 y, const struct MapHeader *connectedMapHeader, s32 x2, s32 y2, s32 width, s32 height)
 {
     s32 i;
@@ -348,6 +505,17 @@ static void FillEastConnection(struct MapHeader const *mapHeader, struct MapHead
     }
 }
 
+/**
+ * FUNCTION: MapGridGetElevationAt
+ *
+ * PURPOSE: Get the elevation/height value at a map position. Elevation is used
+ *          for features like bridges where the player can walk both above and
+ *          below the same tile, and for ledge jumping mechanics.
+ *
+ * HOW IT WORKS:
+ * Reads the metatile entry from the VMap and extracts the elevation bits
+ * (bits 12-15) by right-shifting. Returns 0 for undefined grid positions.
+ */
 u8 MapGridGetElevationAt(s32 x, s32 y)
 {
     u16 block = GetMapGridBlockAt(x, y);
@@ -358,6 +526,17 @@ u8 MapGridGetElevationAt(s32 x, s32 y)
     return block >> MAPGRID_ELEVATION_SHIFT;
 }
 
+/**
+ * FUNCTION: MapGridGetCollisionAt
+ *
+ * PURPOSE: Check if a map tile is impassable (blocked). This is the primary
+ *          collision detection function used by the movement system.
+ *
+ * HOW IT WORKS:
+ * Reads the metatile entry and extracts bit 10 (MAPGRID_COLLISION_MASK).
+ * Returns TRUE (1) if the tile is impassable, FALSE (0) if walkable.
+ * Undefined tiles (outside the map) are treated as impassable.
+ */
 u8 MapGridGetCollisionAt(s32 x, s32 y)
 {
     u16 block = GetMapGridBlockAt(x, y);
@@ -368,6 +547,17 @@ u8 MapGridGetCollisionAt(s32 x, s32 y)
     return (block & MAPGRID_COLLISION_MASK) >> MAPGRID_COLLISION_SHIFT;
 }
 
+/**
+ * FUNCTION: MapGridGetMetatileIdAt
+ *
+ * PURPOSE: Get the metatile ID at a map position (bits 0-9 of the grid entry).
+ *          This identifies which 16x16 tile graphic is at that position.
+ *
+ * HOW IT WORKS:
+ * For positions within the map, extracts the metatile ID with MAPGRID_METATILE_ID_MASK.
+ * For positions outside the map (in the border region), falls back to the map's
+ * border pattern using GetBorderBlockAt, which tiles the border data.
+ */
 u32 MapGridGetMetatileIdAt(s32 x, s32 y)
 {
     u16 block = GetMapGridBlockAt(x, y);
@@ -378,6 +568,19 @@ u32 MapGridGetMetatileIdAt(s32 x, s32 y)
     return block & MAPGRID_METATILE_ID_MASK;
 }
 
+/**
+ * FUNCTION: ExtractMetatileAttribute
+ *
+ * PURPOSE: Extract a specific field from a 32-bit metatile attribute word
+ *          using the masks and shifts defined in sMetatileAttrMasks/Shifts.
+ *
+ * HOW IT WORKS:
+ * Applies a bitmask to isolate the desired bits, then right-shifts to get
+ * the value. For example, to extract BEHAVIOR (bits 0-8): mask with 0x1FF
+ * and shift by 0. To extract LAYER_TYPE (bits 29-30): mask with 0x60000000
+ * and shift by 29. If attributeType >= METATILE_ATTRIBUTE_COUNT, returns
+ * the raw attribute word unmodified (used for "get all attributes" queries).
+ */
 u32 ExtractMetatileAttribute(u32 attributes, u8 attributeType)
 {
     if (attributeType >= METATILE_ATTRIBUTE_COUNT) // Check for METATILE_ATTRIBUTES_ALL
@@ -402,6 +605,18 @@ u8 MapGridGetMetatileLayerTypeAt(s16 x, s16 y)
     return MapGridGetMetatileAttributeAt(x, y, METATILE_ATTRIBUTE_LAYER_TYPE);
 }
 
+/**
+ * FUNCTION: MapGridSetMetatileIdAt
+ *
+ * PURPOSE: Change the metatile at a position while preserving elevation data.
+ *          Used by scripts to dynamically modify the map (e.g., opening a door,
+ *          moving a boulder with Strength, cutting a tree with Cut).
+ *
+ * HOW IT WORKS:
+ * Preserves the elevation bits (MAPGRID_ELEVATION_MASK) from the existing entry
+ * and replaces everything else with the new metatile value. This ensures that
+ * changing a tile's appearance doesn't accidentally alter its elevation.
+ */
 void MapGridSetMetatileIdAt(s32 x, s32 y, u16 metatile)
 {
     s32 i;
@@ -433,6 +648,19 @@ void MapGridSetMetatileImpassabilityAt(s32 x, s32 y, bool32 impassable)
     }
 }
 
+/**
+ * FUNCTION: GetAttributeByMetatileIdAndMapLayout
+ *
+ * PURPOSE: Look up a specific attribute of a metatile by its ID and the map
+ *          layout's tileset references.
+ *
+ * HOW IT WORKS:
+ * Metatile IDs below NUM_METATILES_IN_PRIMARY (typically 512) come from the
+ * primary tileset. IDs from 512 up to NUM_METATILES_TOTAL come from the
+ * secondary tileset (indexed by subtracting 512). Each tileset has a
+ * metatileAttributes array where index = metatile ID within that set.
+ * Returns 0xFF for invalid metatile IDs.
+ */
 static u32 GetAttributeByMetatileIdAndMapLayout(const struct MapLayout *mapLayout, u16 metatile, u8 attributeType)
 {
     const u32 * attributes;
@@ -453,6 +681,20 @@ static u32 GetAttributeByMetatileIdAndMapLayout(const struct MapLayout *mapLayou
     }
 }
 
+/**
+ * FUNCTION: SaveMapView
+ *
+ * PURPOSE: Save the currently visible portion of the VMap into the save block.
+ *          This preserves dynamic map changes (moved boulders, etc.) so they
+ *          persist across map transitions and save/load cycles.
+ *
+ * HOW IT WORKS:
+ * Copies a MAP_OFFSET_W x MAP_OFFSET_H region of the VMap centered around
+ * the player's position into gSaveBlock2Ptr->mapView. This region corresponds
+ * roughly to the screen-visible area plus a small margin. Only the metatile
+ * entries (not the full VMap) are saved, since connected map data can be
+ * reconstructed from the map header's connection list.
+ */
 void SaveMapView(void)
 {
     s32 i, j;
@@ -657,6 +899,26 @@ static void SetPositionFromConnection(const struct MapConnection *connection, in
     }
 }
 
+/**
+ * FUNCTION: CameraMove
+ *
+ * PURPOSE: Move the camera (and player position) by the given delta, handling
+ *          map boundary crossings into connected maps.
+ *
+ * HOW IT WORKS:
+ * 1. Checks if the movement would cross into a connected map boundary.
+ * 2. If staying within the current map (CONNECTION_NONE or CONNECTION_INVALID),
+ *    simply updates the player position.
+ * 3. If crossing into a connected map:
+ *    a. Saves the current map view for dynamic tile preservation
+ *    b. Looks up which connected map the player is moving into
+ *    c. Updates the player position relative to the new map
+ *    d. Triggers a map load transition (LoadMapFromCameraTransition)
+ *    e. Records the camera delta for smooth scrolling animation
+ *    f. Restores the saved map view into the new VMap
+ *
+ * RETURNS: TRUE if a map transition occurred, FALSE if staying on current map.
+ */
 bool8 CameraMove(s32 x, s32 y)
 {
     s32 direction;
@@ -820,6 +1082,21 @@ void GetCameraCoords(u16 *x, u16 *y)
     *y = gSaveBlock1Ptr->pos.y;
 }
 
+/**
+ * FUNCTION: CopyTilesetToVram
+ *
+ * PURPOSE: Load a tileset's tile graphics into VRAM for the map background.
+ *
+ * GBA CONTEXT:
+ * Tileset graphics are the raw 8x8 pixel tile images that metatiles reference.
+ * They're loaded into BG character base 2 (the third character block in VRAM).
+ * Each tile is 32 bytes of 4bpp data (8x8 pixels, 4 bits per pixel = 32 bytes).
+ * The offset parameter determines where in the character block to place them
+ * (primary tiles at offset 0, secondary tiles after the primary set).
+ *
+ * If the tileset is compressed (LZ77), DecompressAndCopyTileDataToVram2 is used
+ * which decompresses on-the-fly during DMA transfer.
+ */
 static void CopyTilesetToVram(struct Tileset const *tileset, u16 numTiles, u16 offset)
 {
     if (tileset)
@@ -886,6 +1163,20 @@ void ApplyGlobalTintToPaletteSlot(u8 slot, u8 count)
     CpuFastCopy(&gPlttBufferUnfaded[BG_PLTT_ID(slot)], &gPlttBufferFaded[BG_PLTT_ID(slot)], count * PLTT_SIZE_4BPP);
 }
 
+/**
+ * FUNCTION: LoadTilesetPalette
+ *
+ * PURPOSE: Load a tileset's color palettes into palette RAM. Each tileset
+ *          provides 16-color palettes that its tiles reference.
+ *
+ * GBA CONTEXT:
+ * The GBA has 256 BG palette entries organized as 16 palettes of 16 colors each.
+ * Primary tilesets use palettes 0-6 (NUM_PALS_IN_PRIMARY), and secondary tilesets
+ * use palettes 7-12. Palette slot 0, color 0 in the primary tileset is forced to
+ * RGB_BLACK because color 0 of palette 0 is the screen backdrop color.
+ *
+ * After loading, the global tint (grayscale/sepia for quest log) is applied if active.
+ */
 static void LoadTilesetPalette(struct Tileset const *tileset, u16 destOffset, u16 size)
 {
     u16 black = RGB_BLACK;

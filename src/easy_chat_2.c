@@ -1,3 +1,13 @@
+/**
+ * @file easy_chat_2.c
+ * @brief Easy Chat UI Graphics — Screen Layout, Menus, and Word Display
+ *
+ * FILE OVERVIEW:
+ * This file handles the graphical presentation of the Easy Chat word selection
+ * screen. It manages the category list, word grid, keyboard input area, and
+ * all the visual elements that make up the Easy Chat interface — including
+ * window creation, text rendering, cursor positioning, and scrolling.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "easy_chat.h"

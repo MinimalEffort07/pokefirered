@@ -1,3 +1,35 @@
+/**
+ * @file trainer_see.c
+ * @brief Trainer Line-of-Sight Detection and Approach System
+ *
+ * FILE OVERVIEW:
+ * This file implements the "trainer spots you" mechanic — when the player walks
+ * into a trainer's line of sight, the trainer notices the player and walks toward
+ * them to initiate a battle. This is one of the most iconic mechanics in Pokemon.
+ *
+ * THE TRAINER SPOTTING SEQUENCE:
+ * 1. DETECTION: Each frame, the game checks if the player is within any trainer's
+ *    sight range (distance they can see ahead of them). The trainer must be facing
+ *    the player's direction with an unobstructed path.
+ *
+ * 2. EXCLAMATION MARK: When a trainer spots the player, a "!" bubble appears above
+ *    their head (the emoticon sprite). The player is locked in place.
+ *
+ * 3. APPROACH: The trainer walks toward the player, closing the distance between them.
+ *    The walk distance is determined by GetTrainerApproachDistance().
+ *
+ * 4. ENGAGEMENT: When the trainer reaches the player (or is adjacent), the trainer
+ *    battle script begins.
+ *
+ * SPECIAL TRAINER TYPES:
+ * - Disguised trainers (Buried in Ash): Jump out of ash piles before approaching
+ * - Offscreen trainers: Camera pans to show them before they approach
+ *
+ * SIGHT RANGE MECHANICS:
+ * Each trainer has a "range" value (typically 1-8 tiles). The directional approach
+ * functions check if the player is within that many tiles directly ahead of the
+ * trainer, and verify no NPCs or impassable terrain block the path.
+ */
 #include "global.h"
 #include "battle_setup.h"
 #include "event_object_movement.h"

@@ -1,3 +1,12 @@
+/**
+ * =PALETTE UTILITY FUNCTIONS=
+ *
+ * Advanced palette manipulation utilities that go beyond basic palette
+ * loading/fading. This includes palette cycling (rotating colors within
+ * a palette for animation effects), palette pulsing (smooth color
+ * oscillation), and tint/blend operations used for environmental lighting
+ * effects like the sepia tone in flashback scenes.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "palette_util.h"

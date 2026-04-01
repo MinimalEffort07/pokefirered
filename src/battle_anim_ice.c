@@ -1,3 +1,10 @@
+/**
+ * =BATTLE ANIMATION: ICE-TYPE MOVES=
+ *
+ * Visual effects for Ice-type move animations (Ice Beam freezing ray,
+ * Blizzard snowstorm, Ice Punch frost fist, Icy Wind cold breeze,
+ * Sheer Cold absolute zero flash, Hail falling ice chunks, etc.).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

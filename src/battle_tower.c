@@ -1,3 +1,20 @@
+/**
+ * =BATTLE TOWER=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Battle Tower — an endgame facility where the
+ * player battles a series of AI trainers with randomly generated teams.
+ * The Battle Tower is located in the Sevii Islands (Seven Island) in FRLG.
+ *
+ * Key features:
+ *   - Random opponent selection from a pool of trainer templates
+ *   - Random team generation with species/moves/items from preset pools
+ *   - Win streak tracking (consecutive victories without losing)
+ *   - Battle Points (BP) rewards for winning
+ *   - Save/resume functionality for mid-challenge saves
+ *   - Duplicate prevention (opponents won't use the same species twice
+ *     in their team, and won't use species the player is using)
+ */
 #include "global.h"
 #include "battle_tower.h"
 #include "random.h"

@@ -1,3 +1,20 @@
+/**
+ * @file dodrio_berry_picking.c
+ * @brief Dodrio Berry Picking Minigame — Multiplayer Berry Catching Game
+ *
+ * FILE OVERVIEW:
+ * Dodrio Berry Picking is a wireless multiplayer minigame for 3-5 players.
+ * Each player controls one of Dodrio's three heads and must catch falling
+ * berries by moving their head left or right at the right moment. Different
+ * berries are worth different points, and missing berries adds gray squares
+ * that end the game when they fill up.
+ *
+ * This file implements the game logic, graphics, animations, scoring system,
+ * and the result screen. Wireless communication is handled by
+ * dodrio_berry_picking_comm.c. The game runs on a master/client model where
+ * one player (the host) manages the game state and berry spawning, broadcasting
+ * updates to all other players each frame.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "dodrio_berry_picking.h"

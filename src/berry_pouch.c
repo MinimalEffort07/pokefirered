@@ -1,3 +1,18 @@
+/**
+ * @file berry_pouch.c
+ * @brief Berry Pouch — Berry Inventory Menu and Usage Interface
+ *
+ * FILE OVERVIEW:
+ * The Berry Pouch is a Key Item that provides a dedicated menu for viewing and
+ * using berries from the player's inventory. It shows a scrollable list of all
+ * berries the player has collected, with each berry's name, quantity, and a
+ * preview image. From this menu, the player can use berries (give to Pokemon,
+ * use on the field) or toss unwanted berries.
+ *
+ * The file manages the berry list display, cursor navigation, berry detail
+ * popups, use/toss confirmation dialogs, and integration with the bag and
+ * party menu systems.
+ */
 #include "global.h"
 #include "malloc.h"
 #include "bg.h"

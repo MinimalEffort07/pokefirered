@@ -1,3 +1,19 @@
+/**
+ * =SCRIPT MENU SYSTEM=
+ *
+ * FILE OVERVIEW:
+ * This file provides menu creation functions callable from map scripts.
+ * It handles the various choice menus and multi-choice dialogs that
+ * appear throughout the game when talking to NPCs:
+ *   - Yes/No confirmation dialogs
+ *   - Multi-choice menus (e.g., "Heal / Cancel", "Fire / Water / Grass")
+ *   - PC menu systems (Someone's PC / Bill's PC / Prof Oak's PC)
+ *   - Gender selection during character creation
+ *   - Custom scrollable lists for various NPCs
+ *
+ * The result of the player's selection is stored in script variables
+ * (gSpecialVar_Result) so the calling script can branch accordingly.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "menu.h"

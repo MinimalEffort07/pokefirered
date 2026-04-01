@@ -1,3 +1,18 @@
+/**
+ * =BERRY DATA AND FUNCTIONS=
+ *
+ * FILE OVERVIEW:
+ * This file contains the berry data tables and functions for the berry
+ * system. In FireRed/LeafGreen, berries are simplified compared to
+ * Ruby/Sapphire — there are no berry planting/growing mechanics.
+ * Berries are obtained as items and used for their effects (healing,
+ * held item effects in battle, Berry Crush minigame ingredient, etc.).
+ *
+ * The file provides functions to get berry data (name, firmness, size,
+ * description) and convert between berry IDs and item IDs. Berry IDs
+ * are a separate numbering system from item IDs — this file bridges
+ * the two.
+ */
 #include "global.h"
 #include "berry.h"
 #include "text.h"

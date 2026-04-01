@@ -1,3 +1,10 @@
+/**
+ * =BATTLE ANIMATION: GROUND-TYPE MOVES=
+ *
+ * Visual effects for Ground-type move animations (Earthquake screen shake,
+ * Dig underground dive, Mud Shot mud splatter, Sand Tomb swirling sand,
+ * Magnitude ground pound, Fissure cracking earth, etc.).
+ */
 #include "global.h"
 #include "battle_anim.h"
 #include "random.h"

@@ -1,3 +1,10 @@
+/**
+ * =BATTLE ANIMATION: ROCK-TYPE MOVES=
+ *
+ * Visual effects for Rock-type move animations (Rock Throw flying boulder,
+ * Rock Slide falling rocks, Sandstorm swirling sand, Rollout rolling rock,
+ * Ancient Power rising stones, Rock Tomb entombing rocks, etc.).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

@@ -1,56 +1,207 @@
+/*
+ * io_reg.h - GBA I/O Register Definitions
+ *
+ * ============================================================================
+ * HOW GBA HARDWARE REGISTERS WORK
+ * ============================================================================
+ *
+ * The GBA uses "memory-mapped I/O" (MMIO). This means hardware is controlled
+ * by reading and writing to specific memory addresses, just like regular
+ * variables. There are no "system calls" or "driver APIs" - you literally
+ * write a number to a memory address and the hardware responds.
+ *
+ * All I/O registers live in the range 0x04000000 - 0x040003FF (1 KB).
+ *
+ * This file defines THREE things for each register:
+ *
+ * 1. OFFSET: The register's position relative to 0x04000000.
+ *    Example: REG_OFFSET_DISPCNT = 0x0 (first register, at base + 0)
+ *
+ * 2. ADDRESS: The full memory address (REG_BASE + offset).
+ *    Example: REG_ADDR_DISPCNT = 0x04000000
+ *
+ * 3. ACCESSOR: A C expression that lets you read/write the register
+ *    like a regular variable, using a volatile pointer cast.
+ *    Example: REG_DISPCNT = *(volatile u16 *)0x04000000
+ *    Usage:   REG_DISPCNT = 0x0403;  // Write to display control
+ *             u16 x = REG_VCOUNT;    // Read current scanline
+ *
+ * WHY THREE DEFINITIONS?
+ *   - Offsets are used by the GPU register buffer system (gpu_regs.c)
+ *     which stores register values in an array indexed by offset.
+ *   - Addresses are used by DMA macros that need raw numeric addresses.
+ *   - Accessors are used everywhere else for convenient read/write.
+ *
+ * IMPORTANT: Accessors use VOLATILE pointers (vu16*, vu32*) because
+ * hardware registers can change at any time (the GPU updates VCOUNT
+ * every scanline, button state changes when you press buttons, etc.)
+ * Without volatile, the compiler might cache old values or skip writes.
+ *
+ * ============================================================================
+ * REGISTER CATEGORIES
+ * ============================================================================
+ *
+ * The registers are grouped by subsystem:
+ *
+ *   0x000-0x056: Display/Graphics (DISPCNT, DISPSTAT, BG control, blend, window)
+ *   0x060-0x0A4: Sound (4 tone channels + 2 DMA channels)
+ *   0x0B0-0x0DE: DMA (4 DMA channels, each with src/dest/control)
+ *   0x100-0x10E: Timers (4 hardware timers)
+ *   0x120-0x12A: Serial I/O (link cable communication)
+ *   0x130-0x132: Keypad input (button states)
+ *   0x134:       General I/O port control
+ *   0x200-0x208: Interrupt control (IE, IF, IME)
+ *   0x204:       Wait state control (ROM access timing)
+ *
+ * ============================================================================
+ */
+
 #ifndef GUARD_GBA_IO_REG_H
 #define GUARD_GBA_IO_REG_H
 
-#define REG_BASE 0x4000000 // I/O register base address
+/*
+ * REG_BASE: The starting address of ALL I/O registers.
+ * Every register address = REG_BASE + its offset.
+ */
+#define REG_BASE 0x4000000
 
-// I/O register offsets
+/*
+ * ============================================================================
+ * SECTION 1: REGISTER OFFSETS (distance from REG_BASE)
+ * ============================================================================
+ */
 
-#define REG_OFFSET_DISPCNT     0x0
-#define REG_OFFSET_DISPSTAT    0x4
-#define REG_OFFSET_VCOUNT      0x6
-#define REG_OFFSET_BG0CNT      0x8
-#define REG_OFFSET_BG1CNT      0xa
-#define REG_OFFSET_BG2CNT      0xc
-#define REG_OFFSET_BG3CNT      0xe
-#define REG_OFFSET_BG0HOFS     0x10
-#define REG_OFFSET_BG0VOFS     0x12
-#define REG_OFFSET_BG1HOFS     0x14
-#define REG_OFFSET_BG1VOFS     0x16
-#define REG_OFFSET_BG2HOFS     0x18
-#define REG_OFFSET_BG2VOFS     0x1a
-#define REG_OFFSET_BG3HOFS     0x1c
-#define REG_OFFSET_BG3VOFS     0x1e
-#define REG_OFFSET_BG2PA       0x20
-#define REG_OFFSET_BG2PB       0x22
-#define REG_OFFSET_BG2PC       0x24
-#define REG_OFFSET_BG2PD       0x26
-#define REG_OFFSET_BG2X        0x28
-#define REG_OFFSET_BG2X_L      0x28
-#define REG_OFFSET_BG2X_H      0x2a
-#define REG_OFFSET_BG2Y        0x2c
+/*
+ * --- DISPLAY CONTROL REGISTERS (0x000-0x006) ---
+ *
+ * These control the overall display mode and provide status information.
+ */
+#define REG_OFFSET_DISPCNT     0x0   /* Display Control: master GPU config (mode, layers, etc.) */
+#define REG_OFFSET_DISPSTAT    0x4   /* Display Status: VBlank/HBlank flags + interrupt enables */
+#define REG_OFFSET_VCOUNT      0x6   /* Vertical Count: current scanline being drawn (0-227) */
+
+/*
+ * --- BACKGROUND CONTROL REGISTERS (0x008-0x01E) ---
+ *
+ * Each BG layer has a control register (priority, tile/map base, size)
+ * and scroll registers (which part of the map to display).
+ * HOFS = Horizontal Offset (how far scrolled right)
+ * VOFS = Vertical Offset (how far scrolled down)
+ * Scroll registers are WRITE-ONLY on the GBA (you cannot read them back).
+ */
+#define REG_OFFSET_BG0CNT      0x8   /* BG0 Control: priority, char/screen base, size */
+#define REG_OFFSET_BG1CNT      0xa   /* BG1 Control */
+#define REG_OFFSET_BG2CNT      0xc   /* BG2 Control */
+#define REG_OFFSET_BG3CNT      0xe   /* BG3 Control */
+#define REG_OFFSET_BG0HOFS     0x10  /* BG0 Horizontal scroll (write-only) */
+#define REG_OFFSET_BG0VOFS     0x12  /* BG0 Vertical scroll (write-only) */
+#define REG_OFFSET_BG1HOFS     0x14  /* BG1 Horizontal scroll */
+#define REG_OFFSET_BG1VOFS     0x16  /* BG1 Vertical scroll */
+#define REG_OFFSET_BG2HOFS     0x18  /* BG2 Horizontal scroll */
+#define REG_OFFSET_BG2VOFS     0x1a  /* BG2 Vertical scroll */
+#define REG_OFFSET_BG3HOFS     0x1c  /* BG3 Horizontal scroll */
+#define REG_OFFSET_BG3VOFS     0x1e  /* BG3 Vertical scroll */
+/*
+ * --- AFFINE BACKGROUND PARAMETERS (0x020-0x03E) ---
+ *
+ * BG2 and BG3 support "affine" mode (rotation and scaling).
+ * PA/PB/PC/PD form a 2x2 transformation matrix:
+ *   | PA  PB |   Transforms source texture coordinates to screen coordinates.
+ *   | PC  PD |   Identity (no transform): PA=PD=0x0100 (1.0 in 8.8 fixed-point)
+ *
+ * X/Y are the reference point (displacement). 32-bit values split into
+ * _L (low 16 bits) and _H (high 16 bits) because the GBA bus is 16-bit.
+ *
+ * These are WRITE-ONLY registers.
+ */
+#define REG_OFFSET_BG2PA       0x20  /* BG2 Affine matrix PA (dx) */
+#define REG_OFFSET_BG2PB       0x22  /* BG2 Affine matrix PB (dmx) */
+#define REG_OFFSET_BG2PC       0x24  /* BG2 Affine matrix PC (dy) */
+#define REG_OFFSET_BG2PD       0x26  /* BG2 Affine matrix PD (dmy) */
+#define REG_OFFSET_BG2X        0x28  /* BG2 Reference point X (28-bit, 19.8 fixed) */
+#define REG_OFFSET_BG2X_L      0x28  /* BG2 Ref X low 16 bits */
+#define REG_OFFSET_BG2X_H      0x2a  /* BG2 Ref X high 12 bits */
+#define REG_OFFSET_BG2Y        0x2c  /* BG2 Reference point Y (28-bit, 19.8 fixed) */
 #define REG_OFFSET_BG2Y_L      0x2c
 #define REG_OFFSET_BG2Y_H      0x2e
-#define REG_OFFSET_BG3PA       0x30
-#define REG_OFFSET_BG3PB       0x32
-#define REG_OFFSET_BG3PC       0x34
-#define REG_OFFSET_BG3PD       0x36
-#define REG_OFFSET_BG3X        0x38
+#define REG_OFFSET_BG3PA       0x30  /* BG3 Affine matrix PA */
+#define REG_OFFSET_BG3PB       0x32  /* BG3 Affine matrix PB */
+#define REG_OFFSET_BG3PC       0x34  /* BG3 Affine matrix PC */
+#define REG_OFFSET_BG3PD       0x36  /* BG3 Affine matrix PD */
+#define REG_OFFSET_BG3X        0x38  /* BG3 Reference point X */
 #define REG_OFFSET_BG3X_L      0x38
 #define REG_OFFSET_BG3X_H      0x3a
-#define REG_OFFSET_BG3Y        0x3c
+#define REG_OFFSET_BG3Y        0x3c  /* BG3 Reference point Y */
 #define REG_OFFSET_BG3Y_L      0x3c
 #define REG_OFFSET_BG3Y_H      0x3e
-#define REG_OFFSET_WIN0H       0x40
-#define REG_OFFSET_WIN1H       0x42
-#define REG_OFFSET_WIN0V       0x44
-#define REG_OFFSET_WIN1V       0x46
-#define REG_OFFSET_WININ       0x48
-#define REG_OFFSET_WINOUT      0x4a
-#define REG_OFFSET_MOSAIC      0x4c
-#define REG_OFFSET_BLDCNT      0x50
-#define REG_OFFSET_BLDALPHA    0x52
-#define REG_OFFSET_BLDY        0x54
 
+/*
+ * --- WINDOW CONTROL REGISTERS (0x040-0x04A) ---
+ *
+ * Windows are rectangular regions on screen that control which layers
+ * are visible inside/outside them. Used for:
+ *   - Text boxes (show text BG inside window, hide outside)
+ *   - Spotlight effects (show BG only in a circle using OBJ window)
+ *   - HUD elements (keep a score display visible while BG scrolls)
+ *
+ * WIN0H/WIN1H: Horizontal bounds (left edge in bits 8-15, right in bits 0-7)
+ * WIN0V/WIN1V: Vertical bounds (top edge in bits 8-15, bottom in bits 0-7)
+ * WININ:  Which layers are visible INSIDE the windows
+ * WINOUT: Which layers are visible OUTSIDE the windows
+ */
+#define REG_OFFSET_WIN0H       0x40  /* Window 0 horizontal range (write-only) */
+#define REG_OFFSET_WIN1H       0x42  /* Window 1 horizontal range (write-only) */
+#define REG_OFFSET_WIN0V       0x44  /* Window 0 vertical range (write-only) */
+#define REG_OFFSET_WIN1V       0x46  /* Window 1 vertical range (write-only) */
+#define REG_OFFSET_WININ       0x48  /* Layers visible inside windows 0 and 1 */
+#define REG_OFFSET_WINOUT      0x4a  /* Layers visible outside windows + OBJ window */
+
+/* Mosaic: applies a pixelation effect by grouping pixels into blocks */
+#define REG_OFFSET_MOSAIC      0x4c  /* Mosaic size control (write-only) */
+
+/*
+ * --- BLEND/ALPHA CONTROL REGISTERS (0x050-0x054) ---
+ *
+ * These control color blending effects between layers:
+ *   BLDCNT:   Select which layers to blend and the blend mode
+ *             (alpha blend, brighten, darken, or none)
+ *   BLDALPHA: Alpha blend coefficients (EVA for 1st target, EVB for 2nd)
+ *   BLDY:     Brightness change coefficient (for brighten/darken modes)
+ *
+ * Used for: screen fades (to black/white), semi-transparent menus,
+ * water reflections, day/night effects.
+ */
+#define REG_OFFSET_BLDCNT      0x50  /* Blend mode and target layer selection */
+#define REG_OFFSET_BLDALPHA    0x52  /* Alpha blend coefficients */
+#define REG_OFFSET_BLDY        0x54  /* Brightness coefficient (write-only) */
+
+/*
+ * --- SOUND REGISTERS (0x060-0x0A4) ---
+ *
+ * The GBA has 6 sound channels:
+ *
+ * Channels 1-4 are "CGB" channels (inherited from Game Boy Color):
+ *   Channel 1 (SOUND1): Square wave with frequency sweep
+ *   Channel 2 (SOUND2): Square wave (no sweep)
+ *   Channel 3 (SOUND3): Programmable wave (user-defined waveform in WAVE_RAM)
+ *   Channel 4 (SOUND4): Noise generator (for drums, explosions, etc.)
+ *
+ * Channels A-B are "Direct Sound" channels (GBA-exclusive):
+ *   Channel A (FIFO_A): 8-bit PCM samples fed by DMA from RAM
+ *   Channel B (FIFO_B): 8-bit PCM samples fed by DMA from RAM
+ *   These are what the m4a sound engine uses for music and SFX.
+ *   DMA channels 1 and 2 automatically refill the FIFOs.
+ *
+ * NRxx names are Game Boy legacy names (NR = Noise Register).
+ * SOUNDxCNT names are the official GBA names.
+ * Both refer to the same registers - this file defines both for compatibility.
+ *
+ * SOUNDCNT_L: Master volume for CGB channels
+ * SOUNDCNT_H: Master volume for Direct Sound + DMA/timer config
+ * SOUNDCNT_X: Master enable + channel status flags
+ * SOUNDBIAS: Output bias level (affects audio quality/sample rate)
+ * WAVE_RAM: 16 bytes of waveform data for Channel 3
+ */
 #define REG_OFFSET_SOUND1CNT_L 0x60
 #define REG_OFFSET_NR10        0x60
 #define REG_OFFSET_SOUND1CNT_H 0x62
@@ -95,6 +246,35 @@
 #define REG_OFFSET_FIFO_A      0xa0
 #define REG_OFFSET_FIFO_B      0xa4
 
+/*
+ * --- DMA REGISTERS (0x0B0-0x0DE) ---
+ *
+ * DMA (Direct Memory Access) copies memory WITHOUT using the CPU.
+ * The CPU just writes source, destination, and size to these registers,
+ * then the DMA controller handles the copy in the background.
+ *
+ * The GBA has 4 DMA channels (0-3), each with 3 registers:
+ *   SAD (Source Address):      Where to copy FROM (32-bit address)
+ *   DAD (Destination Address): Where to copy TO (32-bit address)
+ *   CNT (Control):             How many units + control flags
+ *     CNT_L (low 16 bits):  Number of transfer units (halfwords or words)
+ *     CNT_H (high 16 bits): Control flags (enable, timing, width, repeat)
+ *
+ * DMA CHANNEL PRIORITY AND USAGE:
+ *   DMA0: Highest priority. Used for HBlank effects (scanline DMA).
+ *   DMA1: Used by sound for Direct Sound channel A (PCM audio).
+ *   DMA2: Used by sound for Direct Sound channel B (PCM audio).
+ *   DMA3: Lowest priority. General purpose - VRAM copies, OAM copies, etc.
+ *
+ * TIMING MODES (when the transfer starts):
+ *   NOW:     Immediately (general purpose copies)
+ *   VBLANK:  At start of VBlank (safe VRAM/OAM updates)
+ *   HBLANK:  At each HBlank (scanline effects like wave distortion)
+ *   SPECIAL: Channel-specific (DMA1/2: sound FIFO refill)
+ *
+ * _L and _H suffixes split 32-bit registers into two 16-bit halves
+ * because the GBA's register bus is 16 bits wide.
+ */
 #define REG_OFFSET_DMA0        0xb0
 #define REG_OFFSET_DMA0SAD     0xb0
 #define REG_OFFSET_DMA0SAD_L   0xb0
@@ -136,6 +316,31 @@
 #define REG_OFFSET_DMA3CNT_L   0xdc
 #define REG_OFFSET_DMA3CNT_H   0xde
 
+/*
+ * --- TIMER REGISTERS (0x100-0x10E) ---
+ *
+ * The GBA has 4 hardware timers (0-3). Each timer is a 16-bit counter
+ * that increments at a configurable rate.
+ *
+ * Each timer has two registers:
+ *   CNT_L: Counter value. Read = current count. Write = reload value
+ *           (the value the counter resets to after overflow).
+ *   CNT_H: Control register.
+ *     Bits 0-1: Prescaler (clock divider):
+ *       00 = 1 (16.78 MHz, one tick per CPU cycle)
+ *       01 = 64 (262.2 KHz)
+ *       10 = 256 (65.5 KHz)
+ *       11 = 1024 (16.4 KHz)
+ *     Bit 2: Cascade mode (count when PREVIOUS timer overflows)
+ *     Bit 6: Interrupt on overflow
+ *     Bit 7: Enable timer
+ *
+ * Timer usage in this game:
+ *   Timer 0: Sound engine (m4a) mixing rate
+ *   Timer 1: Random seed generation (free-running)
+ *   Timer 2: Flash memory write timing
+ *   Timer 3: Link cable transfer timing
+ */
 #define REG_OFFSET_TMCNT       0x100
 #define REG_OFFSET_TMCNT_L     0x100
 #define REG_OFFSET_TMCNT_H     0x102
@@ -152,6 +357,22 @@
 #define REG_OFFSET_TM3CNT_L    0x10c
 #define REG_OFFSET_TM3CNT_H    0x10e
 
+/*
+ * --- SERIAL I/O REGISTERS (0x120-0x12A) ---
+ *
+ * Control the link cable port for multiplayer communication.
+ *
+ * In Multi-Player mode (the mode Pokemon uses):
+ *   SIOMULTI0-3: Read the 16-bit value received from each player (0-3).
+ *                After a transfer completes, all 4 GBAs have the same
+ *                4 values in these registers.
+ *   SIOMLT_SEND: Write the 16-bit value to send in the next transfer.
+ *   SIOCNT:      Control register (baud rate, mode, start, interrupt).
+ *
+ * In Normal mode (2-player):
+ *   SIODATA32: 32-bit data register for bidirectional transfer.
+ *   SIODATA8:  8-bit data register.
+ */
 #define REG_OFFSET_SIOCNT      0x128
 #define REG_OFFSET_SIODATA8    0x12a
 #define REG_OFFSET_SIODATA32   0x120
@@ -162,6 +383,17 @@
 #define REG_OFFSET_SIOMULTI2   0x124
 #define REG_OFFSET_SIOMULTI3   0x126
 
+/*
+ * --- KEYPAD INPUT REGISTERS (0x130-0x132) ---
+ *
+ * KEYINPUT: Button state register (READ-ONLY).
+ *   10 bits, one per button. ACTIVE LOW: 0 = pressed, 1 = released.
+ *   The game XORs with 0x3FF to invert this to 1 = pressed.
+ *
+ * KEYCNT: Keypad interrupt control.
+ *   Can trigger an interrupt when specific button combinations are pressed.
+ *   Used for the A+B+Start+Select soft reset check in some implementations.
+ */
 #define REG_OFFSET_KEYINPUT    0x130
 #define REG_OFFSET_KEYCNT      0x132
 
@@ -176,10 +408,50 @@
 #define REG_OFFSET_JOY_TRANS_L 0x154
 #define REG_OFFSET_JOY_TRANS_H 0x156
 
+/*
+ * --- INTERRUPT CONTROL REGISTERS (0x200-0x208) ---
+ *
+ * IME (Interrupt Master Enable): Global on/off switch for ALL interrupts.
+ *   0 = all interrupts disabled, 1 = enabled (subject to IE mask).
+ *   Set to 0 before modifying IE to prevent race conditions.
+ *
+ * IE (Interrupt Enable): Bitmask of WHICH interrupts are allowed.
+ *   Each bit corresponds to one interrupt source (see INTR_FLAG_* below).
+ *   An interrupt only fires if BOTH IME=1 AND its IE bit is set.
+ *
+ * IF (Interrupt Flags): Which interrupts have FIRED (read) / acknowledge (write).
+ *   READ: 1 = this interrupt is pending (has fired but not acknowledged).
+ *   WRITE: Writing 1 to a bit CLEARS it (acknowledges the interrupt).
+ *   This is "write-1-to-clear" behavior - writing 0 does nothing.
+ *   You MUST acknowledge interrupts or they'll keep firing.
+ *
+ * NOTE: IE is at offset 0x200 but IME is at 0x208 - they're not in order!
+ */
 #define REG_OFFSET_IME         0x208
 #define REG_OFFSET_IE          0x200
 #define REG_OFFSET_IF          0x202
 
+/*
+ * --- WAIT STATE CONTROL (0x204) ---
+ *
+ * WAITCNT controls how many CPU cycles to wait when accessing ROM.
+ * The ROM bus is 16-bit and slower than the CPU, so wait states are needed.
+ *
+ * The GBA ROM space has 3 "wait state regions" (WS0, WS1, WS2):
+ *   0x08000000-0x09FFFFFF = Wait State 0 (most ROM code lives here)
+ *   0x0A000000-0x0BFFFFFF = Wait State 1 (mirror, different timing)
+ *   0x0C000000-0x0DFFFFFF = Wait State 2 (mirror, different timing)
+ *
+ * Each region has:
+ *   N (Non-sequential): Wait for random/first access (2-8 cycles)
+ *   S (Sequential): Wait for consecutive access (1-8 cycles)
+ *
+ * Sequential access is faster because the ROM chip doesn't need to
+ * seek to a new address - it just reads the next byte.
+ *
+ * PREFETCH BUFFER: When enabled, the GBA pre-reads ROM instructions
+ * while the CPU is busy with calculations. Huge performance win.
+ */
 #define REG_OFFSET_WAITCNT     0x204
 
 // I/O register addresses
@@ -498,26 +770,47 @@
 
 #define REG_WAITCNT     (*(vu16 *)REG_ADDR_WAITCNT)
 
-// I/O register fields
+/*
+ * ============================================================================
+ * SECTION 4: REGISTER BIT FIELD CONSTANTS
+ * ============================================================================
+ *
+ * These constants represent individual bits and bit fields within
+ * I/O registers. They're used with bitwise OR (|) to combine settings:
+ *
+ *   REG_DISPCNT = DISPCNT_MODE_0 | DISPCNT_OBJ_ON | DISPCNT_BG0_ON;
+ *   //            ^mode 0 (tiled)  ^sprites visible  ^BG layer 0 visible
+ */
 
-// DISPCNT
-#define DISPCNT_MODE_0       0x0000 // BG0: text, BG1: text, BG2: text,   BG3: text
-#define DISPCNT_MODE_1       0x0001 // BG0: text, BG1: text, BG2: affine, BG3: off
-#define DISPCNT_MODE_2       0x0002 // BG0: off,  BG1: off,  BG2: affine, BG3: affine
-#define DISPCNT_MODE_3       0x0003 // Bitmap mode, 240x160, BGR555 color
-#define DISPCNT_MODE_4       0x0004 // Bitmap mode, 240x160, 256 color palette
-#define DISPCNT_MODE_5       0x0005 // Bitmap mode, 160x128, BGR555 color
-#define DISPCNT_OBJ_1D_MAP   0x0040
-#define DISPCNT_FORCED_BLANK 0x0080
-#define DISPCNT_BG0_ON       0x0100
-#define DISPCNT_BG1_ON       0x0200
-#define DISPCNT_BG2_ON       0x0400
-#define DISPCNT_BG3_ON       0x0800
-#define DISPCNT_BG_ALL_ON    0x0F00
-#define DISPCNT_OBJ_ON       0x1000
-#define DISPCNT_WIN0_ON      0x2000
-#define DISPCNT_WIN1_ON      0x4000
-#define DISPCNT_OBJWIN_ON    0x8000
+/*
+ * --- DISPCNT BIT FIELDS (Display Control Register) ---
+ *
+ * This is THE most important GPU register. It controls:
+ * - Which display mode is active (tiled vs bitmap)
+ * - Which layers are visible
+ * - Sprite mapping mode
+ * - Window enables
+ */
+#define DISPCNT_MODE_0       0x0000 /* Mode 0: 4 tiled BG layers (Pokemon uses this) */
+#define DISPCNT_MODE_1       0x0001 /* Mode 1: 2 tiled + 1 affine BG */
+#define DISPCNT_MODE_2       0x0002 /* Mode 2: 2 affine BG layers */
+#define DISPCNT_MODE_3       0x0003 /* Mode 3: Full-screen 240x160 bitmap, 15-bit color */
+#define DISPCNT_MODE_4       0x0004 /* Mode 4: Full-screen 240x160 bitmap, 256 colors */
+#define DISPCNT_MODE_5       0x0005 /* Mode 5: Smaller 160x128 bitmap, 15-bit color */
+#define DISPCNT_OBJ_1D_MAP   0x0040 /* Sprite tile mapping: 1D (tiles in sequence) vs
+                                     * 2D (tiles in a grid). 1D is simpler and used by
+                                     * almost all games including Pokemon. */
+#define DISPCNT_FORCED_BLANK 0x0080 /* Force screen to white. Used during VRAM setup
+                                     * to prevent garbage on screen while loading graphics. */
+#define DISPCNT_BG0_ON       0x0100 /* Enable BG layer 0 (bit 8) */
+#define DISPCNT_BG1_ON       0x0200 /* Enable BG layer 1 (bit 9) */
+#define DISPCNT_BG2_ON       0x0400 /* Enable BG layer 2 (bit 10) */
+#define DISPCNT_BG3_ON       0x0800 /* Enable BG layer 3 (bit 11) */
+#define DISPCNT_BG_ALL_ON    0x0F00 /* Enable all 4 BG layers */
+#define DISPCNT_OBJ_ON       0x1000 /* Enable sprites/objects (bit 12) */
+#define DISPCNT_WIN0_ON      0x2000 /* Enable hardware window 0 (bit 13) */
+#define DISPCNT_WIN1_ON      0x4000 /* Enable hardware window 1 (bit 14) */
+#define DISPCNT_OBJWIN_ON    0x8000 /* Enable OBJ window (sprite-shaped mask, bit 15) */
 
 // DISPSTAT
 #define DISPSTAT_VBLANK      0x0001 // in V-Blank
@@ -638,25 +931,30 @@
 #define SOUND_4_ON          0x0008
 #define SOUND_MASTER_ENABLE 0x0080
 
-// DMA
-#define DMA_DEST_INC      0x0000
-#define DMA_DEST_DEC      0x0020
-#define DMA_DEST_FIXED    0x0040
-#define DMA_DEST_RELOAD   0x0060
-#define DMA_SRC_INC       0x0000
-#define DMA_SRC_DEC       0x0080
-#define DMA_SRC_FIXED     0x0100
-#define DMA_REPEAT        0x0200
-#define DMA_16BIT         0x0000
-#define DMA_32BIT         0x0400
-#define DMA_DREQ_ON       0x0800
-#define DMA_START_NOW     0x0000
-#define DMA_START_VBLANK  0x1000
-#define DMA_START_HBLANK  0x2000
-#define DMA_START_SPECIAL 0x3000
-#define DMA_START_MASK    0x3000
-#define DMA_INTR_ENABLE   0x4000
-#define DMA_ENABLE        0x8000
+/*
+ * --- DMA CONTROL BIT FIELDS (DMAx_CNT_H upper 16 bits) ---
+ *
+ * These control how a DMA transfer operates.
+ * Typical usage: DMA_ENABLE | DMA_START_NOW | DMA_32BIT | DMA_SRC_INC | DMA_DEST_INC
+ */
+#define DMA_DEST_INC      0x0000 /* Destination address increments after each transfer */
+#define DMA_DEST_DEC      0x0020 /* Destination address decrements (copy backwards) */
+#define DMA_DEST_FIXED    0x0040 /* Destination stays the same (write same address repeatedly) */
+#define DMA_DEST_RELOAD   0x0060 /* Destination resets to initial value each repeat */
+#define DMA_SRC_INC       0x0000 /* Source address increments (normal copy) */
+#define DMA_SRC_DEC       0x0080 /* Source address decrements */
+#define DMA_SRC_FIXED     0x0100 /* Source stays the same (fill: copy one value everywhere) */
+#define DMA_REPEAT        0x0200 /* Repeat transfer (used with HBLANK/VBLANK timing) */
+#define DMA_16BIT         0x0000 /* Transfer 16 bits (2 bytes) at a time */
+#define DMA_32BIT         0x0400 /* Transfer 32 bits (4 bytes) at a time (faster for aligned data) */
+#define DMA_DREQ_ON       0x0800 /* Game Pak DMA request (rarely used) */
+#define DMA_START_NOW     0x0000 /* Start transfer immediately when DMA is enabled */
+#define DMA_START_VBLANK  0x1000 /* Start transfer at next VBlank (safe for VRAM/OAM) */
+#define DMA_START_HBLANK  0x2000 /* Start transfer at each HBlank (scanline effects) */
+#define DMA_START_SPECIAL 0x3000 /* Special: DMA1/2 = sound FIFO, DMA3 = video capture */
+#define DMA_START_MASK    0x3000 /* Mask for the start timing bits */
+#define DMA_INTR_ENABLE   0x4000 /* Fire an interrupt when transfer completes */
+#define DMA_ENABLE        0x8000 /* Master enable. Setting this bit starts the DMA. */
 
 // timer
 #define TIMER_1CLK        0x00
@@ -694,7 +992,16 @@
 #define SIO_MULTI_DI_SHIFT 3
 #define SIO_MULTI_DI_MASK  0x1
 
-// keys
+/*
+ * --- KEY INPUT BIT FIELDS (REG_KEYINPUT / KEYCNT) ---
+ *
+ * Each bit represents one button. In REG_KEYINPUT:
+ *   0 = button is PRESSED, 1 = button is RELEASED (active-low)
+ * The game XORs with KEYS_MASK (0x3FF) to invert to active-high.
+ *
+ * KEYS_MASK covers all 10 buttons (bits 0-9).
+ * DPAD_ANY covers the 4 directional buttons.
+ */
 #define A_BUTTON        0x0001
 #define B_BUTTON        0x0002
 #define SELECT_BUTTON   0x0004
@@ -712,23 +1019,49 @@
 #define DPAD_ANY        0x00F0
 #define JOY_EXCL_DPAD   0x030F
 
-// interrupt flags
-#define INTR_FLAG_VBLANK  (1 <<  0)
-#define INTR_FLAG_HBLANK  (1 <<  1)
-#define INTR_FLAG_VCOUNT  (1 <<  2)
-#define INTR_FLAG_TIMER0  (1 <<  3)
-#define INTR_FLAG_TIMER1  (1 <<  4)
-#define INTR_FLAG_TIMER2  (1 <<  5)
-#define INTR_FLAG_TIMER3  (1 <<  6)
-#define INTR_FLAG_SERIAL  (1 <<  7)
-#define INTR_FLAG_DMA0    (1 <<  8)
-#define INTR_FLAG_DMA1    (1 <<  9)
-#define INTR_FLAG_DMA2    (1 << 10)
-#define INTR_FLAG_DMA3    (1 << 11)
-#define INTR_FLAG_KEYPAD  (1 << 12)
-#define INTR_FLAG_GAMEPAK (1 << 13)
+/*
+ * --- INTERRUPT FLAG BIT FIELDS (REG_IE and REG_IF) ---
+ *
+ * These bits are used in BOTH the Interrupt Enable (IE) register
+ * and the Interrupt Flags (IF) register:
+ *
+ *   IE: Set a bit to 1 to ALLOW that interrupt to fire.
+ *   IF: Read 1 = interrupt has fired. Write 1 = acknowledge (clear).
+ *
+ * To enable VBlank interrupts:
+ *   REG_IE |= INTR_FLAG_VBLANK;
+ *
+ * To acknowledge a VBlank interrupt in a handler:
+ *   REG_IF = INTR_FLAG_VBLANK;  // Write 1 to clear (NOT |=, just =)
+ */
+#define INTR_FLAG_VBLANK  (1 <<  0) /* VBlank: start of vertical blank (scanline 160) */
+#define INTR_FLAG_HBLANK  (1 <<  1) /* HBlank: end of each visible scanline */
+#define INTR_FLAG_VCOUNT  (1 <<  2) /* VCount: scanline matches DISPSTAT target */
+#define INTR_FLAG_TIMER0  (1 <<  3) /* Timer 0 overflow */
+#define INTR_FLAG_TIMER1  (1 <<  4) /* Timer 1 overflow */
+#define INTR_FLAG_TIMER2  (1 <<  5) /* Timer 2 overflow */
+#define INTR_FLAG_TIMER3  (1 <<  6) /* Timer 3 overflow */
+#define INTR_FLAG_SERIAL  (1 <<  7) /* Serial (link cable) transfer complete */
+#define INTR_FLAG_DMA0    (1 <<  8) /* DMA channel 0 transfer complete */
+#define INTR_FLAG_DMA1    (1 <<  9) /* DMA channel 1 transfer complete */
+#define INTR_FLAG_DMA2    (1 << 10) /* DMA channel 2 transfer complete */
+#define INTR_FLAG_DMA3    (1 << 11) /* DMA channel 3 transfer complete */
+#define INTR_FLAG_KEYPAD  (1 << 12) /* Keypad: button combination pressed */
+#define INTR_FLAG_GAMEPAK (1 << 13) /* Game Pak: cartridge removed (rarely used) */
 
-// WAITCNT
+/*
+ * --- WAITCNT BIT FIELDS (Wait State Control) ---
+ *
+ * Configure ROM and SRAM access timing.
+ * Lower wait states = faster, but may cause errors on some cartridges.
+ * The values used by Pokemon (WS0_N_3 + WS0_S_1 + PREFETCH) are standard
+ * for most commercial GBA games.
+ *
+ * SRAM: Save data access timing (0x0E000000)
+ * WS0/WS1/WS2: ROM access timing for each of the 3 ROM mirrors
+ * N = Non-sequential (first/random access), S = Sequential (consecutive)
+ * PREFETCH: Enables the instruction prefetch buffer (always use this)
+ */
 #define WAITCNT_SRAM_4          (0 << 0)
 #define WAITCNT_SRAM_3          (1 << 0)
 #define WAITCNT_SRAM_2          (2 << 0)

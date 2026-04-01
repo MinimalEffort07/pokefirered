@@ -1,6 +1,55 @@
+/*
+ * trig.c - Precomputed Trigonometry Lookup Table
+ *
+ * ============================================================================
+ * WHY A LOOKUP TABLE INSTEAD OF COMPUTING SIN/COS?
+ * ============================================================================
+ *
+ * The ARM7TDMI CPU has NO floating-point hardware and NO built-in
+ * trigonometric functions. Computing sin(x) in software would require:
+ *   - Floating-point emulation (very slow, hundreds of cycles)
+ *   - Taylor series approximation (multiple multiplications and divisions)
+ *   - Both of these are FAR too slow for real-time game use
+ *
+ * SOLUTION: Pre-compute all needed sine values and store them in a table
+ * in ROM. Looking up a value is a single memory read (~5 cycles vs ~200+
+ * cycles for software computation).
+ *
+ * THE TABLE FORMAT:
+ *   - 320 entries covering the range [0, 2*pi) with resolution of pi/128
+ *   - Values 0-63:   sin(0) to sin(pi/2) = first quarter (0 to +1)
+ *   - Values 64-127: sin(pi/2) to sin(pi) = second quarter (+1 to 0)
+ *   - Values 128-191: sin(pi) to sin(3pi/2) = third quarter (0 to -1)
+ *   - Values 192-255: sin(3pi/2) to sin(2pi) = fourth quarter (-1 to 0)
+ *   - Values 256-319: Same as 0-63 (extra copy for convenience)
+ *
+ * FIXED-POINT FORMAT: Q8.8
+ *   Each value is a signed 16-bit integer where the lower 8 bits represent
+ *   the fractional part. So:
+ *     0x0100 = 1.0,  0xFF00 = -1.0,  0x0080 = 0.5
+ *   Q_8_8(0.5) is a macro that converts 0.5 to the Q8.8 representation (128).
+ *
+ * COSINE:
+ *   cos(x) = sin(x + pi/2)
+ *   In table indices: cos(x) = gSineTable[x + 64]
+ *   So no separate cosine table is needed.
+ *
+ * USAGE:
+ *   sin_val = gSineTable[angle & 0xFF];          // Get sine of angle
+ *   cos_val = gSineTable[(angle + 64) & 0xFF];   // Get cosine of angle
+ *
+ * This table is used by: sprite rotation, battle animations, wave effects
+ * (scanline_effect.c), affine transformations, and more.
+ *
+ * ============================================================================
+ */
+
 #include "global.h"
 
-// Values of sin(x*(π/128)) as Q8.8 fixed-point numbers from x = 0 to x = 319
+/* Precomputed sine values in Q8.8 fixed-point format.
+ * sin(x * (pi/128)) for x = 0 to 319.
+ * One full cycle = 256 entries (indices 0-255).
+ * Extra 64 entries (256-319) duplicate the start for cosine lookup. */
 const s16 gSineTable[] =
 {
     Q_8_8(0),           // sin(0*(π/128))

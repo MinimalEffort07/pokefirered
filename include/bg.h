@@ -1,9 +1,39 @@
+/**
+ * @file bg.h
+ * @brief Background Layer System Header — Tilemap and Scroll Management
+ *
+ * FILE OVERVIEW:
+ * This header defines the background (BG) layer management system. The GBA has
+ * 4 background layers (BG0-BG3) that can display tiled graphics, each with
+ * independent scrolling, priority, and tile/map base addresses.
+ *
+ * The BG system provides a high-level abstraction over the raw hardware registers:
+ *   - BGCntrlBitfield: Maps to the BG control I/O registers (REG_BGxCNT)
+ *   - BG attribute get/set functions for priority, tile base, map base, size
+ *   - Tilemap buffer management (RAM shadow copies of VRAM tilemaps)
+ *   - Scroll position control (horizontal and vertical offsets)
+ *   - DMA-based tilemap transfer from buffers to VRAM
+ *
+ * GBA CONTEXT:
+ * Each BG layer on the GBA is a grid of 8x8 pixel tiles drawn from character
+ * data (tile graphics stored in VRAM). The tilemap (screen map) tells the
+ * hardware which tile to draw at each grid position. BG layers can be:
+ *   - Text mode: Up to 4 layers, 256x256 to 512x512 pixels
+ *   - Rotation/Scaling mode: 2 layers with affine transformation
+ *   - Bitmap mode: Direct pixel drawing (modes 3, 4, 5)
+ *
+ * Priority determines draw order: 0 = highest (front), 3 = lowest (back).
+ * CharBaseBlock and MapBaseBlock select which region of VRAM holds the tiles
+ * and tilemap respectively (VRAM is divided into 16KB character blocks and
+ * 2KB screen blocks).
+ */
 #ifndef GUARD_BG_H
 #define GUARD_BG_H
 
 #include "global.h"
 
-struct BGCntrlBitfield // for the I/O registers
+/* Maps directly to the BG control I/O registers (REG_BG0CNT through REG_BG3CNT) */
+struct BGCntrlBitfield /* for the I/O registers */
 {
     volatile u16 priority:2;
     volatile u16 charBaseBlock:2;

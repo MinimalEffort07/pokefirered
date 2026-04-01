@@ -1,3 +1,11 @@
+/**
+ * =POKEMON SPECIAL ANIMATION SCENE RENDERING=
+ *
+ * This file provides the scene setup, BG/sprite rendering, and teardown
+ * functions for Pokemon special animations. It handles loading the
+ * Pokemon sprite, setting up the background, displaying status text,
+ * and managing the animation state machine for the scene.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"

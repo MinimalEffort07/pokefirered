@@ -1,3 +1,12 @@
+/**
+ * =BATTLE ANIMATION: PSYCHIC-TYPE MOVES=
+ *
+ * Visual effects for Psychic-type move animations (Psychic screen warp,
+ * Confusion spinning stars, Psybeam rainbow wave, Future Sight falling
+ * energy, Hypnosis pendulum waves, Dream Eater spirit drain, etc.).
+ * Several effects use the GBA's scanline register manipulation for
+ * screen-warping distortion effects.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

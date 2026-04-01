@@ -1,3 +1,27 @@
+/**
+ * =POKEMON SIZE RECORD SYSTEM=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Pokemon size-comparison minigame found in the
+ * game world (e.g., the Magikarp fishing guru, Heracross size contests).
+ * NPCs challenge the player to find the biggest specimen of a particular
+ * species and track the record size.
+ *
+ * SIZE CALCULATION:
+ * A Pokemon's size is determined by a hash computed from its personality
+ * value and IVs (Individual Values). This hash indexes into a size
+ * distribution table (sBigMonSizeTable) to get a multiplier, which is
+ * then applied to the species' Pokedex height. This means two Magikarp
+ * with different personalities/IVs will have different sizes, creating
+ * a natural variation that makes the contest interesting.
+ *
+ * The distribution is bell-curve-shaped: most Pokemon are near average
+ * size, with very large or very small specimens being rare.
+ *
+ * This file also includes a function for giving Gift Ribbons to the
+ * player's party — an unrelated feature that was grouped here in the
+ * original codebase.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"
@@ -6,13 +30,24 @@
 #include "text.h"
 #include "strings.h"
 
-#define DEFAULT_MAX_SIZE 0 // was 0x8100 in Ruby/Sapphire, 0x8000 in Emerald
+/* Default starting record size — 0 means no record set yet.
+ * Ruby/Sapphire used 0x8100 as a default seed value, but FireRed uses 0. */
+#define DEFAULT_MAX_SIZE 0
 
+/**
+ * Size distribution table entry.
+ * unk0 = size multiplier (in tenths — 1000 = 100.0% = species' default height)
+ * unk2 = range width (how many hash values map to this size bracket)
+ * unk4 = cumulative starting offset (sum of all previous ranges)
+ *
+ * The table creates a bell curve: most hash values map to sizes near
+ * 700-1000 (70-100% of Pokedex height), with extreme sizes being rare.
+ */
 struct UnknownStruct
 {
-    u16 unk0;
-    u8 unk2;
-    u16 unk4;
+    u16 unk0;   /* Size multiplier in tenths of percent */
+    u8 unk2;    /* Range width for this bracket */
+    u16 unk4;   /* Cumulative offset (hash threshold) */
 };
 
 static const struct UnknownStruct sBigMonSizeTable[] =
@@ -44,6 +79,21 @@ static const u8 sGiftRibbonsMonDataIds[] =
 
 #define CM_PER_INCH 2.54
 
+/**
+ * FUNCTION: GetMonSizeHash
+ *
+ * PURPOSE: Generates a 16-bit hash from a Pokemon's personality and IVs
+ * that determines its unique size. Two Pokemon of the same species with
+ * different stats will have different sizes.
+ *
+ * HOW IT WORKS:
+ * Takes the low 4 bits of each IV (0-15) and combines them with the
+ * personality value using XOR and multiplication:
+ *   High byte: (AtkIV ^ DefIV) * HpIV, XORed with personality low byte
+ *   Low byte:  (SpAIV ^ SpDIV) * SpdIV, XORed with personality high byte
+ * This produces a pseudo-random 16-bit value that's deterministic for
+ * any given Pokemon (same Pokemon always gets the same hash).
+ */
 static u32 GetMonSizeHash(struct Pokemon * pkmn)
 {
     u16 personality = GetMonData(pkmn, MON_DATA_PERSONALITY);
@@ -190,6 +240,16 @@ void CompareMagikarpSize(void)
     gSpecialVar_Result = CompareMonSize(SPECIES_MAGIKARP, sizeRecord);
 }
 
+/**
+ * FUNCTION: GiveGiftRibbonToParty
+ *
+ * PURPOSE: Awards a special Gift Ribbon to every Pokemon in the player's
+ * party. Gift Ribbons are special event ribbons (Marine, Land, Sky, etc.)
+ * distributed at real-world Pokemon events.
+ *
+ * @param index — which ribbon slot to set (0-10, maps to sGiftRibbonsMonDataIds)
+ * @param ribbonId — the ribbon ID value to store in the save data
+ */
 void GiveGiftRibbonToParty(u8 index, u8 ribbonId)
 {
     s32 i;

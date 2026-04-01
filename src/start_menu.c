@@ -1,3 +1,36 @@
+/*
+ * start_menu.c - Start Menu (Pause Menu) System
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file implements the Start Menu -- the menu that appears when the
+ * player presses START in the overworld. It provides access to:
+ *
+ *   POKEDEX   - Pokemon encyclopedia (if obtained from Prof. Oak)
+ *   POKEMON   - View and manage the party of 6 Pokemon
+ *   BAG       - Item inventory with 5 pocket categories
+ *   (PLAYER)  - Trainer Card showing play time, badges, Pokedex count
+ *   SAVE      - Save the game to flash memory
+ *   OPTION    - Settings (text speed, battle scene, sound mode, button mode)
+ *   EXIT      - Close the start menu
+ *   HELP      - FireRed's built-in help system (context-sensitive tips)
+ *
+ * DYNAMIC MENU:
+ * Not all options appear at once. The menu is built dynamically based on
+ * game progress:
+ * - POKEDEX only appears after receiving it from Oak
+ * - POKEMON only appears after receiving a starter
+ * - Safari Zone has a special variant showing ball count
+ *
+ * The menu uses the window system (BG0) to draw a bordered text box
+ * on the right side of the screen. Cursor movement wraps around.
+ * Each menu option maps to a setup function that transitions to the
+ * appropriate screen (party menu, bag screen, save dialog, etc.).
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "scanline_effect.h"

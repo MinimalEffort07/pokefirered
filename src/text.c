@@ -1,3 +1,52 @@
+/*
+ * =Pokemon FireRed Text Rendering Engine=
+ *
+ * This file implements the complete text rendering system for the GBA.
+ * It is responsible for:
+ *   - Decompressing font glyph bitmaps from ROM into pixel buffers
+ *   - Rendering characters one-by-one onto GBA background tile windows
+ *   - Handling special control codes embedded in text strings (color changes,
+ *     pauses, sound effects, music triggers, scrolling, etc.)
+ *   - Supporting multiple fonts (Small, Normal, Male, Female, Bold, Braille)
+ *   - Supporting both Latin and Japanese character sets
+ *   - Drawing animated down-arrows and text cursors as sprites
+ *   - Calculating string widths for centering/alignment
+ *
+ * GBA CONTEXT:
+ * The GBA has no built-in text rendering hardware. All text must be drawn
+ * as pixel art into background tile data (VRAM). Each character glyph is
+ * stored as compressed 4bpp (4 bits-per-pixel) tile data in ROM, which
+ * gets decompressed into a temporary buffer (gGlyphInfo.pixels), then
+ * blitted (copied pixel-by-pixel) into a window's tile buffer. The window
+ * system (see window.c) manages which region of the screen each text box
+ * occupies and handles copying the pixel data to VRAM for display.
+ *
+ * FONT ARCHITECTURE:
+ * Pokemon FireRed uses a variable-width font system. Each glyph has its
+ * own pixel width (stored in width tables like sFontSmallLatinGlyphWidths),
+ * unlike fixed-width fonts where every character is the same size. This
+ * means the renderer must track the current X position and advance it by
+ * each glyph's individual width after drawing.
+ *
+ * The game supports multiple font styles, some gender-specific:
+ *   - FONT_SMALL: Compact font used in menus and UI elements
+ *   - FONT_NORMAL: Standard dialogue font
+ *   - FONT_MALE / FONT_FEMALE: Slightly different styles for gendered text
+ *   - FONT_BOLD: Used for special displays (Japanese only)
+ *   - FONT_BRAILLE: For the braille puzzles in the game
+ *
+ * TEXT STRING FORMAT:
+ * Text strings are byte arrays where most bytes are glyph IDs. Special
+ * byte values act as control codes:
+ *   - 0xFF (EOS): End of string
+ *   - 0xFE (CHAR_NEWLINE): Move to next line
+ *   - 0xFD (PLACEHOLDER_BEGIN): Insert a dynamic string variable
+ *   - 0xFC (EXT_CTRL_CODE_BEGIN): Extended control code follows
+ *   - 0xFB (CHAR_PROMPT_CLEAR): Wait for input, then clear the window
+ *   - 0xFA (CHAR_PROMPT_SCROLL): Wait for input, then scroll up one line
+ *   - 0xF9 (CHAR_KEYPAD_ICON): Draw a button icon (A, B, D-pad, etc.)
+ *   - 0xF8 (CHAR_EXTRA_SYMBOL): Access extended character set
+ */
 #include "global.h"
 #include "gflib.h"
 #include "m4a.h"
@@ -6,39 +55,70 @@
 #include "dynamic_placeholder_text_util.h"
 #include "constants/songs.h"
 
+/* Sprite tag used to identify text cursor sprites in the sprite system.
+ * Tags allow the engine to find and free specific sprite graphics/palettes. */
 #define TAG_CURSOR 0x8000
 
+/* Number of frames to wait between each animation step of the down-arrow
+ * or text cursor bounce. At 60fps, 8 frames = ~133ms per step. */
 #define CURSOR_DELAY 8
 
+/* Byte offset into the down-arrow tile sheet where the dark-colored variant
+ * begins. The game uses two arrow styles: a light one for bright backgrounds
+ * and a dark one for dark backgrounds. 256 bytes = 8 tiles of 4bpp data. */
 #define DARK_DOWN_ARROW_OFFSET 256
 
 extern const struct OamData gOamData_AffineOff_ObjNormal_16x16;
 
+/* Forward declarations for glyph decompression functions (one per font) */
 static void DecompressGlyph_NormalCopy1(u16 glyphId, bool32 isJapanese);
 static void DecompressGlyph_NormalCopy2(u16 glyphId, bool32 isJapanese);
 static void DecompressGlyph_Male(u16 glyphId, bool32 isJapanese);
 static void DecompressGlyph_Bold(u16 glyphId);
+
+/* Forward declarations for glyph width query functions (one per font).
+ * These return how many pixels wide a particular character is, which is
+ * needed for calculating string widths and advancing the cursor position. */
 static s32 GetGlyphWidth_Small(u16 glyphId, bool32 isJapanese);
 static s32 GetGlyphWidth_NormalCopy1(u16 glyphId, bool32 isJapanese);
 static s32 GetGlyphWidth_Normal(u16 glyphId, bool32 isJapanese);
 static s32 GetGlyphWidth_NormalCopy2(u16 glyphId, bool32 isJapanese);
 static s32 GetGlyphWidth_Male(u16 glyphId, bool32 isJapanese);
 static s32 GetGlyphWidth_Female(u16 glyphId, bool32 isJapanese);
+
+/* Callback for the animated text cursor sprite (bounces up and down) */
 static void SpriteCB_TextCursor(struct Sprite *sprite);
 
+/* Global text rendering flags that control behavior across the entire text
+ * system, such as whether auto-scroll is enabled or if the player can
+ * speed up text by holding A/B. */
 COMMON_DATA TextFlags gTextFlags = {0};
 
+/* Pre-rendered 4bpp tile graphics for the "press A to continue" down-arrow
+ * indicator. These are included directly from binary files at compile time
+ * using the INCBIN_U8 macro, which embeds raw file data into the ROM. */
 static const u8 sDownArrowTiles[]    = INCBIN_U8("graphics/fonts/down_arrows.4bpp");
 static const u8 sDoubleArrowTiles1[] = INCBIN_U8("graphics/fonts/down_arrow_3.4bpp");
 static const u8 sDoubleArrowTiles2[] = INCBIN_U8("graphics/fonts/down_arrow_4.4bpp");
 
+/* Y-coordinate offsets for the down-arrow bounce animation. The arrow cycles
+ * through positions 0 -> 16 -> 32 -> 16 -> 0... creating a smooth bounce
+ * effect within the source tile sheet (not screen coordinates). */
 static const u8 sDownArrowYCoords[]           = { 0, 16, 32, 16 };
+
+/* How many pixels to scroll the text window per frame, based on the player's
+ * text speed setting from the Options menu. Faster = bigger scroll steps. */
 static const u8 sWindowVerticalScrollSpeeds[] = {
     [OPTIONS_TEXT_SPEED_SLOW] = 1,
     [OPTIONS_TEXT_SPEED_MID] = 2,
     [OPTIONS_TEXT_SPEED_FAST] = 4,
 };
 
+/* Lookup table mapping font IDs to their width-query functions.
+ * When the engine needs to know how wide a character is (for string width
+ * calculation or cursor advancement), it looks up the font ID here to find
+ * the correct function. Each font has its own width table because different
+ * fonts have different character proportions. */
 static const struct GlyphWidthFunc sGlyphWidthFuncs[] = {
     { FONT_SMALL,         GetGlyphWidth_Small },
     { FONT_NORMAL_COPY_1, GetGlyphWidth_NormalCopy1 },
@@ -49,6 +129,9 @@ static const struct GlyphWidthFunc sGlyphWidthFuncs[] = {
     { FONT_BRAILLE,       GetGlyphWidth_Braille }
 };
 
+/* Sprite sheet definitions for the text cursor (the bouncing double-arrow
+ * shown during dialogue). Two variants are available; the caller picks
+ * which one with a sheet index (0 or 1). */
 static const struct SpriteSheet sSpriteSheets_TextCursor[] =
 {
     {sDoubleArrowTiles1, sizeof(sDoubleArrowTiles1), TAG_CURSOR},
@@ -73,11 +156,15 @@ static const struct SpriteTemplate sSpriteTemplate_TextCursor =
     .callback = SpriteCB_TextCursor,
 };
 
+/* Keypad icon metadata: maps button IDs (A, B, L, R, Start, etc.) to their
+ * tile positions within the keypad icon tileset, along with pixel dimensions.
+ * When text strings contain CHAR_KEYPAD_ICON, the next byte specifies which
+ * button icon to draw inline with the text (e.g., "Press {A_BUTTON}"). */
 struct
 {
-    u16 tileOffset;
-    u8 width;
-    u8 height;
+    u16 tileOffset;  /* Tile index into gKeypadIconTiles (each tile = 32 bytes of 4bpp data) */
+    u8 width;        /* Width of this icon in pixels */
+    u8 height;       /* Height of this icon in pixels */
 } static const sKeypadIcons[] =
 {
     [CHAR_A_BUTTON]       = {  0x0,  8, 12 },
@@ -383,6 +470,26 @@ static const u8 sFontFemaleJapaneseGlyphWidths[] =
 
 static const u16 sFontBoldJapaneseGlyphs[] = INCBIN_U16("graphics/fonts/japanese_bold.fwjpnfont");
 
+/**
+ * FUNCTION: FontFunc_Small
+ *
+ * PURPOSE: Entry point for rendering text using the Small font.
+ *
+ * HOW IT WORKS:
+ * Each font has a "FontFunc" that acts as its rendering entry point. On the
+ * first call, it sets the glyphId to identify which font to use for glyph
+ * decompression. Then it delegates to the shared RenderText() function which
+ * handles the actual character-by-character rendering state machine.
+ *
+ * The hasGlyphIdBeenSet flag prevents re-initialization on subsequent calls,
+ * since this function is called repeatedly (once per frame) as text prints
+ * character by character.
+ *
+ * PARAMETERS:
+ * @param textPrinter - The active text printer state (position, font, colors, etc.)
+ *
+ * RETURNS: A RENDER_* status code indicating whether rendering is still in progress.
+ */
 u16 FontFunc_Small(struct TextPrinter *textPrinter)
 {
     struct TextPrinterSubStruct *subStruct = &textPrinter->subUnion.sub;
@@ -395,6 +502,11 @@ u16 FontFunc_Small(struct TextPrinter *textPrinter)
     return RenderText(textPrinter);
 }
 
+/* FontFunc_NormalCopy1 through FontFunc_Female follow the same pattern as
+ * FontFunc_Small above: set the font ID on first call, then delegate to
+ * RenderText(). The "Copy1"/"Copy2" variants exist because the game uses
+ * slightly different glyph sets for different contexts (e.g., dialogue vs.
+ * menus), even though they share the same base Normal font in Latin mode. */
 u16 FontFunc_NormalCopy1(struct TextPrinter *textPrinter)
 {
     struct TextPrinterSubStruct *subStruct = &textPrinter->subUnion.sub;
@@ -455,6 +567,18 @@ u16 FontFunc_Female(struct TextPrinter *textPrinter)
     return RenderText(textPrinter);
 }
 
+/**
+ * FUNCTION: TextPrinterInitDownArrowCounters
+ *
+ * PURPOSE: Initialize the animation counters for the "press A to continue"
+ *          down-arrow indicator or the auto-scroll delay timer.
+ *
+ * HOW IT WORKS:
+ * If auto-scroll mode is active (used during quest log playback), the delay
+ * counter is set to 0 so it will start counting up toward the auto-advance
+ * threshold. Otherwise, the bounce animation index and frame delay for the
+ * down-arrow are both reset to 0 to start the animation fresh.
+ */
 void TextPrinterInitDownArrowCounters(struct TextPrinter *textPrinter)
 {
     struct TextPrinterSubStruct *subStruct = &textPrinter->subUnion.sub;
@@ -468,6 +592,26 @@ void TextPrinterInitDownArrowCounters(struct TextPrinter *textPrinter)
     }
 }
 
+/**
+ * FUNCTION: TextPrinterDrawDownArrow
+ *
+ * PURPOSE: Animate and draw the bouncing down-arrow that tells the player
+ *          to press A/B to advance the dialogue.
+ *
+ * HOW IT WORKS:
+ * Uses a frame delay counter to control animation speed. When the counter
+ * reaches 0, it clears the previous arrow frame, selects the appropriate
+ * arrow style (light or dark), then blits the current animation frame from
+ * the arrow tile sheet to the window at the text printer's current position.
+ * The sDownArrowYCoords array cycles the source Y offset to create the
+ * bounce: 0->16->32->16->0... The arrow is 10x12 pixels in size.
+ *
+ * GBA CONTEXT:
+ * BlitBitmapRectToWindow copies a rectangular region from a source bitmap
+ * into a window's pixel buffer. The window system then handles copying
+ * this to VRAM during the next CopyWindowToVram call. The 0x80 and 0x10
+ * values are the source bitmap's full width and height in pixels.
+ */
 void TextPrinterDrawDownArrow(struct TextPrinter *textPrinter)
 {
     struct TextPrinterSubStruct *subStruct = &textPrinter->subUnion.sub;
@@ -519,6 +663,12 @@ void TextPrinterDrawDownArrow(struct TextPrinter *textPrinter)
     }
 }
 
+/**
+ * FUNCTION: TextPrinterClearDownArrow
+ *
+ * PURPOSE: Erase the down-arrow indicator from the text window. Called when
+ *          the player presses A/B and the text starts scrolling.
+ */
 void TextPrinterClearDownArrow(struct TextPrinter *textPrinter)
 {
     FillWindowPixelRect(
@@ -531,6 +681,17 @@ void TextPrinterClearDownArrow(struct TextPrinter *textPrinter)
     CopyWindowToVram(textPrinter->printerTemplate.windowId, 0x2);
 }
 
+/**
+ * FUNCTION: TextPrinterWaitAutoMode
+ *
+ * PURPOSE: Wait for auto-scroll delay to expire (used during quest log playback
+ *          where the player doesn't manually press buttons to advance text).
+ *
+ * HOW IT WORKS:
+ * Increments a delay counter each frame. Returns TRUE when the counter reaches
+ * the threshold (50 frames during quest log playback, 120 frames otherwise).
+ * At 60fps, that's roughly 0.83 or 2 seconds of pause before auto-advancing.
+ */
 bool8 TextPrinterWaitAutoMode(struct TextPrinter *textPrinter)
 {
     struct TextPrinterSubStruct *subStruct = &textPrinter->subUnion.sub;
@@ -547,6 +708,14 @@ bool8 TextPrinterWaitAutoMode(struct TextPrinter *textPrinter)
     }
 }
 
+/**
+ * FUNCTION: TextPrinterWaitWithDownArrow
+ *
+ * PURPOSE: Wait for the player to press A or B while showing the animated
+ *          down-arrow. Used at CHAR_PROMPT_SCROLL and CHAR_PROMPT_CLEAR points.
+ *
+ * RETURNS: TRUE when the player presses A or B (or auto-scroll finishes).
+ */
 bool16 TextPrinterWaitWithDownArrow(struct TextPrinter *textPrinter)
 {
     bool8 result = FALSE;
@@ -566,6 +735,12 @@ bool16 TextPrinterWaitWithDownArrow(struct TextPrinter *textPrinter)
     return result;
 }
 
+/**
+ * FUNCTION: TextPrinterWait
+ *
+ * PURPOSE: Wait for the player to press A or B without showing a down-arrow.
+ *          Used for EXT_CTRL_CODE_PAUSE_UNTIL_PRESS.
+ */
 bool16 TextPrinterWait(struct TextPrinter *textPrinter)
 {
     bool16 result = FALSE;
@@ -584,6 +759,20 @@ bool16 TextPrinterWait(struct TextPrinter *textPrinter)
     return result;
 }
 
+/**
+ * FUNCTION: DrawDownArrow
+ *
+ * PURPOSE: Standalone version of the down-arrow drawing that can be used
+ *          outside of the TextPrinter system (e.g., in scrollable lists).
+ *
+ * PARAMETERS:
+ * @param windowId    - Which window to draw in
+ * @param x, y        - Pixel position within the window
+ * @param bgColor     - Background color index to clear with before drawing
+ * @param drawArrow   - If 0, draw the arrow; if nonzero, skip drawing (just clear)
+ * @param counter     - Pointer to a frame delay counter (caller-managed)
+ * @param yCoordIndex - Pointer to the animation frame index (caller-managed)
+ */
 void DrawDownArrow(u8 windowId, u16 x, u16 y, u8 bgColor, bool8 drawArrow, u8 *counter, u8 *yCoordIndex)
 {
     const u8 *arrowTiles;
@@ -626,6 +815,37 @@ void DrawDownArrow(u8 windowId, u16 x, u16 y, u8 bgColor, bool8 drawArrow, u8 *c
     }
 }
 
+/**
+ * FUNCTION: RenderText
+ *
+ * PURPOSE: The core text rendering state machine. This is the most important
+ *          function in the text system -- it processes one character at a time
+ *          per call and handles all control codes, scrolling, and waiting.
+ *
+ * HOW IT WORKS:
+ * This function is called once per frame by the text printer system. It operates
+ * as a state machine with these states:
+ *   - RENDER_STATE_HANDLE_CHAR: Read the next character from the string and process it.
+ *     If it's a normal character, decompress its glyph and blit it to the window.
+ *     If it's a control code, execute the appropriate action (change color, pause, etc.)
+ *   - RENDER_STATE_WAIT: Pause until the player presses A/B.
+ *   - RENDER_STATE_CLEAR: Show down-arrow, wait for input, then clear the whole window.
+ *   - RENDER_STATE_SCROLL_START: Show down-arrow, wait for input, then begin scrolling.
+ *   - RENDER_STATE_SCROLL: Smoothly scroll the window contents upward pixel by pixel.
+ *   - RENDER_STATE_WAIT_SE: Wait for a sound effect to finish playing.
+ *   - RENDER_STATE_PAUSE: Count down a delay timer before resuming.
+ *
+ * RETURNS:
+ *   RENDER_UPDATE  - Still working, call again next frame
+ *   RENDER_REPEAT  - Processed a control code, call again immediately this frame
+ *   RENDER_PRINT   - Drew a character, needs VRAM update
+ *   RENDER_FINISH  - Reached end of string, rendering complete
+ *
+ * GBA CONTEXT:
+ * Text rendering speed is controlled by the textSpeed and delayCounter fields.
+ * The player can hold A/B to speed up text if canABSpeedUpPrint is set. During
+ * auto-scroll mode (quest log playback), the delay is always 1 frame per char.
+ */
 u16 RenderText(struct TextPrinter *textPrinter)
 {
     struct TextPrinterSubStruct *subStruct = &textPrinter->subUnion.sub;
@@ -1004,6 +1224,21 @@ static s32 GetStringWidthFixedWidthFont(const u8 *str, u8 fontId, u8 letterSpaci
     return (u8)(GetFontAttribute(fontId, FONTATTR_MAX_LETTER_WIDTH) + letterSpacing) * width;
 }
 
+/**
+ * FUNCTION: GetFontWidthFunc
+ *
+ * PURPOSE: Look up the glyph-width-query function for a given font ID.
+ *
+ * HOW IT WORKS:
+ * Searches the sGlyphWidthFuncs table for a matching font ID and returns
+ * a function pointer that, given a glyph ID, returns that glyph's pixel width.
+ * Returns NULL if the font ID is not found.
+ *
+ * PARAMETERS:
+ * @param glyphId - The font ID (FONT_SMALL, FONT_NORMAL, etc.)
+ *
+ * RETURNS: Function pointer of type s32(*)(u16, bool32), or NULL.
+ */
 s32 (*GetFontWidthFunc(u8 glyphId))(u16 _glyphId, bool32 _isJapanese)
 {
     u32 i;
@@ -1017,6 +1252,25 @@ s32 (*GetFontWidthFunc(u8 glyphId))(u16 _glyphId, bool32 _isJapanese)
     return NULL;
 }
 
+/**
+ * FUNCTION: GetStringWidth
+ *
+ * PURPOSE: Calculate the total pixel width of a text string without actually
+ *          rendering it. Essential for centering text or sizing windows.
+ *
+ * HOW IT WORKS:
+ * Walks through the entire string, accumulating glyph widths. Handles all the
+ * same control codes as RenderText (color changes, font switches, clear/skip
+ * commands, placeholder string insertions, etc.) but only tracks width, never
+ * draws anything. For multi-line strings, returns the width of the widest line.
+ *
+ * PARAMETERS:
+ * @param fontId        - Which font to measure with
+ * @param str           - The text string to measure
+ * @param letterSpacing - Extra pixels between characters (-1 = use font default)
+ *
+ * RETURNS: The pixel width of the widest line in the string.
+ */
 s32 GetStringWidth(u8 fontId, const u8 *str, s16 letterSpacing)
 {
     bool8 isJapanese;
@@ -1178,6 +1432,28 @@ s32 GetStringWidth(u8 fontId, const u8 *str, s16 letterSpacing)
     return width;
 }
 
+/**
+ * FUNCTION: RenderTextHandleBold
+ *
+ * PURPOSE: Render a string using the Bold font directly into a pixel buffer
+ *          (not into a window). Used for special rendering contexts like the
+ *          quest log or help system where text needs to be pre-rendered.
+ *
+ * HOW IT WORKS:
+ * Unlike RenderText which draws to windows, this function decompresses each
+ * glyph and copies the raw pixel data into a caller-provided buffer. It handles
+ * color control codes but ignores positioning/scrolling codes. Each glyph
+ * occupies 0x40 bytes (two 8x8 tiles of 4bpp data = 32 bytes each, arranged
+ * as top tile + bottom tile). The output buffer advances by 0x40 per character.
+ *
+ * PARAMETERS:
+ * @param pixels - Destination buffer for rendered glyph pixel data
+ * @param fontId - Font to use (may be changed mid-string by control codes)
+ * @param str    - The text string to render
+ * @param a3-a7  - Unused parameters (kept for calling convention compatibility)
+ *
+ * RETURNS: Always returns 1.
+ */
 u8 RenderTextHandleBold(u8 *pixels, u8 fontId, u8 *str, int a3, int a4, int a5, int a6, int a7)
 {
     u8 shadowColor;
@@ -1278,9 +1554,29 @@ u8 RenderTextHandleBold(u8 *pixels, u8 fontId, u8 *str, int a3, int a4, int a5, 
     return 1;
 }
 
+/* Sprite data field aliases for the text cursor sprite.
+ * GBA sprites have a data[] array for storing custom state. */
 #define sDelay data[0]
 #define sState data[1]
 
+/**
+ * FUNCTION: SpriteCB_TextCursor
+ *
+ * PURPOSE: Animate the text cursor sprite with a gentle bounce effect.
+ *
+ * HOW IT WORKS:
+ * Uses a frame delay counter (sDelay) that counts down each frame. When it
+ * hits 0, the cursor moves to the next position in its 4-step bounce cycle:
+ *   State 0: y offset = 0  (top position)
+ *   State 1: y offset = 1  (slightly down)
+ *   State 2: y offset = 2  (bottom position)
+ *   State 3: y offset = 1  (back up, then reset to state 0)
+ *
+ * GBA CONTEXT:
+ * sprite->y2 is a secondary Y offset that gets added to the sprite's base Y
+ * position. By modifying y2 rather than the base y, the bounce animation is
+ * independent of the sprite's actual screen position.
+ */
 static void SpriteCB_TextCursor(struct Sprite *sprite)
 {
     if (sprite->sDelay)
@@ -1310,6 +1606,27 @@ static void SpriteCB_TextCursor(struct Sprite *sprite)
     }
 }
 
+/**
+ * FUNCTION: CreateTextCursorSprite
+ *
+ * PURPOSE: Create an animated cursor sprite at the specified position, typically
+ *          shown next to dialogue text to indicate more text is available.
+ *
+ * GBA CONTEXT:
+ * Sprites on the GBA are hardware objects (OBJ layer) that can be positioned
+ * independently of backgrounds. This is useful for UI elements like cursors
+ * because they can overlay any background without disturbing the tile data.
+ * The priority field (0-3) controls which background layers the sprite appears
+ * in front of or behind.
+ *
+ * PARAMETERS:
+ * @param sheetId     - 0 or 1, selects which arrow tile sheet to use
+ * @param x, y        - Screen position for the cursor
+ * @param priority    - OBJ priority (0 = in front of all BGs, 3 = behind most BGs)
+ * @param subpriority - Ordering relative to other sprites at the same priority
+ *
+ * RETURNS: The sprite ID for later reference (e.g., to destroy it).
+ */
 u8 CreateTextCursorSprite(u8 sheetId, u16 x, u16 y, u8 priority, u8 subpriority)
 {
     u8 spriteId;
@@ -1322,6 +1639,11 @@ u8 CreateTextCursorSprite(u8 sheetId, u16 x, u16 y, u8 priority, u8 subpriority)
     return spriteId;
 }
 
+/**
+ * FUNCTION: DestroyTextCursorSprite
+ *
+ * PURPOSE: Remove the text cursor sprite and free its graphics/palette memory.
+ */
 void DestroyTextCursorSprite(u8 spriteId)
 {
     DestroySprite(&gSprites[spriteId]);
@@ -1332,6 +1654,26 @@ void DestroyTextCursorSprite(u8 spriteId)
 #undef sDelay
 #undef sState
 
+/**
+ * FUNCTION: DrawKeypadIcon
+ *
+ * PURPOSE: Draw a GBA button icon (A, B, L, R, Start, D-pad, etc.) inline
+ *          with text. Used when text strings contain {A_BUTTON} or similar.
+ *
+ * HOW IT WORKS:
+ * Looks up the icon's tile offset, width, and height from sKeypadIcons[],
+ * then blits that region from the gKeypadIconTiles tileset into the window.
+ * The tile offset is multiplied by 0x20 (32 bytes per 4bpp 8x8 tile) to get
+ * the byte offset into the tile data. Source bitmap is 0x80 pixels wide
+ * (128 pixels = 16 tiles wide) and 0x80 pixels tall.
+ *
+ * PARAMETERS:
+ * @param windowId     - Which window to draw into
+ * @param keypadIconId - Which button icon (CHAR_A_BUTTON, CHAR_B_BUTTON, etc.)
+ * @param x, y         - Pixel position within the window
+ *
+ * RETURNS: The pixel width of the drawn icon (for advancing the text cursor).
+ */
 u8 DrawKeypadIcon(u8 windowId, u8 keypadIconId, u16 x, u16 y)
 {
     BlitBitmapRectToWindow(
@@ -1363,6 +1705,38 @@ u8 GetKeypadIconHeight(u8 keypadIconId)
     return sKeypadIcons[keypadIconId].height;
 }
 
+/**
+ * FUNCTION: DecompressGlyph_Small
+ *
+ * PURPOSE: Decompress a character glyph from the Small font into the global
+ *          gGlyphInfo pixel buffer for subsequent blitting to a window.
+ *
+ * HOW IT WORKS:
+ * Font glyphs are stored as compressed 4bpp tile data in ROM. Each glyph
+ * occupies either one or two 8x8 tiles depending on the font's height.
+ *
+ * For Japanese glyphs (8x12 fixed-width):
+ *   The glyph sheet is organized in a grid. The formula to find a glyph's
+ *   address is: base + (0x100 * row) + (0x8 * column), where:
+ *     - row = glyphId >> 4 (divide by 16 to get the row)
+ *     - column = glyphId & 0xF (mod 16 to get the column)
+ *     - 0x100 = bytes per row of 16 glyphs (16 * 16 bytes each)
+ *     - 0x8 = half-width of each glyph entry in u16 units
+ *   The second tile (bottom half) is at offset 0x80 from the first.
+ *
+ * For Latin glyphs (variable-width, up to 8 pixels wide, 13 pixels tall):
+ *   Simpler layout: base + (0x10 * glyphId), since Latin glyphs are stored
+ *   sequentially with 0x10 (16) u16 entries per glyph (two 8x8 tiles).
+ *   Width is looked up from sFontSmallLatinGlyphWidths[].
+ *
+ * GBA CONTEXT:
+ * DecompressGlyphTile() takes compressed tile data and expands it into the
+ * gGlyphInfo.pixels buffer. The pixel buffer uses 4bpp format where each
+ * byte holds two pixels (one in the low nibble, one in the high nibble).
+ * The buffer is organized as: pixels[0x00..0x1F] = top-left tile,
+ * pixels[0x20..0x3F] = top-right tile, pixels[0x40..0x5F] = bottom-left,
+ * pixels[0x60..0x7F] = bottom-right.
+ */
 void DecompressGlyph_Small(u16 glyphId, bool32 isJapanese)
 {
     const u16 *glyphs;
@@ -1427,6 +1801,28 @@ static s32 GetGlyphWidth_NormalCopy1(u16 glyphId, bool32 isJapanese)
         return sFontNormalCopy1LatinGlyphWidths[glyphId];
 }
 
+/**
+ * FUNCTION: DecompressGlyph_Normal
+ *
+ * PURPOSE: Decompress a character glyph from the Normal font. This is the
+ *          main dialogue font used throughout the game.
+ *
+ * HOW IT WORKS:
+ * Similar to DecompressGlyph_Small but handles wider glyphs. Japanese glyphs
+ * are 10 pixels wide (requiring two tiles horizontally), while Latin glyphs
+ * are up to 12 pixels wide and 14 pixels tall (requiring four tiles: 2x2 grid).
+ *
+ * Special case: glyphId 0 represents a "space" character. Instead of
+ * decompressing tile data, it fills the pixel buffer with the shadow color
+ * (GetLastTextColor(2) returns the current shadow color index). The width/height
+ * are still set inside the loop body (a known Game Freak code quality issue where
+ * constant assignments are needlessly repeated each iteration).
+ *
+ * For Japanese Normal font, the glyph grid uses:
+ *   - 8 glyphs per row (>> 3 for row, & 0x7 for column)
+ *   - 0x100 bytes per row, 0x10 per glyph entry
+ *   - Each glyph spans 2 tiles wide (0x8 apart) and 2 tiles tall (0x80 apart)
+ */
 void DecompressGlyph_Normal(u16 glyphId, bool32 isJapanese)
 {
     const u16 *glyphs;
@@ -1614,6 +2010,14 @@ static s32 GetGlyphWidth_Male(u16 glyphId, bool32 isJapanese)
         return sFontMaleLatinGlyphWidths[glyphId];
 }
 
+/**
+ * FUNCTION: DecompressGlyph_Female
+ *
+ * PURPOSE: Decompress a glyph from the Female font variant. Same structure as
+ *          DecompressGlyph_Male but uses the female-specific glyph/width tables.
+ *          The Male and Female fonts have subtly different character shapes to
+ *          match the gender aesthetic of the player character's text style.
+ */
 void DecompressGlyph_Female(u16 glyphId, bool32 isJapanese)
 {
     const u16 *glyphs;
@@ -1685,6 +2089,13 @@ static s32 GetGlyphWidth_Female(u16 glyphId, bool32 isJapanese)
         return sFontFemaleLatinGlyphWidths[glyphId];
 }
 
+/**
+ * FUNCTION: DecompressGlyph_Bold
+ *
+ * PURPOSE: Decompress a glyph from the Bold Japanese-only font. Uses the same
+ *          8x12 tile layout as the Small font (16 glyphs per row in the sheet).
+ *          This font has no Latin variant and is used for special display contexts.
+ */
 static void DecompressGlyph_Bold(u16 glyphId)
 {
     const u16 *glyphs = sFontBoldJapaneseGlyphs + (0x100 * (glyphId >> 0x4)) + (0x8 * (glyphId & 0xF));

@@ -1,3 +1,16 @@
+/**
+ * =BATTLE ANIMATION: UTILITY FUNCTIONS=
+ *
+ * FILE OVERVIEW:
+ * This file provides shared utility functions used by multiple battle
+ * animation effects. These include:
+ *   - Screen-wide effects (flashing, shaking, fading the entire screen)
+ *   - Background scroll/warp effects used by many animations
+ *   - Stat change animations (arrows going up/down for stat boosts/drops)
+ *   - Weather overlay effects (rain, sun, hail, sandstorm visuals)
+ *   - Common particle patterns reused across different move types
+ *   - Animation lifecycle helpers (wait, delay, cleanup)
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

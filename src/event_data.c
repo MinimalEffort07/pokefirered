@@ -1,3 +1,49 @@
+/*
+ * event_data.c - Event Flags and Variables System
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file manages the game's event flags and variables -- the persistent
+ * state that tracks the player's progress through the game. Every in-game
+ * event (defeating a trainer, picking up an item, progressing a story
+ * sequence, enabling the National Pokedex, etc.) is tracked here.
+ *
+ * FLAGS (boolean on/off):
+ *   Stored as individual bits in gSaveBlock1Ptr->flags[] (a byte array).
+ *   Each flag index N is stored at byte [N/8], bit (N & 7).
+ *   Example: FLAG_BADGE01_GET = trainer defeated, gym badge obtained.
+ *
+ *   Flag regions:
+ *   - Permanent flags: Story progress, trainer defeats, item pickups
+ *   - Temporary flags (TEMP_FLAGS): Cleared on every map transition
+ *     (used for per-map state like "item already spawned")
+ *   - System flags (SYS_FLAGS): Engine features (Strength active, etc.)
+ *   - Special flags: Not saved; stored in sSpecialFlags[] (EWRAM only)
+ *
+ * VARIABLES (16-bit values):
+ *   Stored in gSaveBlock1Ptr->vars[] (u16 array).
+ *   Used for: step counters, map scene progress, item quantities, etc.
+ *
+ *   Variable regions:
+ *   - Permanent vars: Persist across saves
+ *   - Temporary vars (TEMP_VARS): Cleared on map transition
+ *   - Special vars (0x8000+): Not saved; point to EWRAM globals like
+ *     gSpecialVar_Result, gSpecialVar_LastTalked, etc.
+ *
+ * QUEST LOG INTEGRATION:
+ * When Quest Log recording is active, flag/var changes are also logged
+ * so they can be replayed during Quest Log playback. During playback,
+ * flag/var reads are redirected to Quest Log stored values.
+ *
+ * NATIONAL POKEDEX:
+ * Uses a triple-check system (magic number + variable + flag) to detect
+ * tampering. All three must match for the Pokedex to be recognized as
+ * enabled. This is an anti-cheat measure.
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "event_data.h"
 #include "item_menu.h"
@@ -9,9 +55,9 @@ static bool8 IsFlagOrVarStoredInQuestLog(u16 idx, u8 a1);
 #define NUM_TEMP_FLAGS     (TEMP_FLAGS_END - TEMP_FLAGS_START + 1)
 #define NUM_TEMP_VARS      (TEMP_VARS_END - TEMP_VARS_START + 1)
 
-#define SPECIAL_FLAGS_SIZE (NUM_SPECIAL_FLAGS / 8)  // 8 flags per byte
+#define SPECIAL_FLAGS_SIZE (NUM_SPECIAL_FLAGS / 8)  /* 8 flags packed per byte */
 #define TEMP_FLAGS_SIZE    (NUM_TEMP_FLAGS / 8)
-#define TEMP_VARS_SIZE     (NUM_TEMP_VARS * 2)      // 1/2 var per byte
+#define TEMP_VARS_SIZE     (NUM_TEMP_VARS * 2)      /* Each var is 2 bytes (u16) */
 
 EWRAM_DATA u16 gSpecialVar_0x8000 = 0;
 EWRAM_DATA u16 gSpecialVar_0x8001 = 0;
@@ -183,6 +229,25 @@ bool32 CanResetRTC(void)
     return TRUE;
 }
 
+/**
+ * FUNCTION: GetVarPointer
+ *
+ * PURPOSE: Get a writable pointer to a game variable by its index.
+ *
+ * HOW IT WORKS:
+ * Variables are divided into two regions:
+ * - Normal vars (VARS_START to SPECIAL_VARS_START-1): Stored in save data
+ *   at gSaveBlock1Ptr->vars[idx - VARS_START]. These persist across saves.
+ * - Special vars (SPECIAL_VARS_START+): Point to specific EWRAM globals
+ *   (gSpecialVar_Result, gSpecialVar_LastTalked, etc.) via gSpecialVars[].
+ *   These are NOT saved -- they're transient per-session values.
+ *
+ * Also handles Quest Log: during recording, var changes are logged.
+ * During playback, vars are read from Quest Log data instead of save data.
+ *
+ * @param idx — Variable index (e.g., VAR_NATIONAL_DEX, TEMP_VARS, 0x8000+)
+ * @return Pointer to the variable's storage, or NULL if invalid index
+ */
 u16 *GetVarPointer(u16 idx)
 {
     u16 *ptr;
@@ -284,28 +349,59 @@ u8 *GetFlagAddr(u16 idx)
     return &sSpecialFlags[(idx - SPECIAL_FLAGS_START) / 8];
 }
 
+/**
+ * FUNCTION: FlagSet
+ *
+ * PURPOSE: Set a flag (turn it ON / TRUE).
+ *
+ * HOW IT WORKS:
+ * Flags are stored as individual bits in a byte array. To set flag N:
+ * - Find the byte: ptr = flags[N / 8]
+ * - Set the bit: *ptr |= (1 << (N % 8))
+ * The expression (idx & 7) is equivalent to (idx % 8) but faster
+ * because 7 = 0b111 masks the lowest 3 bits.
+ */
 bool8 FlagSet(u16 idx)
 {
     u8 *ptr = GetFlagAddr(idx);
     if (ptr != NULL)
-        *ptr |= 1 << (idx & 7);
+        *ptr |= 1 << (idx & 7);  /* Set bit (idx % 8) in the byte */
     return FALSE;
 }
 
+/**
+ * FUNCTION: FlagClear
+ *
+ * PURPOSE: Clear a flag (turn it OFF / FALSE).
+ *
+ * HOW IT WORKS:
+ * Creates a bitmask with all bits set EXCEPT bit (idx % 8), then ANDs
+ * it with the byte. The ~ (bitwise NOT) inverts the single-bit mask.
+ * Example: if idx & 7 == 3, mask = ~(1<<3) = ~0b00001000 = 0b11110111
+ */
 bool8 FlagClear(u16 idx)
 {
     u8 *ptr = GetFlagAddr(idx);
     if (ptr != NULL)
-        *ptr &= ~(1 << (idx & 7));
+        *ptr &= ~(1 << (idx & 7));  /* Clear bit (idx % 8) in the byte */
     return FALSE;
 }
 
+/**
+ * FUNCTION: FlagGet
+ *
+ * PURPOSE: Check whether a flag is set (TRUE) or clear (FALSE).
+ *
+ * HOW IT WORKS:
+ * ANDs the byte with a single-bit mask. If the result is non-zero,
+ * the flag is set. Otherwise it's clear.
+ */
 bool8 FlagGet(u16 idx)
 {
     u8 *ptr = GetFlagAddr(idx);
     if (ptr == NULL)
         return FALSE;
-    if (!(*ptr & 1 << (idx & 7)))
+    if (!(*ptr & 1 << (idx & 7)))  /* Test bit (idx % 8) */
         return FALSE;
     return TRUE;
 }

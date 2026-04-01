@@ -1,3 +1,17 @@
+/**
+ * =BATTLE ANIMATION: MON MOVEMENT EFFECTS=
+ *
+ * FILE OVERVIEW:
+ * This file implements task-based movement animations applied to Pokemon
+ * battler sprites during move animations. Rather than moving particle
+ * effects, these functions move the Pokemon sprite itself to create
+ * effects like:
+ *   - Horizontal/vertical sliding (charging forward, retreating)
+ *   - Shaking/vibrating (being hit, struggling)
+ *   - Bouncing (jumping attacks)
+ *   - Scaling up/down (growing/shrinking effects)
+ *   - Circular or arc motion (spinning, swooping)
+ */
 #include "global.h"
 #include "battle.h"
 #include "battle_anim.h"

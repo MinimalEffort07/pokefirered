@@ -1,3 +1,18 @@
+/**
+ * =DIPLOMA SCREEN=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Diploma display screen — the certificate the
+ * player receives from the Game Freak developers (Game Director) after
+ * completing the Pokedex. There are two diplomas:
+ *   - Regional Diploma: For completing the Kanto Pokedex (catching all
+ *     Pokemon available in FireRed/LeafGreen)
+ *   - National Diploma: For completing the National Pokedex (all 386
+ *     Pokemon from all Gen 3 games)
+ *
+ * The screen shows a decorative diploma graphic with the player's name
+ * and total Pokemon caught, then waits for a button press to exit.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "dynamic_placeholder_text_util.h"

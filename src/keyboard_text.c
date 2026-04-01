@@ -1,6 +1,31 @@
+/**
+ * @file keyboard_text.c
+ * @brief On-Screen Keyboard Text Layouts for Naming and Chat Screens
+ *
+ * FILE OVERVIEW:
+ * This data-only file defines the text strings that form the visual layout of
+ * on-screen keyboards used in three different game systems:
+ *
+ *   1. Easy Chat Keyboard — used in the Easy Chat system where players select
+ *      predefined words/phrases (e.g., for setting Trainer greetings)
+ *   2. Naming Screen Keyboard — used when the player names their character,
+ *      Pokemon, or PC boxes (supports uppercase, lowercase, numbers, symbols)
+ *   3. Union Room Chat Keyboard — used for free-text chat in the wireless
+ *      Union Room feature, including letter, number, and emoji pages
+ *
+ * GBA CONTEXT:
+ * Each keyboard row is stored as a string with {CLEAR N} control codes that
+ * insert horizontal spacing between characters. This is how the game achieves
+ * evenly-spaced keyboard layouts using the variable-width text rendering system.
+ * The _() macro converts these into the GBA's custom character encoding.
+ * Emoji entries like {EMOJI_HAPPY} are special control characters rendered as
+ * small graphical icons rather than text glyphs.
+ */
 #include "global.h"
 
-// Easy Chat keyboard
+/* ========================================================================
+ * EASY CHAT KEYBOARD — used for selecting predefined phrases
+ * ======================================================================== */
 const u8 gText_EasyChatKeyboard_ABCDEFothers[] = _("{CLEAR 11}A{CLEAR 6}B{CLEAR 6}C{CLEAR 26}D{CLEAR 6}E{CLEAR 6}F{CLEAR 26}others");
 const u8 gText_EasyChatKeyboard_GHIJKL[] = _("{CLEAR 11}G{CLEAR 6}H{CLEAR 6}I{CLEAR 26}J{CLEAR 6}K{CLEAR 6}L");
 const u8 gText_EasyChatKeyboard_MNOPQRS[] = _("{CLEAR 11}M{CLEAR 6}N{CLEAR 6}O{CLEAR 26}P{CLEAR 6}Q{CLEAR 6}R{CLEAR 6}S{CLEAR 26} ");

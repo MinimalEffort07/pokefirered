@@ -1,3 +1,18 @@
+/**
+ * @file fame_checker.c
+ * @brief Fame Checker — Key Item That Collects NPC Information
+ *
+ * FILE OVERVIEW:
+ * The Fame Checker is a FireRed/LeafGreen-exclusive Key Item that collects
+ * information about famous NPCs in the game world (Gym Leaders, Elite Four
+ * members, Professor Oak, etc.). As the player explores and talks to NPCs,
+ * new "sightings" are unlocked in the Fame Checker, building a dossier on
+ * each notable character.
+ *
+ * This file implements the Fame Checker's UI: the celebrity list, individual
+ * character pages with unlocked info panels, the spinning Pokeball selector,
+ * and the system for checking which sightings have been discovered.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "constants/songs.h"

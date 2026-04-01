@@ -1,3 +1,26 @@
+/**
+ * =DAYCARE AND POKEMON BREEDING=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Daycare system — the facility on Four Island
+ * (in FRLG) where the player can leave up to two Pokemon to gain
+ * experience while the player walks around. It also implements the
+ * Pokemon BREEDING (egg) system:
+ *
+ *   - Depositing/withdrawing Pokemon from the Daycare
+ *   - Level-up calculation based on steps walked
+ *   - Egg compatibility checking (can these two Pokemon breed?)
+ *   - Egg generation (species, moves, IVs, nature inheritance)
+ *   - Egg hatching after walking enough steps
+ *   - Move inheritance (egg moves, TM moves from parents)
+ *
+ * GAME LOGIC:
+ * Pokemon in the Daycare gain 1 EXP per step the player takes. If two
+ * compatible Pokemon are deposited, they may produce an egg. Compatibility
+ * depends on species egg groups and trainer IDs. The offspring inherits
+ * the mother's species (or father's for Ditto breeding), and can learn
+ * "egg moves" — special moves only obtainable through breeding.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"

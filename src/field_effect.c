@@ -1,3 +1,25 @@
+/**
+ * =FIELD EFFECTS=
+ *
+ * FILE OVERVIEW:
+ * This large file implements visual effects that occur on the overworld map
+ * (as opposed to in battle). Field effects include:
+ *   - HM move usage animations (Surf wave, Fly takeoff, Flash brightness)
+ *   - Pokemon following/appearing effects (footprints, shadows)
+ *   - Environmental effects (tall grass rustling, puddle splashes)
+ *   - Player movement effects (jumping ledges, spinning on ice, sliding)
+ *   - NPC interaction effects (exclamation marks, question marks)
+ *   - Warp/teleport visual effects
+ *   - Reflection effects (in water/mirrors)
+ *   - Berry tree growth state sprites
+ *
+ * GBA CONTEXT:
+ * Field effects are loaded on-demand — their sprite graphics are stored
+ * compressed in ROM and decompressed into VRAM only when needed. This is
+ * necessary because the GBA has limited sprite VRAM (32KB) and the
+ * overworld needs to share it between NPC sprites, the player sprite,
+ * and any active field effects.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

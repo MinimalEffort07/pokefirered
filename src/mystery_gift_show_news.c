@@ -1,3 +1,13 @@
+/**
+ * @file mystery_gift_show_news.c
+ * @brief Wonder News Display — Rendering the Received Wonder News Screen
+ *
+ * FILE OVERVIEW:
+ * This file handles displaying received Wonder News to the player. Wonder News
+ * are short news bulletins received via Mystery Gift that contain a title and
+ * multi-line body text. The display includes a scrollable text area for longer
+ * news items, using the menu indicator (scroll arrow) system.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "menu_indicators.h"

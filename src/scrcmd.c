@@ -1,3 +1,58 @@
+/*
+ * scrcmd.c - Script Command Implementations
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file contains the C implementations of all script bytecode commands.
+ * Each function in gScriptCmdTable[] corresponds to one opcode. When the
+ * script engine (script.c) reads an opcode byte, it calls the corresponding
+ * function here.
+ *
+ * COMMAND CATEGORIES:
+ *
+ * FLOW CONTROL:
+ *   nop, end, return, call, goto, if (conditional branches)
+ *   callstd (call standard script), switch, case
+ *
+ * VARIABLES:
+ *   loadword, loadbytefromaddr, setvar, addvar, subvar
+ *   copyvar, compare, comparevars
+ *
+ * FLAGS:
+ *   setflag, clearflag, checkflag
+ *
+ * MAP/MOVEMENT:
+ *   warp, warpsilent, warpdoor, warpteleport
+ *   getplayerxy, applymovement, waitmovement
+ *   setobjectxy, removeobject, addobject
+ *
+ * TEXT/MENUS:
+ *   msgbox, waitmsg, closemsgbox, yesnobox
+ *   multichoice, showmonpic, braillemessage
+ *
+ * POKEMON:
+ *   givemon, giveegg, checkpartymove, checkspecies
+ *
+ * ITEMS:
+ *   giveitem, takeitem, checkitemspace, checkitem
+ *
+ * BATTLE:
+ *   trainerbattle, dowildbattle, setwildbattle
+ *
+ * SOUND:
+ *   playsong, playfanfare, waitfanfare, playse
+ *
+ * SCREEN EFFECTS:
+ *   fadescreen, special, waitstate, delay
+ *
+ * Each command function reads its parameters from the script bytecode
+ * stream (using ScriptReadHalfword/ScriptReadWord), performs the operation,
+ * and returns FALSE to continue immediately or TRUE to yield.
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "script.h"

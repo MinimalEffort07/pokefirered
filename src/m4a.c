@@ -1,8 +1,42 @@
+/**
+ * @file m4a.c
+ * @brief M4A Sound Engine — GBA Music and Sound Effect Player
+ *
+ * FILE OVERVIEW:
+ * This file implements the M4A (Music for Advance) sound engine, Nintendo's
+ * official GBA audio driver. It handles:
+ *
+ *   - Music playback from sequenced song data (similar to MIDI)
+ *   - Sound effect mixing and priority management
+ *   - Direct Sound channel management (up to 12 simultaneous PCM channels)
+ *   - CGB (Color Game Boy) sound channel emulation (4 legacy channels)
+ *   - Pokemon cry playback with pitch/length manipulation
+ *   - VSync-based audio synchronization
+ *   - DMA-driven audio buffer filling
+ *
+ * GBA CONTEXT:
+ * The GBA has two Direct Sound channels (A and B) that play PCM audio via DMA.
+ * The M4A engine software-mixes multiple audio tracks into these two channels.
+ * The main mixing routine (SoundMain) runs from RAM for speed — the BSS_CODE
+ * section attribute places the SoundMainRAM_Buffer in the .bss.code section,
+ * and the actual mixing code is DMA-copied there at initialization.
+ *
+ * The CGB channels (pulse wave 1, pulse wave 2, wave, noise) emulate the
+ * original Game Boy's sound hardware in software, allowing GBA games to play
+ * retro-style chiptune sounds alongside modern PCM audio.
+ *
+ * Audio runs on a timer interrupt that fires at the sample rate. Between
+ * interrupts, the CPU mixes samples for the next DMA transfer. This is why
+ * m4aSoundVSyncOff/On exist — they pause/resume the timing-critical audio
+ * system during operations that might take variable time (like flash writes).
+ */
 #include "global.h"
 #include "gba/m4a_internal.h"
 
 extern const u8 gCgb3Vol[];
 
+/* BSS_CODE places this buffer in a special section that gets the mixing routine
+ * DMA-copied into it at init time, so SoundMain runs from fast IWRAM */
 #define BSS_CODE __attribute__((section(".bss.code")))
 
 BSS_CODE ALIGNED(4) char SoundMainRAM_Buffer[0x800] = {0};

@@ -1,8 +1,64 @@
+/*
+ * scanline_effect.c - Per-Scanline GPU Register Manipulation (Raster Effects)
+ *
+ * ============================================================================
+ * RASTER EFFECTS: CHANGING HARDWARE MID-FRAME
+ * ============================================================================
+ *
+ * Normally, GPU registers are set once per frame during VBlank, and the GPU
+ * uses those same values for all 160 scanlines. But what if you want
+ * DIFFERENT values on different scanlines?
+ *
+ * This is called a "raster effect" (or "HBlank DMA effect"). It works by
+ * using DMA Channel 0 to write a new value to a GPU register after EVERY
+ * scanline (during HBlank - the brief pause between each scanline).
+ *
+ * EXAMPLES OF RASTER EFFECTS IN POKEMON:
+ *   - Battle transition waves: The BG horizontal scroll (HOFS) is different
+ *     on each scanline, creating a wavy distortion effect.
+ *   - Water reflections: Different scroll values make the reflection ripple.
+ *   - Circular screen wipe: A window register changes per scanline to
+ *     create expanding/contracting circles.
+ *
+ * HOW IT WORKS:
+ *
+ * 1. Game code fills gScanlineEffectRegBuffers[N] with 160 values
+ *    (one per visible scanline), representing the register value to use
+ *    on each line.
+ *
+ * 2. ScanlineEffect_InitHBlankDmaTransfer() configures DMA0 to:
+ *    - Source: gScanlineEffectRegBuffers[srcBuffer] (starting at entry 1)
+ *    - Destination: A GPU register (e.g., REG_BG0HOFS)
+ *    - Mode: DMA_START_HBLANK | DMA_REPEAT (trigger on each HBlank)
+ *    - Count: 1 (transfer one value per HBlank)
+ *
+ * 3. The first scanline's value is set manually (because the first HBlank
+ *    DMA fires AFTER scanline 0 has been drawn, so we need to set
+ *    the value before scanline 0 starts).
+ *
+ * 4. For the remaining 159 scanlines, DMA0 automatically writes the
+ *    next value from the buffer to the register during each HBlank.
+ *
+ * DOUBLE BUFFERING:
+ *   Two buffers (gScanlineEffectRegBuffers[0] and [1]) are used.
+ *   While DMA reads from one buffer, the game writes new values to the
+ *   other. srcBuffer toggles (XOR 1) each frame to swap them.
+ *   This prevents visual artifacts from partially-written buffers.
+ *
+ * WAVE EFFECT:
+ *   The wave effect (ScanlineEffect_InitWave) pre-computes a sine wave
+ *   table and uses a task to shift the wave pattern upward each frame,
+ *   creating the classic "heat haze" / "underwater" distortion.
+ *
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "task.h"
 #include "trig.h"
 #include "scanline_effect.h"
 
+/* Battle BG scroll positions - needed to add battle-specific offsets to wave values */
 extern u16 gBattle_BG0_X;
 extern u16 gBattle_BG0_Y;
 extern u16 gBattle_BG1_X;
@@ -15,16 +71,39 @@ extern u16 gBattle_BG3_Y;
 static void CopyValue16Bit(void);
 static void CopyValue32Bit(void);
 
-// EWRAM vars
-
-// Per-scanline register values.
-// This is double buffered so that it can be safely written to at any time
-// without overwriting the buffer that the DMA is currently reading
+/*
+ * Per-scanline register value buffers.
+ * Two buffers of 960 (0x3C0) entries each:
+ *   Entries 0-159:   Scanline values for the current frame
+ *   Entries 160-319: Scanline values for the alternate buffer
+ *   Entries 320-959: Scratch space for wave pre-computation
+ *
+ * DOUBLE BUFFERED: DMA reads from one while the CPU writes to the other.
+ * Stored in EWRAM because they're too large for IWRAM (3840 bytes each).
+ */
 EWRAM_DATA u16 gScanlineEffectRegBuffers[2][0x3C0] = {0};
 
+/* Main scanline effect state structure */
 EWRAM_DATA struct ScanlineEffect gScanlineEffect = {0};
+
+/* Flag to signal the wave task to self-destruct */
 EWRAM_DATA static bool8 sShouldStopWaveTask = FALSE;
 
+/**
+ * FUNCTION: ScanlineEffect_Stop
+ *
+ * PURPOSE: Halt the scanline effect and stop DMA0.
+ *
+ * HOW IT WORKS:
+ * Sets the state to 0 (inactive), stops DMA channel 0, and destroys
+ * the wave task if one is running. DMA0 must be stopped explicitly
+ * because it's set to REPEAT mode (it would keep firing every HBlank).
+ *
+ * GBA CONTEXT:
+ * DMA0 is the highest-priority DMA channel. When it's running in HBlank
+ * repeat mode, it fires 160 times per frame. If not stopped, it will
+ * interfere with other DMA operations and waste bus bandwidth.
+ */
 void ScanlineEffect_Stop(void)
 {
     gScanlineEffect.state = 0;
@@ -36,6 +115,16 @@ void ScanlineEffect_Stop(void)
     }
 }
 
+/**
+ * FUNCTION: ScanlineEffect_Clear
+ *
+ * PURPOSE: Zero out all scanline effect state and buffers.
+ *
+ * HOW IT WORKS:
+ * Uses CpuFill16 to zero both scanline buffers (7680 bytes total),
+ * then clears all fields of the ScanlineEffect struct.
+ * waveTaskId is set to 0xFF (invalid task ID = no wave task).
+ */
 void ScanlineEffect_Clear(void)
 {
     CpuFill16(0, gScanlineEffectRegBuffers, sizeof(gScanlineEffectRegBuffers));
@@ -50,6 +139,23 @@ void ScanlineEffect_Clear(void)
     gScanlineEffect.waveTaskId = 0xFF;
 }
 
+/**
+ * FUNCTION: ScanlineEffect_SetParams
+ *
+ * PURPOSE: Configure the scanline effect's DMA parameters.
+ *
+ * HOW IT WORKS:
+ * Sets up the DMA source buffers, destination register, and control flags.
+ * The source buffers point to entry [1] (not [0]) because the first HBlank
+ * DMA fires AFTER scanline 0, so DMA starts transferring values for scanline 1.
+ * Scanline 0's value is set manually via setFirstScanlineReg callback.
+ *
+ * Two transfer modes are supported:
+ *   16-bit: For most GPU registers (HOFS, VOFS, etc.) which are 16-bit
+ *   32-bit: For registers that need 32-bit writes (BG affine parameters)
+ *
+ * @param params — Structure containing dmaDest, dmaControl, initState, unused9
+ */
 void ScanlineEffect_SetParams(struct ScanlineEffectParams params)
 {
     if (params.dmaControl == SCANLINE_EFFECT_DMACNT_16BIT)  // 16-bit
@@ -76,6 +182,30 @@ void ScanlineEffect_SetParams(struct ScanlineEffectParams params)
     gScanlineEffect.unused17   = params.unused9;
 }
 
+/**
+ * FUNCTION: ScanlineEffect_InitHBlankDmaTransfer
+ *
+ * PURPOSE: Start DMA0 for the current frame's scanline effect.
+ *
+ * HOW IT WORKS:
+ * Called from the VBlank callback at the start of each frame.
+ * 1. If state == 0: Effect is inactive, do nothing.
+ * 2. If state == 3: Effect is being stopped. Stop DMA0 and signal the
+ *    wave task to destroy itself.
+ * 3. Otherwise: Set up DMA0 for HBlank-triggered transfers:
+ *    a. Stop any previous DMA0 transfer.
+ *    b. Configure DMA0 with source=buffer[srcBuffer], dest=GPU register,
+ *       control=HBlank repeat mode.
+ *    c. Manually write the first scanline's value (since DMA won't fire
+ *       until AFTER scanline 0 has been drawn).
+ *    d. Swap the source buffer index (0->1 or 1->0) for double buffering.
+ *
+ * GBA CONTEXT:
+ * DMA_START_HBLANK mode causes DMA0 to automatically transfer one unit
+ * of data after each scanline's visible pixels are drawn. Combined with
+ * DMA_REPEAT, this repeats for all 160 visible scanlines.
+ * The result is a different register value on every scanline.
+ */
 void ScanlineEffect_InitHBlankDmaTransfer(void)
 {
     if (gScanlineEffect.state == 0)
@@ -102,9 +232,19 @@ void ScanlineEffect_InitHBlankDmaTransfer(void)
     }
 }
 
-// These two functions are used to copy the register for the first scanline,
-// depending whether it is a 16-bit register or a 32-bit register.
-
+/**
+ * FUNCTION: CopyValue16Bit / CopyValue32Bit
+ *
+ * PURPOSE: Manually write the scanline effect value for scanline 0.
+ *
+ * HOW IT WORKS:
+ * DMA0 in HBlank mode fires AFTER a scanline is drawn. So for scanline 0,
+ * the DMA hasn't fired yet. These functions manually copy entry [0] from
+ * the current source buffer to the destination register, ensuring scanline 0
+ * gets the correct value.
+ *
+ * Volatile pointers are used because we're writing to hardware GPU registers.
+ */
 static void CopyValue16Bit(void)
 {
     vu16 *dest = (vu16 *)gScanlineEffect.dmaDest;
@@ -201,6 +341,22 @@ static void TaskFunc_UpdateWavePerFrame(u8 taskId)
     }
 }
 
+/**
+ * FUNCTION: GenerateWave
+ *
+ * PURPOSE: Pre-compute a sine wave lookup table for the wave effect.
+ *
+ * HOW IT WORKS:
+ * Fills a 256-entry buffer with sine values scaled by the given amplitude.
+ * Uses gSineTable (a precomputed 256-entry sine table from trig.c).
+ * The frequency parameter controls how fast the angle advances per entry.
+ * Higher frequency = more wave cycles across the scanline range.
+ *
+ * @param buffer    — Output buffer for wave values
+ * @param frequency — How fast to advance through the sine table (higher = more cycles)
+ * @param amplitude — Maximum displacement in pixels
+ * @param unused    — Not used
+ */
 static void GenerateWave(u16 *buffer, u8 frequency, u8 amplitude, u8 unused)
 {
     u16 i = 0;

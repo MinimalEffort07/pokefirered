@@ -1,3 +1,10 @@
+/**
+ * =AGB FLASH MX (MACRONIX) DRIVER=
+ *
+ * Flash driver for MX-type (Macronix) flash chips. Contains timing
+ * constants and chip-specific erase/program functions for Macronix
+ * flash memory, another common flash chip used in GBA cartridges.
+ */
 #include "gba/gba.h"
 #include "gba/flash_internal.h"
 

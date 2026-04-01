@@ -1,3 +1,12 @@
+/**
+ * =MAIL DATA MANAGEMENT=
+ *
+ * This file manages the mail data storage system — creating, reading,
+ * and managing mail messages that are attached to Pokemon as held items.
+ * Functions handle writing mail content, clearing mail data, moving mail
+ * between Pokemon and the Mailbox, and converting between mail slot
+ * indices and mail items.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "mail.h"

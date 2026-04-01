@@ -1,3 +1,17 @@
+/**
+ * =MULTIBOOT PROTOCOL=
+ *
+ * This file implements the GBA Multiboot protocol — a system that allows
+ * one GBA with a cartridge to send a small program to another GBA without
+ * a cartridge via the link cable. This is used for certain multiplayer
+ * features where only one player needs to own the game cartridge.
+ *
+ * GBA CONTEXT:
+ * Multiboot is a built-in feature of the GBA hardware. The "master" GBA
+ * sends program data through the serial port, and the "slave" GBA loads
+ * it into its 256KB EWRAM and executes it. The protocol handles
+ * handshaking, data transfer, and verification between up to 4 GBAs.
+ */
 #include "global.h"
 #include "multiboot.h"
 

@@ -1,3 +1,12 @@
+/**
+ * =BATTLE ANIMATION: GENERAL EFFECTS 3=
+ *
+ * FILE OVERVIEW:
+ * The third of three files containing general-purpose battle animation
+ * effects. This file includes additional sprite callbacks and task
+ * functions for complex move animations, covering effects that were
+ * added later in development or didn't fit in the first two files.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

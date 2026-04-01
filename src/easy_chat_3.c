@@ -1,3 +1,14 @@
+/**
+ * @file easy_chat_3.c
+ * @brief Easy Chat Word Data — Dictionary Tables, Category Definitions, and Lookups
+ *
+ * FILE OVERVIEW:
+ * This file contains the word dictionary data for the Easy Chat system, including:
+ * all word entries organized by category, category metadata (names, sizes, icons),
+ * alphabetical lookup tables, and functions for converting between Easy Chat word
+ * IDs and display text. It also handles the on-screen keyboard for letter-based
+ * word searching.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "keyboard_text.h"

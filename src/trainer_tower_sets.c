@@ -1,3 +1,29 @@
+/**
+ * @file trainer_tower_sets.c
+ * @brief Trainer Tower Battle Data — Predefined Floor Configurations
+ *
+ * FILE OVERVIEW:
+ * This massive data file defines the built-in Trainer Tower floor configurations.
+ * The Trainer Tower (located on Seven Island) is a multi-floor battle facility
+ * where the player battles trainers on each floor in sequence, racing against
+ * a timer.
+ *
+ * Each floor is defined by a TrainerTowerFloor struct containing:
+ *   - Challenge type (Single, Double, Knockout, or Mixed)
+ *   - Prize item for completing the floor
+ *   - Up to 2 trainers with their names, dialogue, and full Pokemon teams
+ *   - Each Pokemon has species, held item, moves, EVs/IVs, nature, etc.
+ *
+ * The tower supports custom floors received via e-Reader cards (handled by
+ * cereader_tool.c), but this file provides the default set of floors that
+ * ship with the game.
+ *
+ * GAME LOGIC:
+ * DUMMY_TOWER_MON and DUMMY_TOWER_TEAM macros create placeholder entries for
+ * unused team/mon slots. The 0xFFFF values in speech fields represent "no text"
+ * Easy Chat words. The _("$$$$$$$$$$") nickname is a dummy that renders as
+ * blank or garbage — real Pokemon nicknames override this.
+ */
 #include "global.h"
 #include "cereader_tool.h"
 #include "trainer_tower.h"
@@ -8,7 +34,7 @@
 #include "constants/trainer_tower.h"
 #include "constants/trainers.h"
 
-// Dummy strings must be declared explicitly for the sake of modern gcc
+/* Dummy strings must be declared explicitly for the sake of modern gcc */
 #define DUMMY_TOWER_MON(iv) {.hpIV = iv, .attackIV = iv, .defenseIV = iv, .speedIV = iv, .spAttackIV = iv, .spDefenseIV = iv, .nickname = _("$$$$$$$$$$")}
 #define DUMMY_TOWER_TEAM(iv) {.name = _(""), .textColor = 1, .speechBefore = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}, .speechWin = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}, .speechLose = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}, .speechAfter = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF}, .mons = {DUMMY_TOWER_MON(iv), DUMMY_TOWER_MON(iv), DUMMY_TOWER_MON(iv), DUMMY_TOWER_MON(iv), DUMMY_TOWER_MON(iv), DUMMY_TOWER_MON(iv)}}
 

@@ -1,3 +1,46 @@
+/*
+ * =Pokemon FireRed Overworld Game Loop=
+ *
+ * This file is the heart of the game's field/overworld system. It manages:
+ *   - The main overworld game loop (CB1 and CB2 callbacks)
+ *   - Map loading and transitions (warps, connections, teleportation)
+ *   - The complete map setup pipeline (layout, objects, scripts, weather, music)
+ *   - Link cable multiplayer in the overworld
+ *   - Screen fade transitions between maps
+ *   - Game state management (saving, starting new games, continuing)
+ *
+ * ARCHITECTURE:
+ * The overworld uses a two-level callback system:
+ *   CB1 (Callback 1): Runs every frame. Handles core per-frame updates like
+ *     camera movement, object animation, and script execution.
+ *   CB2 (Callback 2): The "main loop" callback. For overworld, this typically
+ *     calls RunTasks, AnimateSprites, BuildOamBuffer, UpdatePaletteFade -- the
+ *     standard GBA game loop steps.
+ *
+ * MAP LOADING PIPELINE:
+ * Loading a new map involves many steps in a specific order:
+ *   1. Set the warp destination (map group/number, position)
+ *   2. Load the map header and layout data (fieldmap.c)
+ *   3. Load tileset graphics and palettes into VRAM
+ *   4. Spawn object events (NPCs, items) from the map's event data
+ *   5. Initialize scripts (map scripts, object scripts)
+ *   6. Set weather and music
+ *   7. Configure the camera position
+ *   8. Fade in the screen
+ *
+ * WARP SYSTEM:
+ * Warps connect maps together (doors, cave entrances, stairs, etc.). Each
+ * warp has a destination (map group, map number, warp ID on the target map)
+ * and optional position coordinates. The engine maintains several warp
+ * slots: the last used warp (for returning), fixed warps (dive, hole),
+ * and the current warp destination being loaded.
+ *
+ * MULTIPLAYER:
+ * The overworld supports link cable multiplayer where multiple players share
+ * the same map (e.g., Cable Club rooms). Link players appear as NPCs and
+ * their movements are synchronized via the link protocol. The FACING_*
+ * constants map to both movement directions and link state communication.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "bg_regs.h"
@@ -1390,6 +1433,24 @@ bool32 IsUpdateLinkStateCBActive(void)
         return FALSE;
 }
 
+/**
+ * FUNCTION: DoCB1_Overworld
+ *
+ * PURPOSE: The core per-frame overworld update. This is where the player's
+ *          input is read and translated into world actions (walking, talking
+ *          to NPCs, using items, opening menus, etc.)
+ *
+ * HOW IT WORKS:
+ * 1. Run any pending Quest Log actions.
+ * 2. Update the player avatar's transition state (e.g., mounting bike).
+ * 3. Read and process player input into a FieldInput struct.
+ * 4. If player controls are unlocked, check for special interactions
+ *    (warps, scripts, NPC talks). If a script is triggered, lock controls.
+ * 5. If no script triggered, perform normal movement (player_step).
+ * 6. Run quest log callback for recording.
+ *
+ * This is called from CB1_Overworld every frame when not in quest log playback.
+ */
 static void DoCB1_Overworld(u16 newKeys, u16 heldKeys)
 {
     struct FieldInput fieldInput;
@@ -1445,6 +1506,19 @@ static void DoCB1_Overworld_QuestLogPlayback(void)
     FieldClearPlayerInput(&gQuestLogFieldInput);
 }
 
+/**
+ * FUNCTION: CB1_Overworld
+ *
+ * PURPOSE: The main Callback 1 for the overworld. Called every frame by the
+ *          main game loop (see main.c). Dispatches to either the normal
+ *          overworld update or the quest log playback variant.
+ *
+ * HOW IT WORKS:
+ * Only runs when CB2 is the Overworld callback (to avoid running overworld
+ * logic during transitions). Selects between DoCB1_Overworld (normal gameplay)
+ * and DoCB1_Overworld_QuestLogPlayback (replaying recorded inputs).
+ * Also updates the multiplayer state each frame.
+ */
 void CB1_Overworld(void)
 {
     if (gMain.callback2 == CB2_Overworld)
@@ -1457,6 +1531,25 @@ void CB1_Overworld(void)
     }
 }
 
+/**
+ * FUNCTION: OverworldBasic
+ *
+ * PURPOSE: The standard per-frame processing pipeline for the overworld.
+ *          This is the "rendering and update" half of the game loop.
+ *
+ * HOW IT WORKS:
+ * Executes these subsystems in order every frame:
+ *   1. ScriptContext_RunScript: Execute any active script commands
+ *   2. RunTasks: Update all active task state machines
+ *   3. AnimateSprites: Advance sprite animation frames
+ *   4. CameraUpdate: Move the camera/scroll the map
+ *   5. SetQuestLogEvent_Arrived: Record arrival events for quest log
+ *   6. UpdateCameraPanning: Apply any camera pan effects
+ *   7. BuildOamBuffer: Prepare sprite data for OAM transfer
+ *   8. UpdatePaletteFade: Advance any active palette fading
+ *   9. UpdateTilesetAnimations: Cycle animated map tiles (water, flowers)
+ *   10. DoScheduledBgTilemapCopiesToVram: Copy any modified BG tilemaps
+ */
 static void OverworldBasic(void)
 {
     ScriptContext_RunScript();
@@ -1517,6 +1610,22 @@ static bool8 RunFieldCallback(void)
     return TRUE;
 }
 
+/**
+ * FUNCTION: CB2_NewGame
+ *
+ * PURPOSE: Initialize and start a brand new game. This is called after
+ *          the player finishes Oak's speech and chooses their name/starter.
+ *
+ * HOW IT WORKS:
+ * 1. Stops any playing music and resets safari zone state.
+ * 2. Calls NewGameInitData to set up initial game state (location, party, etc.)
+ * 3. Starts the play time counter.
+ * 4. Initializes the script system and unlocks player controls.
+ * 5. Sets the field callback to fade in from black.
+ * 6. Runs the map loading loop (DoMapLoadLoop) to set up the first map.
+ * 7. Sets the overworld callbacks (CB1_Overworld + CB2_Overworld) to begin
+ *    the normal game loop.
+ */
 void CB2_NewGame(void)
 {
     FieldClearVBlankHBlankCallbacks();
@@ -2046,6 +2155,29 @@ static bool32 ReturnToFieldLink(u8 *state)
     return FALSE;
 }
 
+/**
+ * FUNCTION: DoMapLoadLoop
+ *
+ * PURPOSE: Synchronously load a map by running LoadMapInStepsLocal to completion.
+ *          Each call to LoadMapInStepsLocal processes one step of the 14-step
+ *          map loading pipeline. This function loops until all steps are done.
+ *
+ * The 14 map loading steps (in LoadMapInStepsLocal) are:
+ *   0: Reset screen, clear VRAM/OAM/palettes
+ *   1: Initialize the VMap buffer, load map layout from header
+ *   2: Set warp events, scripts, and weather
+ *   3: Initialize object events (player avatar, NPCs, items)
+ *   4: Reset subsystems (tasks, sprites, palettes, scanline, camera)
+ *   5: Load primary tileset graphics to VRAM
+ *   6: Load secondary tileset graphics to VRAM
+ *   7: Wait for tile decompression, then load tileset palettes
+ *   8: Draw the full map view (render all visible metatiles to BG tilemaps)
+ *   9: Initialize animated tile cycling (water, flowers, etc.)
+ *   10: (empty step, placeholder)
+ *   11: Load wireless indicator sprite if in wireless mode
+ *   12: Run the field callback (fade-in, warp animation, etc.)
+ *   13: Set VBlank callback and report completion
+ */
 static void DoMapLoadLoop(u8 *state)
 {
     while (!LoadMapInStepsLocal(state, FALSE)) ;
@@ -2074,6 +2206,22 @@ static void InitViewGraphics(void)
     InitMapView();
 }
 
+/**
+ * FUNCTION: InitOverworldGraphicsRegisters
+ *
+ * PURPOSE: Configure all GPU registers for the overworld display mode.
+ *
+ * GBA CONTEXT:
+ * Sets up the display for Mode 0 (4 tile-based BG layers), enables OBJ
+ * rendering with 1D mapping, and configures the window and blending hardware:
+ *   - WIN0: Covers the full screen (0-255), shows all BG layers + sprites.
+ *   - WIN1: Set to zero-width (invisible), used as needed for effects.
+ *   - WINOUT: Only BG0 visible outside windows (for UI overlays).
+ *   - BLDCNT: Alpha blending between BG layers 1-3 and sprites,
+ *     creating the semi-transparent effect for bridge overlaps, etc.
+ *   - BLDALPHA: Blend coefficients 13/7 (target 1 at 81% + target 2 at 44%).
+ *   - 0x20 in DISPCNT is BG2_ON, enabling the secondary map layer.
+ */
 static void InitOverworldGraphicsRegisters(void)
 {
     ClearScheduledBgCopiesToVram();

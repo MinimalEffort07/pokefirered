@@ -1,3 +1,18 @@
+/**
+ * =BATTLE ANIMATION: SPECIAL EFFECTS=
+ *
+ * FILE OVERVIEW:
+ * This file implements special-case battle animations that don't belong
+ * to a specific type or are used for unique battle events:
+ *   - Wish/Doom Desire delayed attack effects
+ *   - Castform form change animation
+ *   - Ability activation effects (Intimidate, Trace, etc.)
+ *   - Item activation visual effects (Berry consumption, etc.)
+ *   - Experience bar filling animation
+ *   - Level up sparkle effect
+ *   - Substitute doll appearance/disappearance
+ *   - Shiny sparkle animation when a shiny Pokemon appears
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

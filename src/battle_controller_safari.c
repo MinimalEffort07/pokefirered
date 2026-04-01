@@ -1,3 +1,28 @@
+/**
+ * =SAFARI ZONE BATTLE CONTROLLER=
+ *
+ * FILE OVERVIEW:
+ * This file implements the battle controller for the player's side during
+ * Safari Zone encounters. In the Safari Zone, the player doesn't command
+ * Pokemon — instead, they can:
+ *   - Throw a Safari Ball to attempt capture
+ *   - Throw Bait (makes Pokemon less likely to flee but harder to catch)
+ *   - Throw a Rock (makes Pokemon easier to catch but more likely to flee)
+ *   - Run away from the encounter
+ *
+ * This controller replaces the normal Fight/Bag/Pokemon/Run menu with the
+ * Safari-specific Ball/Bait/Rock/Run menu. The "choose move" command is
+ * never used since the player doesn't battle directly. The opponent side
+ * still uses the normal AI controller, with AI_SCRIPT_SAFARI deciding
+ * whether the wild Pokemon flees or watches.
+ *
+ * ARCHITECTURE:
+ * Like all battle controllers, this implements the full set of
+ * CONTROLLER_CMDS_COUNT commands. Most are simple pass-throughs or no-ops
+ * since Safari battles don't use most battle features (no moves, no
+ * abilities, no items from bag, etc.). The key function is
+ * SafariHandleChooseAction, which presents the Safari-specific menu.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

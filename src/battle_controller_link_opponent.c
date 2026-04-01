@@ -1,3 +1,14 @@
+/**
+ * =LINK OPPONENT BATTLE CONTROLLER=
+ *
+ * FILE OVERVIEW:
+ * This file implements the battle controller for a human opponent connected
+ * via the GBA link cable or wireless adapter. Unlike the AI opponent
+ * controller, this one receives move/action choices from the linked player's
+ * game rather than computing them locally. The visual command handlers
+ * (sprites, animations, health bars) work identically to the local opponent
+ * controller, but decision commands receive data from the link buffer.
+ */
 #include "global.h"
 #include "battle.h"
 #include "battle_anim.h"

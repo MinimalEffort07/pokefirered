@@ -1,3 +1,10 @@
+/**
+ * =BATTLE ANIMATION: FLYING-TYPE MOVES=
+ *
+ * Visual effects for Flying-type move animations (Gust wind spirals,
+ * Wing Attack slash trails, Fly ascent/descent, Aerial Ace speed lines,
+ * Sky Attack charge glow, Drill Peck rotating drill, etc.).
+ */
 #include "global.h"
 #include "battle_anim.h"
 #include "gflib.h"

@@ -1,17 +1,47 @@
+/**
+ * =TRAINER AND POKEMON SPRITE PICTURES=
+ *
+ * FILE OVERVIEW:
+ * This file provides a generic system for creating 64x64 pixel sprites
+ * for Pokemon and trainer pictures used outside of battle. These "pic"
+ * sprites appear in contexts like:
+ *   - The Hall of Fame celebration screen (Pokemon portraits)
+ *   - The Pokemon Summary screen (Pokemon front sprite)
+ *   - The Trainer Card (player's trainer sprite)
+ *   - The trade screen (Pokemon sprites)
+ *   - Oak's introduction speech (Pokemon/trainer sprites)
+ *
+ * The system manages up to 8 simultaneous pic sprites, each allocated
+ * from a pool. Unlike battle sprites which use shared sprite templates,
+ * these pics each get their own decompressed frame data and palette.
+ *
+ * GBA CONTEXT:
+ * Each pic sprite is a 64x64 pixel hardware sprite (the largest size
+ * the GBA supports for a single sprite). The compressed sprite data is
+ * decompressed from ROM into allocated RAM buffers, then loaded into
+ * VRAM as sprite tile data. The SpriteFrameImage structure tells the
+ * sprite system where to find the decompressed pixel data.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"
 #include "data.h"
 
+/**
+ * PicData — state for one managed pic sprite.
+ * Tracks the allocated frame buffer, palette tag, sprite ID,
+ * and whether this slot is currently in use.
+ */
 struct PicData
 {
-    u8 *frames;
-    struct SpriteFrameImage *images;
-    u16 paletteTag;
-    u8 spriteId;
-    u8 active;
+    u8 *frames;                    /* Decompressed pixel data buffer */
+    struct SpriteFrameImage *images; /* Sprite frame image descriptor */
+    u16 paletteTag;                /* Tag identifying this sprite's palette */
+    u8 spriteId;                   /* GBA sprite ID (0-127) */
+    u8 active;                     /* TRUE if this slot is in use */
 };
 
+/* Maximum number of pic sprites that can exist simultaneously. */
 #define PICS_COUNT 8
 
 static EWRAM_DATA struct SpriteTemplate sCreatingSpriteTemplate = {};

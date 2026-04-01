@@ -1,3 +1,11 @@
+/**
+ * =ITEM MENU ICONS=
+ *
+ * This file manages the item icon sprites displayed in the Bag and Shop
+ * menus. Each item has a small sprite icon (e.g., a Potion bottle, a Poke
+ * Ball, a TM disc). Icons are loaded on-demand from compressed ROM data
+ * and displayed as hardware sprites next to item names in lists.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

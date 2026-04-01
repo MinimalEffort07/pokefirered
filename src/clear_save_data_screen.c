@@ -1,3 +1,23 @@
+/**
+ * =CLEAR SAVE DATA SCREEN=
+ *
+ * FILE OVERVIEW:
+ * This file implements the "Clear Save Data" confirmation screen, which
+ * appears when the player holds a specific button combination (Up + Select + B)
+ * on the title screen. It asks the player to confirm whether they want to
+ * erase all saved data, then performs a full flash memory wipe if confirmed.
+ *
+ * This is a safety feature — the player must explicitly confirm through a
+ * Yes/No dialog before any data is deleted. After clearing, the system
+ * performs a soft reset to restart the game fresh.
+ *
+ * GBA CONTEXT:
+ * "Clearing save data" means erasing the flash ROM sectors that store
+ * the player's save file. This is done by calling ClearSaveData() which
+ * writes zeros to all save sectors in the cartridge's flash memory chip.
+ * The soft reset (DoSoftReset) restarts the game by jumping back to the
+ * ROM's entry point, similar to powering the GBA off and on again.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "menu.h"

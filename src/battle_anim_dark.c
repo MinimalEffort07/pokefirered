@@ -1,3 +1,10 @@
+/**
+ * =BATTLE ANIMATION: DARK-TYPE MOVES=
+ *
+ * Visual effects for Dark-type move animations (Bite fangs, Crunch jaws,
+ * Pursuit shadows, Thief hand sprites, Faint Attack invisibility, etc.).
+ * Several of these use the GBA's scanline effect for screen-warping.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

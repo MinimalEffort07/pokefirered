@@ -1,3 +1,35 @@
+/*
+ * battle_gfx_sfx_util.c - Battle Graphics and Sound Effect Utilities
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * Helper functions for battle-related graphics and sound operations:
+ *
+ * SPRITE MANAGEMENT:
+ * - Loading/freeing Pokemon sprite graphics and palettes
+ * - Determining sprite coordinates based on battler position
+ * - Managing battler sprite visibility and substitute sprites
+ * - Handling sprite palettes for different Pokemon forms (Castform, Unown)
+ *
+ * SOUND EFFECTS:
+ * - Playing Pokemon cries at correct pitch/volume based on HP
+ * - Managing the low-HP warning beep (SE_LOW_HEALTH)
+ * - Playing battle sound effects synced with animations
+ *
+ * HEALTHBOX MANAGEMENT:
+ * - Battle initialization sprite loading (BattleInitAllSprites)
+ * - Sprite data allocation for mon sprites in battle
+ *
+ * GBA CONTEXT:
+ * Pokemon sprites in battle are 64x64 pixels, using 4bpp (4 bits per pixel,
+ * 16 colors per palette). Each sprite uses one of 16 OAM sprite palettes.
+ * The game reserves palettes 0-3 for battler sprites (player left, opponent
+ * left, player right, opponent right in double battles).
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "m4a.h"

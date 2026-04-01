@@ -1,3 +1,22 @@
+/**
+ * @file quest_log.c
+ * @brief Quest Log Core — Adventure Log Recording and Playback Engine
+ *
+ * FILE OVERVIEW:
+ * The Quest Log (Adventure Log) is a FireRed/LeafGreen-exclusive feature that
+ * automatically records the player's recent activities and can replay them as
+ * short scenes when the game is loaded. This file implements the core engine:
+ *
+ *   - Event recording: capturing game events (battles, item pickups, NPC
+ *     interactions, Pokemon caught/evolved, etc.) into a circular buffer
+ *   - Scene playback: replaying recorded events as overworld animations
+ *   - State management: transitioning between recording and playback modes
+ *   - The Quest Log display UI showing recent event summaries
+ *   - Integration with save/load to persist recorded events
+ *
+ * The Quest Log records events as compressed command sequences that can
+ * reconstruct the player's movements and actions on the overworld map.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

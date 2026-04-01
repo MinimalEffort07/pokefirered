@@ -1,3 +1,13 @@
+/**
+ * @file union_room_message.c
+ * @brief Union Room Messages — Text Strings and Dynamic Message Generation
+ *
+ * FILE OVERVIEW:
+ * This file provides the text message strings and formatting functions used in
+ * the Union Room's communication menus. It generates context-appropriate messages
+ * like trade requests, battle invitations, and chat messages, dynamically inserting
+ * player names and activity descriptions based on the current interaction.
+ */
 #include "global.h"
 #include "link_rfu.h"
 #include "mystery_gift_server.h"

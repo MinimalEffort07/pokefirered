@@ -1,3 +1,18 @@
+/**
+ * =TILESET ANIMATIONS=
+ *
+ * This file implements animated map tiles — the visual effects that make
+ * the overworld feel alive, like flowing water, flickering lights, and
+ * waving grass. Each animation cycle is defined as a sequence of source
+ * tile graphics that are copied into VRAM in a timed rotation. When the
+ * water tiles cycle through their frames, it creates the appearance of
+ * moving water on every river, lake, and ocean tile simultaneously.
+ *
+ * GBA CONTEXT:
+ * Since all map tiles of the same type share the same tile data in VRAM,
+ * changing the tile graphics in VRAM automatically updates EVERY instance
+ * of that tile on screen. This is why all water tiles animate in sync.
+ */
 #include "global.h"
 
 static EWRAM_DATA struct {

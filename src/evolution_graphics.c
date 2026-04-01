@@ -1,3 +1,30 @@
+/**
+ * =EVOLUTION GRAPHICS / SPARKLE EFFECTS=
+ *
+ * FILE OVERVIEW:
+ * This file implements the visual particle effects (sparkles) that play
+ * during the evolution animation. It creates four distinct sparkle patterns:
+ *
+ *   1. PRE-EVO SPARKLE SET 1 (Spiral): Sparkles spiral upward around the
+ *      pre-evolution Pokemon sprite, creating a magical aura effect
+ *   2. PRE-EVO SPARKLE SET 2 (Arc): Sparkles arc outward in a fountain-like
+ *      pattern, radiating from the Pokemon
+ *   3. POST-EVO SPARKLE SET 1 (Circle): Sparkles form an expanding circle
+ *      around the newly evolved Pokemon
+ *   4. POST-EVO SPARKLE SET 2 (Spray): Sparkles spray outward randomly,
+ *      celebrating the completed evolution
+ *
+ * It also handles the SPRITE MORPHING ANIMATION — the core visual effect
+ * where the pre-evolution and post-evolution sprites rapidly alternate and
+ * scale, creating the illusion of one form transforming into another.
+ *
+ * GBA CONTEXT:
+ * Each sparkle is an individual hardware sprite (OBJ) with a single 8x8
+ * pixel tile. The sparkle positions are calculated using the trig functions
+ * Sin() and Cos() from trig.c to create circular and spiral motion paths.
+ * The morphing effect uses hardware sprite affine transforms (scaling) —
+ * one sprite shrinks while the other grows, and they alternate visibility.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "trig.h"

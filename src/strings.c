@@ -1,3 +1,27 @@
+/**
+ * @file strings.c
+ * @brief Game Text String Constants — All User-Facing Text in the Game
+ *
+ * FILE OVERVIEW:
+ * This massive data-only file defines virtually all of the user-facing text
+ * strings in the game: menu labels, system messages, error messages, NPC
+ * dialogue fragments, button prompts, status messages, and more.
+ *
+ * The strings are organized roughly by subsystem (main menu, save system,
+ * Pokemon management, battle messages, help system, multiplayer, etc.).
+ * Some strings are in Japanese — these are either unused in the English
+ * version or are for Japan-only features that were never localized.
+ *
+ * GBA CONTEXT:
+ * All strings use the _() macro for the GBA's custom character encoding.
+ * Escape sequences include:
+ *   \n  — newline
+ *   \p  — page break (clears the text window and starts a new page)
+ *   \l  — scroll (scrolls existing text up and continues on the next line)
+ * Placeholder tokens like {STR_VAR_1}, {STR_VAR_2}, {STR_VAR_3} are filled
+ * at runtime with dynamic text (Pokemon names, item names, numbers, etc.).
+ * {PLAYER} inserts the player's name, {RIVAL} inserts the rival's name.
+ */
 #include "global.h"
 #include "strings.h"
 

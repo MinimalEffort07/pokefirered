@@ -1,3 +1,16 @@
+/**
+ * =PLAYER'S PC=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Player's PC menu — the computer in the
+ * player's bedroom that stores items. Unlike the Pokemon PC (Bill's PC),
+ * this PC only handles item storage. The player can:
+ *   - Withdraw items (move items from PC storage to bag)
+ *   - Deposit items (move items from bag to PC storage)
+ *   - Toss items (permanently discard stored items)
+ * The PC has a separate item storage system with its own capacity
+ * limits, independent of the bag's pocket system.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "item.h"

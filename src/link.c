@@ -1,3 +1,50 @@
+/*
+ * =Pokemon FireRed Link Cable / Wireless Communication System=
+ *
+ * This file implements the communication protocol for linking two or more
+ * GBA consoles together, supporting both wired (Link Cable) and wireless
+ * (Wireless Adapter / RFU) connections. It handles:
+ *   - Hardware initialization for the GBA's Serial I/O (SIO) peripheral
+ *   - Multi-player handshake and player discovery
+ *   - Command-based message passing between linked consoles
+ *   - Block data transfer (for trading Pokemon, sharing battle data, etc.)
+ *   - Error detection and recovery
+ *   - Link state machine management
+ *
+ * GBA CONTEXT - SERIAL I/O HARDWARE:
+ * The GBA's serial port supports a "Multi-Player" mode where up to 4 GBAs
+ * communicate over a single link cable. One GBA acts as the "master" and
+ * the others as "slaves". Communication happens in lock-step:
+ *
+ * 1. The master initiates a transfer by setting the SIO_START bit in REG_SIOCNT.
+ * 2. All GBAs simultaneously send their 16-bit value from REG_SIOMLT_SEND.
+ * 3. All GBAs simultaneously receive all 4 values into REG_SIOMLT_RECV
+ *    (a 64-bit register holding 4x 16-bit values, one from each player).
+ * 4. A Serial Interrupt fires on all GBAs when the transfer completes.
+ *
+ * This means each "tick" of communication exchanges one 16-bit word from
+ * each player. The protocol multiplexes larger messages by sending them
+ * as sequences of CMD_LENGTH (8) words, forming "commands" that are
+ * queued and dequeued through circular buffers (sendQueue/recvQueue).
+ *
+ * MASTER/SLAVE DETERMINATION:
+ * The GBA hardware automatically assigns player IDs 0-3 based on the
+ * cable wiring. The console on the leftmost port (SD high, SI low) becomes
+ * the master (player 0). The master controls timing via Timer 3 interrupts,
+ * which trigger serial transfers at regular intervals.
+ *
+ * WIRELESS ADAPTER (RFU):
+ * When gWirelessCommType is nonzero, most functions delegate to the RFU
+ * (Radio Frequency Unit) subsystem in link_rfu.c instead of using the
+ * wired SIO protocol. The higher-level protocol (commands, block transfers)
+ * remains the same.
+ *
+ * BLOCK TRANSFERS:
+ * Large data payloads (trainer data, Pokemon data) are sent as "blocks" --
+ * chunked into CMD_LENGTH-sized pieces and reassembled on the receiving end.
+ * The protocol uses LINKCMD_INIT_BLOCK to announce a transfer, then
+ * LINKCMD_CONT_BLOCK for each chunk of data.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "m4a.h"
@@ -27,13 +74,15 @@
 
 extern u16 gHeldKeyCodeToSend;
 
+/* State for a block data transfer (sending or receiving a large payload
+ * in chunks across the link cable). */
 struct BlockTransfer
 {
-    u16 pos;
-    u16 size;
-    const u8 *src;
-    bool8 active;
-    u8 multiplayerId;
+    u16 pos;           /* Current byte offset within the transfer */
+    u16 size;          /* Total size of the block in bytes */
+    const u8 *src;     /* Pointer to the source data (for sends) */
+    bool8 active;      /* TRUE while a transfer is in progress */
+    u8 multiplayerId;  /* ID of the player sending/receiving this block */
 };
 
 struct LinkTestBGInfo
@@ -44,6 +93,10 @@ struct LinkTestBGInfo
     u32 unused;
 };
 
+/* Cast the SIO Control register address to a struct for easy field access.
+ * REG_ADDR_SIOCNT is at 0x04000128. In multi-player mode, this register
+ * contains the local player ID (bits 4-5), error flag (bit 6), and other
+ * communication control bits. */
 #define SIO_MULTI_CNT ((struct SioMultiCnt *)REG_ADDR_SIOCNT)
 
 static struct BlockTransfer sBlockSend;
@@ -215,6 +268,18 @@ static const struct WindowTemplate sLinkErrorWindowTemplates[] = {
 
 static const u8 sLinkErrorTextColor[] = { 0x00, 0x01, 0x02 };
 
+/**
+ * FUNCTION: IsWirelessAdapterConnected
+ *
+ * PURPOSE: Check if a GBA Wireless Adapter is physically connected to the
+ *          GBA's link port. Used to determine if wireless features are available.
+ *
+ * GBA CONTEXT:
+ * The Wireless Adapter has a unique hardware ID (RFU_ID). This function
+ * initializes the RFU API, performs a soft reset, and checks if the adapter
+ * responds with its expected ID. If not present, it cleans up and returns FALSE.
+ * During Quest Log playback, always returns FALSE to prevent link operations.
+ */
 bool8 IsWirelessAdapterConnected(void)
 {
     if (QL_IS_PLAYBACK_STATE)
@@ -331,6 +396,12 @@ static void VBlankCB_LinkError(void)
     TransferPlttBuffer();
 }
 
+/**
+ * FUNCTION: InitLink
+ *
+ * PURPOSE: Initialize the link subsystem by clearing the send command buffer
+ *          and enabling serial communication hardware.
+ */
 void InitLink(void)
 {
     int i;
@@ -351,6 +422,18 @@ void Task_TriggerHandshake(u8 taskId)
     }
 }
 
+/**
+ * FUNCTION: OpenLink
+ *
+ * PURPOSE: Start a new link session. Resets all link state, enables serial
+ *          hardware, and begins the player data exchange process.
+ *
+ * HOW IT WORKS:
+ * For wired links: resets the serial port, initializes the link state machine,
+ * sets the callback to request player data exchange, and creates a task that
+ * triggers the handshake after a short delay (5 frames).
+ * For wireless: delegates to InitRFUAPI() which handles RFU initialization.
+ */
 void OpenLink(void)
 {
     int i;
@@ -464,6 +547,22 @@ static void CB2_LinkTest(void)
     UpdatePaletteFade();
 }
 
+/**
+ * FUNCTION: LinkMain2
+ *
+ * PURPOSE: Main per-frame update for the link system. Processes received
+ *          commands and runs the current link callback (sending keys, blocks, etc.).
+ *
+ * HOW IT WORKS:
+ * 1. Clears the send command buffer (so each frame starts fresh).
+ * 2. Stores the local player's held keys for potential transmission.
+ * 3. If the connection is established, processes all received commands from
+ *    all linked players and runs the current link callback function.
+ * 4. The callback handles whatever the current link operation is (sending
+ *    held keys, sending block data, waiting for close, etc.)
+ *
+ * RETURNS: The current gLinkStatus bitfield.
+ */
 u16 LinkMain2(const u16 *heldKeys)
 {
     u8 i;
@@ -499,6 +598,30 @@ static void HandleReceiveRemoteLinkPlayer(u8 who)
         gReceivedRemoteLinkPlayers = TRUE;
 }
 
+/**
+ * FUNCTION: ProcessRecvCmds
+ *
+ * PURPOSE: Process all received commands from all linked players this frame.
+ *          This is the command dispatcher that handles the link protocol.
+ *
+ * HOW IT WORKS:
+ * Iterates through each player's received command buffer (gRecvCmds).
+ * The first word (gRecvCmds[i][0]) is the command ID, and subsequent words
+ * are parameters. Key commands include:
+ *   - LINKCMD_SEND_LINK_TYPE: Partner requested data exchange; respond with
+ *     our own player data block (name, trainer ID, etc.)
+ *   - LINKCMD_INIT_BLOCK: Partner is starting to send a data block
+ *   - LINKCMD_CONT_BLOCK: A chunk of block data has arrived; reassemble it
+ *   - LINKCMD_SEND_HELD_KEYS: Partner's button inputs (for link battles)
+ *   - LINKCMD_READY_CLOSE_LINK: Partner is ready to disconnect
+ *   - LINKCMD_READY_EXIT_STANDBY: Partner is ready to resume from standby
+ *
+ * Block reassembly: CONT_BLOCK commands carry 7 words (14 bytes) of payload
+ * at a time. These are written sequentially into gBlockRecvBuffer until the
+ * full block size is reached. The first complete block from each player is
+ * treated as their LinkPlayerBlock (containing player identity data), verified
+ * with a "GameFreak inc." magic string for integrity.
+ */
 static void ProcessRecvCmds(u8 unused)
 {
     u16 i;
@@ -1632,6 +1755,17 @@ void ConvertLinkPlayerName(struct LinkPlayer * player)
 
 // File break?
 
+/**
+ * FUNCTION: DisableSerial
+ *
+ * PURPOSE: Shut down the serial communication hardware.
+ *
+ * GBA CONTEXT:
+ * Disables Timer 3 and Serial interrupts, sets SIOCNT to basic multi-player
+ * mode (no transfer enabled), clears the timer, acknowledges any pending
+ * interrupts by writing to REG_IF, clears the send/receive registers, and
+ * zeros out the entire Link state structure.
+ */
 static void DisableSerial(void)
 {
     DisableInterrupts(INTR_FLAG_TIMER3 | INTR_FLAG_SERIAL);
@@ -1643,6 +1777,18 @@ static void DisableSerial(void)
     CpuFill32(0, &gLink, sizeof(gLink));
 }
 
+/**
+ * FUNCTION: EnableSerial
+ *
+ * PURPOSE: Enable serial communication in multi-player mode at 115200 bps.
+ *
+ * GBA CONTEXT:
+ * REG_RCNT (0x04000134) must be 0 to use the serial port (rather than GPIO).
+ * REG_SIOCNT is configured for multi-player mode (SIO_MULTI_MODE) at the
+ * highest baud rate (SIO_115200_BPS = 115200 bits/sec) with interrupt
+ * generation enabled (SIO_INTR_ENABLE). The Serial interrupt handler
+ * (SerialCB) will fire each time a transfer completes.
+ */
 static void EnableSerial(void)
 {
     DisableInterrupts(INTR_FLAG_TIMER3 | INTR_FLAG_SERIAL);
@@ -1667,6 +1813,29 @@ void ResetSerial(void)
     DisableSerial();
 }
 
+/**
+ * FUNCTION: LinkMain1
+ *
+ * PURPOSE: The main link state machine. Manages the lifecycle of a link
+ *          connection from initial handshake through established communication.
+ *
+ * LINK STATE MACHINE:
+ *   LINK_STATE_START0: Initial state. Disables serial and waits.
+ *   LINK_STATE_START1: Waiting for shouldAdvanceLinkState signal to begin.
+ *   LINK_STATE_HANDSHAKE: Exchange handshake values with other GBAs to
+ *     discover how many players are connected and who is master.
+ *   LINK_STATE_INIT_TIMER: Master starts Timer 3 to drive transfer timing.
+ *   LINK_STATE_CONN_ESTABLISHED: Normal operation. Enqueues send commands
+ *     and dequeues received commands each frame.
+ *
+ * RETURNS: A status bitfield (gLinkStatus) encoding:
+ *   - Local player ID (bits 0-1)
+ *   - Player count (bits 2-3)
+ *   - Master flag (bit 5)
+ *   - Connection established flag (bit 13)
+ *   - Error flags for hardware errors, checksum failures, queue overflow,
+ *     and lag detection (bits 14-19)
+ */
 u32 LinkMain1(u8 *shouldAdvanceLinkState, u16 *sendCmd, u16 (*recvCmds)[CMD_LENGTH])
 {
     u32 retVal;
@@ -1772,6 +1941,19 @@ static void CheckMasterOrSlave(void)
         gLink.isMaster = LINK_SLAVE;
 }
 
+/**
+ * FUNCTION: InitTimer
+ *
+ * PURPOSE: Start Timer 3 on the master GBA to periodically trigger serial
+ *          transfers. Only the master drives the transfer timing.
+ *
+ * GBA CONTEXT:
+ * REG_TM3CNT_L (-197): The timer counts up from this initial value. At the
+ * CPU clock / 64 prescaler, -197 means the timer overflows (and fires an
+ * interrupt) every 197 * 64 = 12,608 CPU cycles, giving roughly 1,327
+ * transfers per second. This matches the baud rate needs for the multi-player
+ * serial protocol at 115200 bps.
+ */
 static void InitTimer(void)
 {
     if (gLink.isMaster)
@@ -1782,6 +1964,23 @@ static void InitTimer(void)
     }
 }
 
+/**
+ * FUNCTION: EnqueueSendCmd
+ *
+ * PURPOSE: Add a command to the outgoing send queue for transmission to
+ *          linked GBAs on the next serial transfer cycle.
+ *
+ * HOW IT WORKS:
+ * Operates on a circular buffer (gLink.sendQueue). Disables interrupts (REG_IME=0)
+ * while modifying the queue to prevent corruption from the Serial ISR accessing
+ * the queue simultaneously. If the queue is full, sets the queueFull error flag.
+ * Empty commands (all zeros) are silently dropped to save bandwidth.
+ *
+ * GBA CONTEXT:
+ * REG_IME (Interrupt Master Enable) at 0x04000208 globally enables/disables
+ * all interrupts. Setting it to 0 is the simplest way to create a critical
+ * section on the GBA (no mutexes exist in bare-metal GBA programming).
+ */
 static void EnqueueSendCmd(u16 *sendCmd)
 {
     u8 i;
@@ -1895,6 +2094,28 @@ void Timer3Intr(void)
     StartTransfer();
 }
 
+/**
+ * FUNCTION: SerialCB
+ *
+ * PURPOSE: The Serial Interrupt Service Routine (ISR). Called by the hardware
+ *          each time a serial transfer completes between linked GBAs.
+ *
+ * HOW IT WORKS:
+ * In CONN_ESTABLISHED state: reads the hardware error flag, receives data from
+ * all players (DoRecv), sends the next word in the queue (DoSend), and handles
+ * the send/recv cycle completion (SendRecvDone).
+ *
+ * In HANDSHAKE state: performs the handshake protocol (DoHandshake) to determine
+ * player count and master/slave roles. When handshake succeeds, the master
+ * transitions to INIT_TIMER and the slaves go directly to CONN_ESTABLISHED.
+ *
+ * GBA CONTEXT:
+ * This ISR runs in a very tight timing window. The serial hardware has already
+ * completed the transfer by the time this fires, so the received data is
+ * sitting in REG_SIOMLT_RECV and needs to be read before the next transfer
+ * overwrites it. The serialIntrCounter tracks how many transfers have occurred
+ * for timing coordination.
+ */
 void SerialCB(void)
 {
     gLink.localId = SIO_MULTI_CNT->id;
@@ -1932,6 +2153,27 @@ static void StartTransfer(void)
     REG_SIOCNT |= SIO_START;
 }
 
+/**
+ * FUNCTION: DoHandshake
+ *
+ * PURPOSE: Perform the multi-player handshake protocol to discover connected
+ *          players and establish the master/slave relationship.
+ *
+ * HOW IT WORKS:
+ * Each GBA sends a handshake value: MASTER_HANDSHAKE (0x4321) if it's the
+ * master candidate, or SLAVE_HANDSHAKE (0x7FFF) otherwise. The 64-bit
+ * receive register (REG_SIOMLT_RECV) is read as a u64 containing all four
+ * 16-bit values simultaneously.
+ *
+ * The function counts how many slots contain valid handshake values. A slot
+ * with 0xFFFF means no GBA is connected there. The handshake succeeds when:
+ * 1. The same player count is seen for two consecutive handshake cycles
+ *    (sHandshakePlayerCount == gLink.playerCount), confirming stability.
+ * 2. Player 0 sent MASTER_HANDSHAKE, confirming the master.
+ * 3. At least 2 players are present.
+ *
+ * RETURNS: TRUE when the handshake is complete, FALSE while still negotiating.
+ */
 static bool8 DoHandshake(void)
 {
     u8 i;
@@ -1974,6 +2216,27 @@ static bool8 DoHandshake(void)
     return FALSE;
 }
 
+/**
+ * FUNCTION: DoRecv
+ *
+ * PURPOSE: Read received data from the serial hardware registers into the
+ *          software receive queue. Called from the Serial ISR.
+ *
+ * HOW IT WORKS:
+ * Each "command" consists of CMD_LENGTH (8) sequential serial transfers.
+ * The sendCmdIndex tracks which word of the current command we're on:
+ *   - Word 0: Checksum validation. Compares received checksums against the
+ *     previously computed checksum to detect transmission errors.
+ *   - Words 1-7: Actual command data. Each player's word is stored in the
+ *     3D receive queue array: recvQueue.data[player][cmdWord][queueSlot].
+ *
+ * After receiving all CMD_LENGTH words of a command (and if any were nonzero),
+ * the queue count is incremented so the main loop can dequeue and process it.
+ *
+ * GBA CONTEXT:
+ * REG_SIOMLT_RECV is at 0x04000120 and holds four consecutive 16-bit values
+ * (one from each player slot). Reading it as a u64 captures all four at once.
+ */
 static void DoRecv(void)
 {
     u16 recv[4];
@@ -2019,6 +2282,20 @@ static void DoRecv(void)
     }
 }
 
+/**
+ * FUNCTION: DoSend
+ *
+ * PURPOSE: Write the next word of outgoing data to the serial send register.
+ *          Called from the Serial ISR.
+ *
+ * HOW IT WORKS:
+ * If sendCmdIndex == CMD_LENGTH, we've finished sending a complete command.
+ * In this case, send the accumulated checksum so the receiver can verify
+ * data integrity, then advance the send queue.
+ *
+ * Otherwise, write the next word from the front of the send queue into
+ * REG_SIOMLT_SEND. If the queue is empty, send 0 (idle).
+ */
 static void DoSend(void)
 {
     if (gLink.sendCmdIndex == CMD_LENGTH)

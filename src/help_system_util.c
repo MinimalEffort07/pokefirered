@@ -1,3 +1,15 @@
+/**
+ * @file help_system_util.c
+ * @brief Help System Utilities — Screen Setup, Text Rendering, and Topic Display
+ *
+ * FILE OVERVIEW:
+ * This file provides the low-level utilities for the Help System's visual
+ * presentation. It handles setting up the help screen's background graphics,
+ * rendering help topic text with word wrapping, managing the topic list
+ * scrolling and selection, and transitioning in/out of the help overlay.
+ * It works closely with help_system.c which manages the logic of what topics
+ * to show.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

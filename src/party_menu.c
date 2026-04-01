@@ -1,3 +1,24 @@
+/**
+ * @file party_menu.c
+ * @brief Party Menu — Pokemon Team Management Screen
+ *
+ * FILE OVERVIEW:
+ * This is one of the largest files in the game, implementing the Party Menu
+ * screen where the player views and manages their team of up to 6 Pokemon.
+ * The party menu is accessed from the overworld (Start > Pokemon), during
+ * battle (to switch Pokemon or use items), and from various other contexts
+ * (using HMs, giving items, entering facilities, etc.).
+ *
+ * The file handles:
+ *   - Displaying party Pokemon with HP bars, level, status, and held item icons
+ *   - Context-sensitive action menus (Summary, Switch, Item, Cancel, etc.)
+ *   - Item giving/taking from Pokemon
+ *   - Move selection for field moves (Fly, Surf, Cut, etc.)
+ *   - Evolution and form-change item usage
+ *   - Mail reading/writing for held mail items
+ *   - Multi-selection modes for trades, battles, and contests
+ *   - Level-up move learning integration
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

@@ -1,3 +1,83 @@
+/*
+ * =Pokemon FireRed Event Object Movement System=
+ *
+ * THIS IS THE LARGEST FILE IN THE CODEBASE (~9400 lines).
+ *
+ * This file implements the complete NPC/object event system, which controls
+ * all moving characters and objects in the overworld. This includes:
+ *
+ * ===== CORE SYSTEMS =====
+ *
+ * 1. OBJECT EVENT MANAGEMENT
+ *    - Spawning/despawning NPCs, items, and interactable objects
+ *    - Mapping between "local IDs" (per-map identifiers) and global slots
+ *    - Tracking which objects are active, visible, and within view range
+ *    - Managing object event flags (disappear when flag is set)
+ *
+ * 2. SPRITE MANAGEMENT
+ *    - Loading/unloading sprite graphics and palettes dynamically
+ *    - Creating sprite objects from ObjectEventTemplates
+ *    - Updating sprite animation frames and timing
+ *    - Managing sprite priority/layering based on elevation
+ *
+ * 3. MOVEMENT TYPE SYSTEM
+ *    Each NPC has a "movement type" that defines its autonomous behavior:
+ *      - MOVEMENT_TYPE_NONE: Stationary, never moves
+ *      - MOVEMENT_TYPE_LOOK_AROUND: Stands still but randomly faces directions
+ *      - MOVEMENT_TYPE_WANDER_AROUND: Randomly walks within a defined range
+ *      - MOVEMENT_TYPE_WALK_SEQUENCE_*: Walks in preset directional patterns
+ *      - MOVEMENT_TYPE_FACE_*: Always faces a specific direction
+ *      - MOVEMENT_TYPE_PLAYER: Controlled by player input (see field_player_avatar.c)
+ *      - Many more specialized types (buried, disguise, copy player, etc.)
+ *    Movement types are implemented as callback functions that run each frame.
+ *
+ * 4. MOVEMENT ACTION SYSTEM
+ *    Individual movement steps (walk one tile, turn in place, jump, etc.) are
+ *    implemented as "movement actions." Each action is a small state machine
+ *    that runs to completion before the next action begins. Actions include:
+ *      - Walk in a direction (normal, fast, fastest, slow)
+ *      - Turn to face a direction
+ *      - Jump in a direction (ledges, spin tiles)
+ *      - Special animations (emotes, item pickup, etc.)
+ *    Scripts can queue sequences of these actions for cutscene movement.
+ *
+ * 5. COLLISION DETECTION
+ *    - Checks metatile passability for each direction
+ *    - Checks for other object events occupying the destination tile
+ *    - Handles elevation/bridge interactions (objects at different heights
+ *      don't collide with each other)
+ *    - Range-limited collision for NPCs with bounded wander areas
+ *
+ * 6. GROUND EFFECTS
+ *    Visual effects triggered by standing on or stepping onto certain tiles:
+ *      - Tall grass rustling animation
+ *      - Footprints in sand/snow
+ *      - Water ripples and puddle splashes
+ *      - Reflection sprites on water/ice surfaces
+ *      - Seaweed swaying underwater
+ *      - Jump landing dust particles
+ *    Ground effects are calculated based on the metatile behavior at the
+ *    object's current and previous positions.
+ *
+ * 7. CAMERA OBJECT
+ *    A special invisible sprite that the camera follows. In normal gameplay
+ *    this tracks the player, but during scripts it can be moved independently
+ *    to show distant events or cutscene action.
+ *
+ * ===== DATA TABLES =====
+ * This file contains massive lookup tables for:
+ *   - Movement type callback functions
+ *   - Movement action state machine functions
+ *   - Sprite graphics/palette associations
+ *   - Animation frame sequences
+ *   - Ground effect flag functions
+ *
+ * ===== PERFORMANCE NOTES =====
+ * The GBA must process all active object events every frame within the
+ * ~16ms frame budget. Objects off-screen are culled (not animated or collision-
+ * checked) to save CPU time. The system supports up to OBJECT_EVENTS_COUNT
+ * (16) simultaneous objects.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "event_data.h"
@@ -1220,6 +1300,26 @@ static void ClearAllObjectEvents(void)
         ClearObjectEvent(&gObjectEvents[i]);
 }
 
+/* ========================================================================
+ * SECTION: Object Event Lifecycle Management
+ *
+ * Functions for creating, destroying, and managing the pool of active object
+ * events. Object events are the runtime instances of NPCs, items, and other
+ * interactable objects on the map. They're stored in the global array
+ * gObjectEvents[OBJECT_EVENTS_COUNT] and each has a corresponding sprite.
+ * ======================================================================== */
+
+/**
+ * FUNCTION: ResetObjectEvents
+ *
+ * PURPOSE: Reset the entire object event system. Called during map loads to
+ *          clear all NPCs from the previous map before spawning new ones.
+ *
+ * HOW IT WORKS:
+ * Clears link player objects, all general objects, player avatar state,
+ * and creates the invisible reflection distortion sprites used for water/ice
+ * surface reflections of walking characters.
+ */
 void ResetObjectEvents(void)
 {
     ClearLinkPlayerObjectEvents();
@@ -1792,6 +1892,20 @@ u8 CreateFameCheckerObject(u8 graphicsId, u8 localId, s16 x, s16 y)
     return spriteId;
 }
 
+/**
+ * FUNCTION: TrySpawnObjectEvents
+ *
+ * PURPOSE: Spawn all object events (NPCs, items) that should be visible on
+ *          the current map based on the camera position and flag state.
+ *
+ * HOW IT WORKS:
+ * Iterates through all object event templates defined in the map's event data.
+ * For each template, checks if the NPC's position is within the visible area
+ * (camera position +/- a margin of 2 tiles for spawning before they scroll
+ * into view). Also checks the template's flagId -- if that flag is set, the
+ * NPC is hidden (used for story progression, e.g., removing a blocking NPC
+ * after the player completes a quest). Spawns visible, unflagged objects.
+ */
 void TrySpawnObjectEvents(s16 cameraX, s16 cameraY)
 {
     u8 i;
@@ -2691,6 +2805,32 @@ u16 GetObjectPaletteTag(u8 palSlot)
     }
     return OBJ_EVENT_PAL_TAG_NONE;
 }
+
+/* ========================================================================
+ * SECTION: Movement Type Implementations
+ *
+ * Each NPC has a movement type that controls its autonomous behavior.
+ * Movement types are implemented as multi-step state machines. Each step
+ * function returns TRUE when it's finished and the next step should run,
+ * or FALSE if it needs more frames to complete.
+ *
+ * The movement_type_def() macro generates a main callback that reads the
+ * current step from sprite->data[1] and dispatches to the appropriate
+ * step function from a function pointer table. This is a classic state
+ * machine pattern used extensively throughout the codebase.
+ *
+ * Common step patterns:
+ *   Step 0: Initialize/clear movement state
+ *   Step 1: Set a facing direction
+ *   Step 2: Execute the movement action (wait for animation to finish)
+ *   Step 3: Wait for a random delay
+ *   Step 4: Choose a random direction and try to walk there
+ *   Step 5: Execute the walking action
+ *   Step 6: Return to Step 3 (loop)
+ *
+ * The movement_type_empty_callback() macro creates a movement type that
+ * does nothing (for stationary NPCs like MOVEMENT_TYPE_NONE).
+ * ======================================================================== */
 
 movement_type_empty_callback(MovementType_None)
 movement_type_def(MovementType_WanderAround, gMovementTypeFuncs_WanderAround)
@@ -4820,6 +4960,26 @@ u8 GetTrainerFacingDirectionMovementType(u8 direction)
     return sTrainerFacingDirectionMovementTypes[direction];
 }
 
+/* ========================================================================
+ * SECTION: Collision Detection
+ *
+ * These functions determine whether an object can move to a given tile.
+ * Collision checking considers multiple factors:
+ *   1. Movement range: NPCs have a bounded wander area; moving outside it
+ *      returns COLLISION_OUTSIDE_RANGE.
+ *   2. Metatile passability: The map grid's collision bit (bit 10 in the
+ *      metatile entry) indicates impassable tiles (walls, trees, etc.)
+ *   3. Directional impassability: Some tiles are passable from certain
+ *      directions but not others (e.g., ledges can be jumped over going
+ *      south but not walked back north).
+ *   4. Elevation mismatch: Objects at different elevations (e.g., on a
+ *      bridge vs. under it) don't collide with each other.
+ *   5. Object-to-object: Checks if another active object is already
+ *      occupying the target tile at a compatible elevation.
+ *   6. Camera bounds: If the object is the camera focus (player), checks
+ *      that the camera can scroll in that direction.
+ * ======================================================================== */
+
 static u8 GetCollisionInDirection(struct ObjectEvent *objectEvent, u8 direction)
 {
     s16 x;
@@ -5110,6 +5270,32 @@ u8 ObjectEventGetHeldMovementActionId(struct ObjectEvent *objectEvent)
     return MOVEMENT_ACTION_NONE;
 }
 
+/* ========================================================================
+ * SECTION: Per-Frame Object Update Pipeline
+ * ======================================================================== */
+
+/**
+ * FUNCTION: UpdateObjectEventCurrentMovement
+ *
+ * PURPOSE: The main per-frame update function for each object event. This is
+ *          called by each movement type's sprite callback to process one frame
+ *          of the object's behavior.
+ *
+ * HOW IT WORKS:
+ * 1. DoGroundEffects_OnSpawn: If just spawned, apply initial ground effects
+ * 2. TryEnableObjectEventAnim: Resume animation if it was paused
+ * 3. Execute the current movement: either a held movement (from scripts) or
+ *    the autonomous movement type callback (the callback parameter)
+ * 4. DoGroundEffects_OnBeginStep/OnFinishStep: Apply visual effects for
+ *    stepping onto new tiles (grass rustle, footprints, etc.)
+ * 5. Update animation pause state, visibility, and sprite layering
+ *
+ * PARAMETERS:
+ * @param objectEvent - The object to update
+ * @param sprite      - The object's sprite
+ * @param callback    - The movement type's step function (called in a loop
+ *                      until it returns FALSE, meaning "need more frames")
+ */
 void UpdateObjectEventCurrentMovement(struct ObjectEvent *objectEvent, struct Sprite *sprite, bool8 (*callback)(struct ObjectEvent *, struct Sprite *))
 {
     DoGroundEffects_OnSpawn(objectEvent, sprite);
@@ -5284,6 +5470,32 @@ static void FaceDirection(struct ObjectEvent *objectEvent, struct Sprite *sprite
     sprite->animPaused = TRUE;
     sprite->data[2] = 1;
 }
+
+/* ========================================================================
+ * SECTION: Movement Action Functions
+ *
+ * These are the individual atomic movement operations that objects can
+ * perform. Each "movement action" is a small state machine with Step0,
+ * Step1, etc. functions. They are invoked by the movement type system
+ * (for autonomous NPC behavior) and by the script system (for cutscene
+ * choreography via movement scripts).
+ *
+ * Movement actions include:
+ *   - FaceDirection: Instantly turn to face a direction (no movement)
+ *   - WalkSlowest/Slower/Normal/Fast/Fastest: Walk one tile in a direction
+ *     at different speeds. Each has Step0 (start) and Step1 (continue).
+ *   - Jump: Hop one or two tiles in a direction (for ledges, spin tiles)
+ *   - WalkInPlace: Play walking animation without actually moving
+ *   - Delay: Wait for a specified number of frames
+ *   - EmoteBallon/Exclamation/Heart/etc.: Show emotion bubbles above NPCs
+ *   - LockFacing/UnlockFacing: Prevent/allow direction changes
+ *   - Slide: Move without walking animation (ice sliding)
+ *   - Many more specialized actions for cutscenes
+ *
+ * Each Step0 function typically calls a setup function that begins the
+ * sprite animation and movement, then sets data[2] = 1. The Step1 function
+ * polls until the animation/movement completes, then returns TRUE.
+ * ======================================================================== */
 
 static bool8 MovementAction_FaceDown_Step0(struct ObjectEvent *objectEvent, struct Sprite *sprite)
 {
@@ -8083,6 +8295,26 @@ static void ObjectEventUpdateMetatileBehaviors(struct ObjectEvent *objEvent)
     objEvent->previousMetatileBehavior = MapGridGetMetatileBehaviorAt(objEvent->previousCoords.x, objEvent->previousCoords.y);
     objEvent->currentMetatileBehavior = MapGridGetMetatileBehaviorAt(objEvent->currentCoords.x, objEvent->currentCoords.y);
 }
+
+/* ========================================================================
+ * SECTION: Ground Effect System
+ *
+ * Ground effects are visual flourishes triggered when objects stand on or
+ * step onto certain tile types. They include:
+ *   - Reflections on water/ice surfaces (a mirrored sprite below the character)
+ *   - Tall grass rustling animations (overlay sprite that sways)
+ *   - Footprints in sand (temporary sprites left behind)
+ *   - Water ripples when stepping in shallow water
+ *   - Puddle splashes, seaweed sway, hot spring steam, etc.
+ *   - Jump landing dust puff effects
+ *
+ * The system works by accumulating "ground effect flags" based on the
+ * object's current metatile behavior, then executing the corresponding
+ * visual effects. Flags are checked at three key moments:
+ *   OnSpawn: When an object first appears (show initial ground state)
+ *   OnBeginStep: When an object starts moving to a new tile
+ *   OnFinishStep: When an object arrives at a new tile
+ * ======================================================================== */
 
 static void GetGroundEffectFlags_Reflection(struct ObjectEvent *objEvent, u32 *flags)
 {

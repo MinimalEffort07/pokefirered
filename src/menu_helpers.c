@@ -1,3 +1,11 @@
+/**
+ * =MENU HELPER FUNCTIONS=
+ *
+ * General-purpose helper functions for menu and UI management. Provides
+ * utilities for managing message boxes, quantity adjustment inputs (the
+ * up/down arrows for selecting amounts), fade transitions between menus,
+ * and common menu patterns used across multiple UI screens.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

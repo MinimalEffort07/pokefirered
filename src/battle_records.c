@@ -1,3 +1,26 @@
+/**
+ * =LINK BATTLE RECORDS SCREEN=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Link Battle Records display — a screen that
+ * shows the player's win/loss/draw history from multiplayer link battles.
+ * It includes:
+ *   - Viewing the total record (all wins/losses/draws combined)
+ *   - Individual records against specific opponents (up to 5 entries)
+ *   - Sorting records by total number of battles (most-played first)
+ *   - Recording new battle outcomes after link battles
+ *   - Integration with the Trainer Card system for battle statistics
+ *
+ * DATA STRUCTURE:
+ * Link battle records are stored in gSaveBlock2 and support up to
+ * LINK_B_RECORDS_COUNT opponents. Each record stores the opponent's
+ * name, trainer ID, and their win/loss/draw counts against the player.
+ * All counts are capped at 9999. When a new opponent exceeds the maximum
+ * records, the least-played opponent is replaced.
+ *
+ * The records screen can also display Trainer Tower records when
+ * gSpecialVar_0x8004 is set, providing a dual-purpose display.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "event_data.h"

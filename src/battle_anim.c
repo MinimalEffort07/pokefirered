@@ -1,3 +1,45 @@
+/*
+ * battle_anim.c - Battle Animation Engine
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file implements the battle animation scripting engine. Move animations
+ * (Thunderbolt's lightning bolts, Flamethrower's fire stream, etc.) are NOT
+ * hardcoded in C. Instead, each animation is a bytecode script that controls:
+ *
+ * - Sprite creation and movement (animation sprites on top of the battle scene)
+ * - Background effects (palette fades, BG scroll, screen shake)
+ * - Sound effects (SE_EFFECTIVENESS, move-specific sounds)
+ * - Timing (delays between animation frames)
+ * - Battler sprite manipulation (flash, shake, bounce the Pokemon sprites)
+ *
+ * ANIMATION SCRIPT COMMANDS:
+ * The scripts use a command set defined in battle_anim_scripts.s:
+ *   createsprite: Spawn an animation sprite with given template/position
+ *   createvisualtask: Run a C function as a task during the animation
+ *   delay: Wait N frames before next command
+ *   playsewithpan: Play a sound effect with stereo panning
+ *   setblends: Configure hardware alpha blending
+ *   end: Finish the animation
+ *
+ * SPRITE SYSTEM:
+ * Animation sprites are temporary sprites created during the animation and
+ * destroyed when it ends. They have their own sprite callbacks for movement
+ * patterns (linear, sinusoidal, homing, etc.). The sprite tiles and palettes
+ * are loaded from compressed ROM data at animation start and freed at end.
+ *
+ * EXECUTION FLOW:
+ * 1. A battle script command triggers an animation (via BtlController_Emit*)
+ * 2. The controller calls DoMoveAnim() with the move ID
+ * 3. This file reads the animation script for that move
+ * 4. Commands are executed one per frame (or multiple if no delay)
+ * 5. When all sprites/tasks finish, the animation is marked complete
+ * 6. The controller clears the exec flag, allowing battle to continue
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

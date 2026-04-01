@@ -1,3 +1,21 @@
+/**
+ * =MAP PREVIEW SCREEN=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Map Preview Screen — the location name card
+ * that appears when entering certain notable areas for the first time.
+ * When the player first enters places like Viridian Forest, Rock Tunnel,
+ * Silph Co., Pokemon Tower, or Victory Road, a full-screen preview image
+ * of the location fades in briefly before the actual map loads.
+ *
+ * Each preview screen has its own hand-drawn graphic (tiles, tilemap, and
+ * palette) stored as compressed data in ROM. The screen is only shown on
+ * the FIRST visit — subsequent visits skip the preview. This "first visit"
+ * state is tracked using event flags.
+ *
+ * This is a feature unique to FireRed/LeafGreen that was not present in
+ * the original Red/Blue/Yellow or the Ruby/Sapphire engine.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "quest_log.h"

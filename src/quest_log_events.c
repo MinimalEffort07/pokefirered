@@ -1,3 +1,19 @@
+/**
+ * @file quest_log_events.c
+ * @brief Quest Log Event Definitions — Text Generation for All Logged Events
+ *
+ * FILE OVERVIEW:
+ * This file defines how each type of Quest Log event is displayed as text in
+ * the Adventure Log screen. For every event the Quest Log can record (defeated
+ * a trainer, caught a Pokemon, received an item, healed at a Pokemon Center,
+ * etc.), this file provides the function that generates the display text with
+ * dynamic placeholders filled in (trainer names, Pokemon species, map names,
+ * item names, etc.).
+ *
+ * The events are organized by category and include both trainer battles (with
+ * HP-fraction-based flavor text like "handily defeated" vs "barely managed")
+ * and overworld events (shopping, using items, depositing Pokemon, etc.).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

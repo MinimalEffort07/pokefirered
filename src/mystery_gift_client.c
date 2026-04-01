@@ -1,3 +1,24 @@
+/**
+ * @file mystery_gift_client.c
+ * @brief Mystery Gift Client — Script Interpreter for Receiving Gifts
+ *
+ * FILE OVERVIEW:
+ * This file implements the "client" side of Mystery Gift — the GBA receiving
+ * a Wonder Card, Wonder News, or other gift data from a distributing server.
+ * Like the server, the client is a virtual machine that executes scripted
+ * commands (MysteryGiftClientCmd instructions).
+ *
+ * Client operations include:
+ *   - Sending game data to the server (for compatibility validation)
+ *   - Receiving and saving Wonder Cards, Wonder News, and RAM scripts
+ *   - Displaying prompts (toss old card? yes/no)
+ *   - Running received Mystery Event scripts
+ *   - Executing received binary code from the decompression buffer
+ *
+ * The client starts by receiving its initial script from the server, then
+ * executes commands until it hits a CLI_RETURN, at which point it reports
+ * the result (card received, communication error, etc.) to the UI layer.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

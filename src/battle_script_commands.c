@@ -1,3 +1,69 @@
+/*
+ * battle_script_commands.c - Battle Script Bytecode Interpreter
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file is the interpreter for battle scripts -- the bytecode programs
+ * that control move execution, battle events, and all battle flow. At ~9900
+ * lines, it's one of the largest files in the codebase and implements
+ * every battle script command.
+ *
+ * ARCHITECTURE:
+ * Battle scripts are byte arrays stored in ROM (defined in battle_scripts.s).
+ * gBattleScriptingCommandsTable[] maps each opcode (0x00-0xFF) to a C function.
+ * The main interpreter loop in RunBattleScriptCommands reads the next byte from
+ * gBattlescriptCurrInstr and calls the corresponding handler.
+ *
+ * KEY COMMAND CATEGORIES:
+ *
+ * DAMAGE & ACCURACY:
+ *   accuracycheck: Roll accuracy (move accuracy * user accuracy / target evasion)
+ *   calculatedamage: Apply the damage formula
+ *   adjustdamage: Apply type effectiveness, critical hits, abilities
+ *   typecalc: Calculate type matchup (super effective, not effective, etc.)
+ *   critcalc: Determine if the move scores a critical hit
+ *
+ * HP & STATUS:
+ *   setmoveeffect: Queue a status effect (poison, burn, paralysis, etc.)
+ *   setadditionaleffects: Apply secondary move effects (10% burn chance, etc.)
+ *   healthbar_update: Animate the HP bar draining/filling
+ *   faintifnotally: Check if damage caused a faint
+ *   setbide: Handle Bide's 2-turn damage storage + release
+ *
+ * DISPLAY:
+ *   printstring: Display a battle message in the text window
+ *   printfromtable: Select and display a message from a table
+ *   playanimation: Trigger a move animation
+ *   waitanimation: Pause script until animation finishes
+ *   playfaintcry: Play the fainting Pokemon's cry sound
+ *
+ * STAT CHANGES:
+ *   statbuffchange: Apply +1/-1/+2/-2 stat stage change
+ *   Handles boundaries (can't go above +6 or below -6)
+ *   Handles ability blocks (Clear Body, Hyper Cutter, etc.)
+ *
+ * FLOW CONTROL:
+ *   goto, call, return: Script branching
+ *   jumpifability: Branch based on battler's ability
+ *   jumpifstatus: Branch based on status condition
+ *   jumpifmoveeffect: Branch based on move effect type
+ *   end: End the current battle script
+ *   return: Pop return address from script stack
+ *
+ * EXPERIENCE:
+ *   getexp: Calculate and award experience points
+ *   Handles EXP Share distribution, Lucky Egg bonus, traded bonus
+ *   Triggers level-up, new move learning, evolution checks
+ *
+ * CATCHING:
+ *   handleballthrow: The Pokeball catch formula
+ *   Ball wobble animation, break-free check, catch success
+ *   Writes to save data (party or PC box) on successful catch
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "item.h"

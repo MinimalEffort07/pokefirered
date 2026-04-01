@@ -1,3 +1,33 @@
+/**
+ * @file fldeff_cut.c
+ * @brief HM Cut Field Effect — Cut Trees and Tall Grass
+ *
+ * FILE OVERVIEW:
+ * Implements HM01 Cut when used outside of battle. Cut has two distinct uses:
+ *
+ * 1. CUTTING TREES: When facing a cuttable tree object (OBJ_EVENT_GFX_CUT_TREE),
+ *    the tree is removed from the map, opening a path.
+ *
+ * 2. CUTTING GRASS: When standing near tall grass, Cut clears a 3x3 area of grass
+ *    around the player. The grass tiles are replaced with "mowed" equivalents, and
+ *    8 small grass clipping sprites fly outward in a circular pattern.
+ *
+ * SPECIAL CASE — DOTTED HOLE:
+ * There's a hidden interaction on Ruin Valley (Sevii Islands) where using Cut on
+ * a specific tile opens the door to the Dotted Hole dungeon. The CutMoveRuinValleyCheck
+ * function detects this special case.
+ *
+ * GRASS CUTTING VISUAL EFFECT:
+ * When grass is cut, 8 small green sprites are created at the player's position.
+ * Each sprite moves outward in a spiral pattern using sine/cosine functions,
+ * with each sprite offset by 1/8 of a full rotation (45 degrees). After 28 frames,
+ * the sprites are cleaned up.
+ *
+ * METATILE REPLACEMENT:
+ * Each grass tile type has a "mowed" counterpart. The sCutGrassMetatileMapping[]
+ * table maps grass metatile IDs to their mowed versions (e.g., plain grass ->
+ * plain mowed, tree-top grass -> tree-top mowed).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "event_object_lock.h"
@@ -115,6 +145,23 @@ static u8 MetatileAtCoordsIsGrassTile(s16 x, s16 y)
     return TestMetatileAttributeBit(MapGridGetMetatileAttributeAt(x, y, METATILE_ATTRIBUTE_TERRAIN), TILE_TERRAIN_GRASS);
 }
 
+/**
+ * FUNCTION: SetUpFieldMove_Cut
+ *
+ * PURPOSE: Validates whether Cut can be used and determines which variant
+ * (tree cutting or grass cutting) to set up.
+ *
+ * HOW IT WORKS:
+ * Priority order:
+ * 1. Check for Dotted Hole special case (Ruin Valley)
+ * 2. Check for a cuttable tree in front of the player
+ * 3. Check a 3x3 area around the player for grass tiles at the same elevation
+ *
+ * The elevation check ensures Cut only affects grass on the same "level"
+ * as the player (important for bridges and multi-level areas).
+ *
+ * @return TRUE if Cut can be used, FALSE if no valid target is found
+ */
 bool8 SetUpFieldMove_Cut(void)
 {
     s16 x, y;
@@ -197,6 +244,25 @@ static void FieldMoveCallback_CutGrass(void)
         FieldEffectStart(FLDEFF_CUT_GRASS);
 }
 
+/**
+ * FUNCTION: FldEff_CutGrass
+ *
+ * PURPOSE: Performs the grass cutting effect — replaces grass tiles with mowed
+ * versions in a 3x3 area around the player, redraws the map, and spawns 8
+ * grass clipping sprites that fly outward in a spiral.
+ *
+ * HOW IT WORKS:
+ * 1. Plays the Cut sound effect
+ * 2. Iterates over a 3x3 grid centered on the player
+ * 3. For each tile at the player's elevation that is grass, replaces it with
+ *    the mowed version and enables ground effects (dust puffs)
+ * 4. Redraws the entire visible map area to show the tile changes
+ * 5. Creates 8 sprites at the player's position, each offset by 45 degrees
+ *    in their starting angle (data[2] = i * 32). These will spiral outward
+ *    using sine/cosine in their callback functions.
+ *
+ * @return FALSE (field effects handle their own cleanup)
+ */
 bool8 FldEff_CutGrass(void)
 {
     u8 i, j;

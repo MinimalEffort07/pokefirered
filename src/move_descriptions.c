@@ -1,3 +1,20 @@
+/**
+ * @file move_descriptions.c
+ * @brief Move Description Text Strings — In-Game Text for All Pokemon Moves
+ *
+ * FILE OVERVIEW:
+ * This data-only file defines the description text for every Pokemon move in the
+ * game. These descriptions are displayed on the Pokemon Summary Screen and in the
+ * move selection UI during battle. Each move has a short multi-line description
+ * explaining its effect in plain language.
+ *
+ * GBA CONTEXT:
+ * The _() macro converts human-readable text into the GBA's custom character
+ * encoding at compile time. The \n escape creates line breaks. Each string is
+ * stored as a const u8 array in ROM, referenced by index from a move data table.
+ * Keeping descriptions as separate named constants (rather than a single array)
+ * allows the linker to place them efficiently in the ROM.
+ */
 #include "global.h"
 #include "constants/moves.h"
 

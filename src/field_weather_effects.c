@@ -1,3 +1,25 @@
+/**
+ * =FIELD WEATHER VISUAL EFFECTS=
+ *
+ * FILE OVERVIEW:
+ * This file implements the visual rendering of weather effects on the
+ * overworld map. Unlike field_weather.c which manages weather state
+ * transitions, this file draws the actual particles and overlays:
+ *   - RAIN: Falling raindrop sprites with splash impact effects
+ *   - THUNDERSTORM: Rain + periodic screen flash (lightning)
+ *   - SNOW: Falling snowflake sprites with gentle drifting
+ *   - FOG: Semi-transparent overlay using BG blending hardware
+ *   - SANDSTORM: Diagonal sand particle sprites
+ *   - SHADE/CLOUDS: Darkening overlay for cloudy areas
+ *   - ASH: Falling ash particles (not used in FRLG but inherited from RSE)
+ *
+ * GBA CONTEXT:
+ * Weather particles are sprites (OBJs), while fog and shade effects use
+ * the GBA's hardware alpha blending (BLDCNT/BLDALPHA registers) to
+ * create semi-transparent overlays across the entire screen. Rain and
+ * snow use sprite recycling — a pool of sprites is reused by resetting
+ * their positions when they fall off-screen.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

@@ -1,3 +1,26 @@
+/**
+ * @file global.h
+ * @brief Master Global Header — Included by Every Source File in the Project
+ *
+ * FILE OVERVIEW:
+ * This is the root header file included by virtually every .c file in the
+ * project. It pulls in all foundational headers (GBA types, constants, config)
+ * and defines the core data structures and macros used throughout the game.
+ *
+ * Key contents:
+ *   - GBA hardware type definitions (via gba/gba.h)
+ *   - Game configuration constants (via config.h)
+ *   - Global constants: flags, vars, species, pokedex, easy chat, RGB colors
+ *   - Core macros: ARRAY_COUNT, MIN, MAX, SWAP, etc.
+ *   - The massive save data structures: SaveBlock1, SaveBlock2, PokemonStorage
+ *   - Helper macros for compiler hints and decompilation
+ *
+ * GBA CONTEXT:
+ * Since the GBA has no operating system, there is no standard library beyond
+ * string.h. This header establishes the project-wide type system (u8, u16, u32,
+ * s8, s16, s32, bool8, bool16, etc.) and the fundamental macros that replace
+ * functionality that would come from an OS on other platforms.
+ */
 #ifndef GUARD_GLOBAL_H
 #define GUARD_GLOBAL_H
 

@@ -1,3 +1,19 @@
+/**
+ * =SCRIPT MOVEMENT SYSTEM=
+ *
+ * FILE OVERVIEW:
+ * This file implements the scripted movement system — the mechanism that
+ * allows map scripts to make NPCs and the player walk, turn, and perform
+ * movement actions along predetermined paths. Movement scripts are byte
+ * arrays where each byte is a movement command (walk up, walk down, face
+ * left, delay, jump, etc.). This system is used extensively in cutscenes,
+ * NPC patrol routes, and story sequences.
+ *
+ * The system runs as a task that feeds one movement command at a time to
+ * the object event movement system, waiting for each to complete before
+ * issuing the next. Multiple NPCs can execute movement scripts
+ * simultaneously using separate task instances.
+ */
 #include "global.h"
 #include "task.h"
 #include "util.h"

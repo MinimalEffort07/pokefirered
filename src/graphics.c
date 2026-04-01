@@ -1,3 +1,32 @@
+/**
+ * @file graphics.c
+ * @brief Compiled Graphics Assets — All Binary-Included Sprite and Background Art
+ *
+ * FILE OVERVIEW:
+ * This massive data-only file includes virtually all graphical assets used in the
+ * game as compiled binary data. It uses the INCBIN_U32() macro to embed pre-built
+ * graphics files directly into the ROM at compile time. Assets include:
+ *
+ *   - Battle interface elements (textboxes, HP bars, status icons)
+ *   - Battle animation sprites (fireballs, water droplets, lightning, etc.)
+ *   - Pokemon front/back sprites and palettes
+ *   - Trainer sprites and card graphics
+ *   - Menu UI elements, text window frames, icons
+ *   - Overworld elements (berry trees, field effects, weather particles)
+ *   - Pokeball graphics, type icons, summary screen elements
+ *
+ * GBA CONTEXT:
+ * INCBIN_U32() includes raw binary files as arrays of 32-bit values in ROM.
+ * Most graphics use one of these formats:
+ *   - .4bpp — 4 bits per pixel tile data (16 colors per palette)
+ *   - .8bpp — 8 bits per pixel tile data (256 colors)
+ *   - .gbapal — GBA palette data (BGR555 format, 2 bytes per color)
+ *   - .lz — LZ77 compressed (saves ROM space, decompressed to VRAM at runtime)
+ *   - .bin — raw tilemap data (defines how tiles are arranged on screen)
+ *
+ * Graphics data stays in ROM and is copied to VRAM only when needed, since
+ * the GBA has limited video memory (96 KB total VRAM).
+ */
 #include "global.h"
 
 const u32 gBattleInterface_Textbox_Gfx[] = INCBIN_U32("graphics/battle_interface/textbox.4bpp.lz");

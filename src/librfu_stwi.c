@@ -1,3 +1,26 @@
+/**
+ * @file librfu_stwi.c
+ * @brief RFU Serial Transfer Wire Interface — Low-Level Command Protocol
+ *
+ * FILE OVERVIEW:
+ * This file implements STWI (Serial Transfer Wire Interface), the lowest-level
+ * communication protocol between the GBA CPU and the Wireless Adapter hardware.
+ * STWI handles sending commands to the adapter and receiving responses.
+ *
+ * Key responsibilities:
+ *   - Initializing the serial I/O hardware for wireless adapter communication
+ *   - Sending request commands (connect, disconnect, send data, etc.)
+ *   - Managing the command/response state machine
+ *   - Timer-based timeout detection for stuck transfers
+ *   - Copying the interrupt handler to RAM for faster execution
+ *
+ * GBA CONTEXT:
+ * The GBA communicates with the wireless adapter through its serial port using
+ * 32-bit transfers. Commands are sent as structured packets with request IDs.
+ * The adapter processes commands asynchronously and responds with result packets.
+ * The STWI layer manages this request/response cycle and handles errors like
+ * timeouts (when the adapter doesn't respond) via hardware timer interrupts.
+ */
 #include "librfu.h"
 
 static void STWI_intr_timer(void);

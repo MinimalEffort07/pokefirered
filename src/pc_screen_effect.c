@@ -1,10 +1,40 @@
+/**
+ * @file pc_screen_effect.c
+ * @brief CRT Monitor Turn-On/Off Screen Effect
+ *
+ * FILE OVERVIEW:
+ * This file creates the visual effect of a CRT (Cathode Ray Tube) television
+ * turning on or off. Used when the player interacts with a PC — the screen
+ * appears to "power on" (a thin horizontal line expands outward from the center)
+ * and "power off" (the image collapses to a thin line then disappears).
+ *
+ * CRT TURN-ON SEQUENCE:
+ * 1. Start with a single-pixel horizontal line at screen center (120, 80)
+ * 2. Expand the line horizontally to full width (bright white glow using BLDY)
+ * 3. Expand vertically from the center line to fill the screen
+ * 4. Remove the glow effect — screen is now fully visible
+ *
+ * CRT TURN-OFF SEQUENCE:
+ * 1. Start with full screen visible
+ * 2. Collapse vertically to a single horizontal line at center
+ * 3. Apply bright white glow (BLDY = 16 = maximum brightness increase)
+ * 4. Collapse horizontally until the line disappears
+ * 5. Fade entire screen to black
+ *
+ * GBA HARDWARE CONTEXT:
+ * This effect uses the GBA's hardware windowing system (WIN0):
+ * - WININ is set to show everything inside the window
+ * - WINOUT is set to show nothing outside the window
+ * - The window rectangle (WIN0H, WIN0V) is animated to create the expanding/
+ *   collapsing effect
+ *
+ * The bright "glow" during the horizontal phase uses BLDY (Brightness Increase):
+ * BLDCNT targets all layers with BLDCNT_EFFECT_LIGHTEN, and BLDY = 16 means
+ * maximum brightness increase (all colors shift toward white).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"
-
-/*
- * Animates the screen as though it was a CRT monitor turning on or off.
- */
 
 #define tState data[0]
 #define tXSpeed data[1]
@@ -50,6 +80,25 @@ static void BeginPCScreenEffect(TaskFunc func, u16 speed, u16 unused, u8 priorit
     gTasks[taskId].func(taskId);
 }
 
+/**
+ * FUNCTION: Task_PCScreenEffect_TurnOn
+ *
+ * PURPOSE: Animates the CRT turn-on effect: a horizontal line at the center of
+ * the screen expands outward to fill the screen.
+ *
+ * HOW IT WORKS:
+ * State 0: Set up WIN0 as a 1-pixel horizontal line at screen center (120,80).
+ *   Everything inside the window is visible; everything outside is hidden (black).
+ * State 1: Save current blend settings, then set max brightness increase (white glow).
+ *   This simulates the bright phosphor glow of a CRT warming up.
+ * State 2: Expand the window horizontally (left edge moves left, right moves right)
+ *   at tXSpeed pixels per frame. When fully wide, remove the brightness glow.
+ * State 3: Expand vertically (top moves up, bottom moves down) at tYSpeed pixels/frame.
+ *   When fully tall, disable the window system (screen is now fully visible).
+ * Default: Restore original blend settings and destroy the task.
+ *
+ * @param taskId — task identifier
+ */
 static void Task_PCScreenEffect_TurnOn(u8 taskId)
 {
     struct Task *task = &gTasks[taskId];
@@ -110,6 +159,24 @@ static void Task_PCScreenEffect_TurnOn(u8 taskId)
     ++task->tState;
 }
 
+/**
+ * FUNCTION: Task_PCScreenEffect_TurnOff
+ *
+ * PURPOSE: Animates the CRT turn-off effect: the screen collapses to a thin
+ * horizontal line and then disappears, like an old TV powering off.
+ *
+ * HOW IT WORKS:
+ * State 0: Set palette entry 0 (the "background" color behind everything) to black.
+ * State 1: Set up the window at full screen size. As it shrinks, the area outside
+ *   the window (which shows nothing/black) will grow from the edges inward.
+ * State 2: Collapse vertically: top and bottom edges move toward center row 80.
+ *   When they meet, apply the white brightness glow effect.
+ * State 3: Collapse horizontally: left and right edges move toward center column 120.
+ *   When they meet, fade entire palette to black (the final "click off").
+ * Default: Clean up: disable window, reset brightness, destroy task.
+ *
+ * @param taskId — task identifier
+ */
 static void Task_PCScreenEffect_TurnOff(u8 taskId)
 {
     struct Task *task = &gTasks[taskId];

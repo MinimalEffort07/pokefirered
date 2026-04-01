@@ -1,3 +1,28 @@
+/**
+ * @file berry_fix_program.c
+ * @brief Berry Glitch Fix Multiboot Transfer — Patching Ruby/Sapphire via Link Cable
+ *
+ * FILE OVERVIEW:
+ * Early copies of Pokemon Ruby and Sapphire had a bug (the "Berry Glitch") where
+ * the internal real-time clock (RTC) would stop advancing after about a year of
+ * play, causing all time-based events (berry growth, daily events, tides) to
+ * freeze permanently.
+ *
+ * This file implements a Multiboot transfer program that sends a patch from
+ * FireRed/LeafGreen to a connected Ruby/Sapphire cartridge via the link cable.
+ * Multiboot is a GBA feature that lets one cartridge send a small program to
+ * another GBA's RAM for execution — the receiving GBA doesn't need its own
+ * cartridge for this.
+ *
+ * GBA CONTEXT:
+ * Multiboot works by sending code over the serial link to the receiving GBA's
+ * work RAM, where it executes. The sending GBA (master) drives the transfer
+ * using MultiBootInit(), MultiBootMain(), and MultiBootStartMaster(). The
+ * receiving GBA must be powered on with no cartridge (or holding Start+Select
+ * on boot) to enter Multiboot receive mode. The protocol includes a handshake
+ * phase where the master detects connected clients via probe_count, response_bit,
+ * and client_bit fields in the MultiBootParam struct.
+ */
 #include "global.h"
 #include "gpu_regs.h"
 #include "multiboot.h"
@@ -9,6 +34,7 @@
 #include "help_system.h"
 #include "m4a.h"
 
+/* Scenes are the different instruction screens shown to the player */
 enum {
     SCENE_ENSURE_CONNECT,
     SCENE_TURN_OFF_POWER,
@@ -76,17 +102,34 @@ static const void *const sBerryFixGraphics[][3] = {
 extern const u8 gMultiBootProgram_BerryGlitchFix_Start[0x3BF4];
 extern const u8 gMultiBootProgram_BerryGlitchFix_End[];
 
+/**
+ * FUNCTION: SetScene
+ *
+ * PURPOSE: Loads and displays one of the instruction screens for the berry fix process.
+ *
+ * GBA CONTEXT:
+ * This function directly configures GBA display hardware registers:
+ *   - REG_DISPCNT = 0: Temporarily disables the display to avoid visual glitches
+ *     while loading new graphics
+ *   - LZ77UnCompVram: Decompresses LZ77-compressed tile data directly into VRAM
+ *   - BG_CHAR_ADDR(0): Base address for tile character data (0x06000000)
+ *   - BG_SCREEN_ADDR(31): Tilemap data at screen base block 31 (0x0600F800)
+ *   - BG_PLTT (0x05000000): Background palette RAM — 0x200 bytes = 256 colors
+ *   - REG_BG0CNT: Configures BG0 as a 256x256 text background using charbase 0
+ *     and screenbase 31, with 16-color palettes and highest priority
+ *   - REG_DISPCNT = DISPCNT_BG0_ON: Re-enables display showing only BG0
+ */
 static void SetScene(int scene)
 {
-    REG_DISPCNT = 0;
-    REG_BG0HOFS = 0;
-    REG_BG0VOFS = 0;
-    REG_BLDCNT = 0;
-    LZ77UnCompVram(sBerryFixGraphics[scene][0], (void *)BG_CHAR_ADDR(0));
-    LZ77UnCompVram(sBerryFixGraphics[scene][1], (void *)BG_SCREEN_ADDR(31));
-    CpuCopy16(sBerryFixGraphics[scene][2], (void *)BG_PLTT, 0x200);
+    REG_DISPCNT = 0;    /* Disable display during graphics load */
+    REG_BG0HOFS = 0;    /* Reset horizontal scroll to 0 */
+    REG_BG0VOFS = 0;    /* Reset vertical scroll to 0 */
+    REG_BLDCNT = 0;     /* Disable all blending effects */
+    LZ77UnCompVram(sBerryFixGraphics[scene][0], (void *)BG_CHAR_ADDR(0));     /* Decompress tiles */
+    LZ77UnCompVram(sBerryFixGraphics[scene][1], (void *)BG_SCREEN_ADDR(31));  /* Decompress tilemap */
+    CpuCopy16(sBerryFixGraphics[scene][2], (void *)BG_PLTT, 0x200);          /* Copy palette (512 bytes) */
     REG_BG0CNT = BGCNT_PRIORITY(0) | BGCNT_CHARBASE(0) | BGCNT_16COLOR | BGCNT_SCREENBASE(31) | BGCNT_TXT256x256;
-    REG_DISPCNT = DISPCNT_BG0_ON;
+    REG_DISPCNT = DISPCNT_BG0_ON;  /* Show BG0 only */
 }
 
 #define tState data[0]

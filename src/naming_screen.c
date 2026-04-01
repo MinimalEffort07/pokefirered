@@ -1,3 +1,18 @@
+/**
+ * @file naming_screen.c
+ * @brief Naming Screen — On-Screen Keyboard for Naming Characters and Pokemon
+ *
+ * FILE OVERVIEW:
+ * This file implements the naming screen that appears whenever the player needs
+ * to enter a text name: naming the player character, naming a rival, nicknaming
+ * a Pokemon, or naming a PC storage box. It features an on-screen keyboard with
+ * uppercase/lowercase letters, numbers, and symbols, plus a preview of the
+ * current input and backspace/OK controls.
+ *
+ * The naming screen uses its own dedicated graphics mode with custom tile-based
+ * keyboard layouts defined in keyboard_text.c. Input is handled via D-pad
+ * navigation and A/B button presses.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"

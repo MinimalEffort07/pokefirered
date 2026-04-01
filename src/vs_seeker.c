@@ -1,3 +1,28 @@
+/**
+ * =VS SEEKER=
+ *
+ * FILE OVERVIEW:
+ * This file implements the VS Seeker key item — a device exclusive to
+ * FireRed/LeafGreen that lets the player re-battle defeated trainers.
+ * When used in the overworld, it:
+ *
+ *   1. Checks if any defeated trainers are within range (the visible screen)
+ *   2. Each trainer in range has a random chance to accept a rematch
+ *   3. Accepting trainers show an exclamation mark animation
+ *   4. The player can then walk up to them for a new battle with a
+ *      potentially upgraded team
+ *
+ * REMATCH SYSTEM:
+ * Each trainer can have up to 6 different party compositions (the original
+ * plus 5 progressively stronger rematches). Which rematch party is used
+ * depends on how far the player has progressed in the story. The sRematches
+ * table maps each trainer to their rematch trainer IDs. A value of SKIP
+ * (0xFFFF) means that rematch tier is skipped for that trainer.
+ *
+ * VS SEEKER CHARGING:
+ * The VS Seeker must be "charged" by walking 100 steps before each use.
+ * This prevents the player from farming rematches without moving.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "constants/songs.h"
@@ -26,12 +51,14 @@
 #include "constants/quest_log.h"
 #include "constants/trainer_types.h"
 
-// Each trainer can have up to 6 parties, including their original party.
-// Each rematch is unavailable until the player has progressed to a certain point in the story (see TryGetRematchTrainerIdGivenGameState).
-// A list of the trainer ids for each party is in sRematches. If a party doesn't update for a progression point it will have SKIP instead,
-// and that trainer id will be ignored.
+/* Each trainer can have up to 6 parties, including their original party.
+ * Each rematch is unavailable until the player has progressed to a certain
+ * point in the story (see TryGetRematchTrainerIdGivenGameState).
+ * A list of the trainer ids for each party is in sRematches. If a party
+ * doesn't update for a progression point it will have SKIP instead,
+ * and that trainer id will be ignored. */
 #define MAX_REMATCH_PARTIES 6
-#define SKIP 0xFFFF
+#define SKIP 0xFFFF  /* Sentinel: this rematch tier doesn't exist for this trainer */
 
 #define NO_REMATCH_LOCALID LOCALID_PLAYER
 

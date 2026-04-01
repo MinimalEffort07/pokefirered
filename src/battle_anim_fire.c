@@ -1,3 +1,10 @@
+/**
+ * =BATTLE ANIMATION: FIRE-TYPE MOVES=
+ *
+ * Visual effects for Fire-type move animations (Ember flame particles,
+ * Flamethrower stream, Fire Blast star pattern, Fire Spin vortex,
+ * Overheat heat waves, Will-O-Wisp ghostly flames, etc.).
+ */
 #include "global.h"
 #include "battle_anim.h"
 #include "sound.h"

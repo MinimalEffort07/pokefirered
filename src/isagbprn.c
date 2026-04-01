@@ -1,3 +1,37 @@
+/**
+ * @file isagbprn.c
+ * @brief Debug Print System — Emulator/Hardware Debug Output for Development
+ *
+ * FILE OVERVIEW:
+ * This file provides debug printing functionality that outputs text to various
+ * GBA development tools and emulators. It supports three different output backends:
+ *
+ *   1. AGB Print (LOG_HANDLER_AGB_PRINT) — Official Nintendo AGB (Advanced Game Boy)
+ *      debug output. Writes characters to a special region of ROM address space
+ *      (0x09FE20F8) that the official development hardware intercepts.
+ *
+ *   2. no$gba Print (LOG_HANDLER_NOCASH_PRINT) — Debug output for the no$gba
+ *      emulator. Writes string pointers to memory-mapped I/O at 0x04FFFA14.
+ *
+ *   3. mGBA Print (LOG_HANDLER_MGBA_PRINT) — Debug output for the mGBA emulator.
+ *      Uses mGBA's custom debug registers at 0x04FFF600-0x04FFF780.
+ *
+ * All three backends are compiled conditionally based on LOG_HANDLER and are
+ * completely stripped from release builds (guarded by #ifndef NDEBUG).
+ *
+ * GBA CONTEXT:
+ * The GBA has no standard output (no terminal, no console). During development,
+ * debug prints are sent through special memory addresses that development
+ * cartridges or emulators intercept. These addresses don't correspond to real
+ * hardware — they're "magic" addresses that the dev tools watch for writes.
+ *
+ * The WAITCNT register (REG_ADDR_WAITCNT) controls memory access timing for
+ * different address ranges. AGB Print temporarily changes wait states to access
+ * its special ROM-mapped buffer, then restores the original timing.
+ *
+ * The asm(".hword 0xEFFF") instruction is an undefined ARM opcode that triggers
+ * a crash/breakpoint in emulators, used to halt execution on assertion failures.
+ */
 #include <stdarg.h>
 #include <stdio.h>
 #include "config.h"
@@ -5,21 +39,22 @@
 #include "malloc.h"
 #include "mini_printf.h"
 
-#define AGB_PRINT_FLUSH_ADDR 0x9FE209D
-#define AGB_PRINT_STRUCT_ADDR 0x9FE20F8
-#define AGB_PRINT_PROTECT_ADDR 0x9FE2FFE
+/* AGB Print hardware addresses — intercepted by official development cartridges */
+#define AGB_PRINT_FLUSH_ADDR 0x9FE209D    /* Function pointer to flush routine in dev cart ROM */
+#define AGB_PRINT_STRUCT_ADDR 0x9FE20F8   /* Print state structure in dev cart ROM */
+#define AGB_PRINT_PROTECT_ADDR 0x9FE2FFE  /* Write protection toggle (0x20 = unlocked, 0 = locked) */
+/* Wait state configuration for accessing the AGB Print ROM region */
 #define WSCNT_DATA (WAITCNT_PHI_OUT_16MHZ | WAITCNT_WS0_S_2 | WAITCNT_WS0_N_4)
 
-// originally for auto no$gba support, the string "no$gba" should be at this address,
-// the user needs to read this string out as the memory viewer won't show it.
-#define NOCASHGBAIDADDR 0x4FFFA00
-#define NOCASHGBAPRINTADDR1 0x4FFFA10 // automatically adds a newline after the string has finished
-#define NOCASHGBAPRINTADDR2 0x4FFFA14 // does not automatically add the newline. by default, NOCASHGBAPRINTADDR2 is used. this is used to keep strings consistent between no$gba and VBA-RR, but a user can choose to forgo this.
+/* no$gba emulator debug I/O addresses */
+#define NOCASHGBAIDADDR 0x4FFFA00      /* Contains "no$gba" string for emulator detection */
+#define NOCASHGBAPRINTADDR1 0x4FFFA10  /* Print with auto-newline */
+#define NOCASHGBAPRINTADDR2 0x4FFFA14  /* Print without auto-newline (default) */
 
-// hardware extensions for LOG_HANDLER_MGBA_PRINT
-#define REG_DEBUG_ENABLE ((vu16*) (0x4FFF780)) // handshake: (w)[0xC0DE] -> (r)[0x1DEA]
-#define REG_DEBUG_FLAGS  ((vu16*) (0x4FFF700))
-#define REG_DEBUG_STRING ((char*) (0x4FFF600))
+/* mGBA emulator debug register addresses */
+#define REG_DEBUG_ENABLE ((vu16*) (0x4FFF780)) /* Handshake: write 0xC0DE, read back 0x1DEA if mGBA */
+#define REG_DEBUG_FLAGS  ((vu16*) (0x4FFF700)) /* Log level + send flag (0x100 = send) */
+#define REG_DEBUG_STRING ((char*) (0x4FFF600)) /* 256-byte string buffer for debug messages */
 
 struct AGBPrintStruct
 {

@@ -1,3 +1,23 @@
+/**
+ * =WILD POKEMON AREA MARKERS=
+ *
+ * FILE OVERVIEW:
+ * This file provides data and logic for the Pokedex "Area" feature — the
+ * map screen that shows where a specific Pokemon species can be found in
+ * the wild. When viewing a Pokemon's Pokedex entry and selecting "Area,"
+ * markers appear on the region map showing which routes/cities/caves
+ * contain that species in their encounter tables.
+ *
+ * The system works by:
+ * 1. Scanning all wild encounter tables in the game
+ * 2. Finding which tables contain the queried species
+ * 3. Mapping those encounter table headers to region map sections
+ * 4. Drawing markers at those locations on the region map
+ *
+ * Special handling exists for Roaming Pokemon (the legendary beasts in
+ * FRLG: Raikou/Entei/Suicune), which don't have fixed encounter tables
+ * but instead appear in a random route each time the player changes areas.
+ */
 #include "global.h"
 #include "field_specials.h"
 #include "event_data.h"

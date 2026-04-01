@@ -1,3 +1,14 @@
+/**
+ * @file mystery_gift_menu.c
+ * @brief Mystery Gift Menu Screen — UI for Sending and Receiving Gifts
+ *
+ * FILE OVERVIEW:
+ * This file implements the full Mystery Gift menu screen that appears when the
+ * player selects "Mystery Gift" from the main menu. It handles the UI flow for
+ * both sending and receiving Wonder Cards and Wonder News via wireless link,
+ * including connection setup, transfer progress, result messages, and card/news
+ * toss confirmations.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

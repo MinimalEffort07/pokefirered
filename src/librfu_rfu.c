@@ -1,3 +1,29 @@
+/**
+ * @file librfu_rfu.c
+ * @brief RFU Core Library — Wireless Adapter Communication Engine
+ *
+ * FILE OVERVIEW:
+ * This is the core RFU (Radio Frequency Unit) library that implements the
+ * wireless communication protocol for the GBA Wireless Adapter. It handles:
+ *
+ *   - Frame-level data packaging and transmission
+ *   - Slot management for up to 4 simultaneous connections
+ *   - Reliable data delivery with acknowledgment and retransmission
+ *   - Link-level flow control (LLSF — Low Level Sub Frame)
+ *   - UNI (unicast) and NI (network interface) data transfer modes
+ *   - Connection slot allocation and deallocation
+ *
+ * The file uses a frame-based protocol where data is split into fixed-size
+ * sub-frames with headers containing slot information, sequence numbers,
+ * acknowledgments, and phase bits for flow control.
+ *
+ * GBA CONTEXT:
+ * The wireless adapter communicates at the physical layer via the serial port,
+ * but the RFU library abstracts this into a packet-based protocol. Each "slot"
+ * represents a connection to another GBA. The LLSF structure defines the bit
+ * layout of frame headers, with various fields packed into specific bit positions
+ * to minimize bandwidth usage over the limited wireless channel.
+ */
 #include <limits.h>
 #include "librfu.h"
 

@@ -1,3 +1,26 @@
+/**
+ * =OAK'S SPEECH (NEW GAME INTRODUCTION)=
+ *
+ * FILE OVERVIEW:
+ * This file implements the "Professor Oak's Introduction" sequence that
+ * plays when starting a new game. This is the iconic scene where:
+ *   1. Professor Oak welcomes the player to the world of Pokemon
+ *   2. A Nidoran sprite appears as an example Pokemon
+ *   3. The player enters their character name
+ *   4. The rival's name is entered
+ *   5. The player's sprite shrinks down and "enters" the game world
+ *
+ * This is one of the most complex UI sequences in the game, featuring
+ * sprite animations, text printing, the naming screen integration,
+ * and multiple fade/transition effects. It uses a large state machine
+ * with dozens of states for each phase of the introduction.
+ *
+ * GBA CONTEXT:
+ * The professor and Pokemon sprites are loaded as OBJ sprites positioned
+ * over a BG background. The "shrinking player" effect at the end uses
+ * the GBA's sprite affine transforms (hardware scaling) to smoothly
+ * reduce the player sprite to a tiny dot before the overworld loads.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

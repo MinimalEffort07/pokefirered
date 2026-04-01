@@ -1,3 +1,29 @@
+/**
+ * @file dodrio_berry_picking_comm.c
+ * @brief Dodrio Berry Picking Minigame — Wireless Communication Protocol
+ *
+ * FILE OVERVIEW:
+ * This file handles the wireless packet protocol for the Dodrio Berry Picking
+ * minigame (a multiplayer minigame for 3-5 players using the Wireless Adapter).
+ * In this minigame, each player controls one of Dodrio's three heads and must
+ * catch falling berries.
+ *
+ * Four packet types are defined:
+ *   1. ReadyToStart — signals a player is ready to begin the game
+ *   2. GameState — the master player sends the complete game state (berry
+ *      positions, fall distances, pick states, and status flags for all 5 players)
+ *   3. PickState — each client sends their current pick action
+ *   4. ReadyToEnd — signals a player is ready to end the game
+ *
+ * GBA CONTEXT:
+ * Wireless communication uses the RFU (Radio Frequency Unit) adapter. Data is
+ * sent via Rfu_SendPacket() and received in gRecvCmds[][] (a 2D array where
+ * the first index is the player ID and the second is the data word index).
+ * The first word (gRecvCmds[0][0]) contains a command mask — RFUCMD_SEND_PACKET
+ * indicates valid game data. Packet structures use bitfields extensively to pack
+ * the game state into the minimum number of bytes, since wireless bandwidth is
+ * very limited (only a few words per frame).
+ */
 #include "global.h"
 #include "dodrio_berry_picking.h"
 #include "link.h"

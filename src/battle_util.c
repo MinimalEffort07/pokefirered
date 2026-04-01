@@ -1,3 +1,50 @@
+/*
+ * battle_util.c - Battle Calculation and Utility Functions
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file contains the core battle calculation functions -- the "math"
+ * behind Pokemon battles. Key systems implemented here:
+ *
+ * DAMAGE CALCULATION:
+ * The Pokemon damage formula (Generation III):
+ *   damage = ((2*level/5 + 2) * power * Atk/Def) / 50 + 2
+ *   × STAB (1.5x if move type matches user's type)
+ *   × Type effectiveness (0x, 0.5x, 1x, 2x, 4x)
+ *   × Critical hit (2x)
+ *   × Random (85%-100%)
+ *
+ * TYPE EFFECTIVENESS:
+ * Iterates through the gTypeEffectiveness[] table (battle_main.c) to
+ * calculate the type multiplier. Handles dual types (multiply both
+ * matchups together), immunities (Ground vs Flying = 0x), and the
+ * Foresight/Odor Sleuth mechanic that removes Normal/Fighting → Ghost
+ * immunity.
+ *
+ * ABILITY EFFECTS:
+ * AbilityBattleEffects is a massive function handling all ability triggers:
+ * - Switch-in abilities: Intimidate, Drizzle, Drought, Sand Stream, Trace
+ * - Damage-modifying: Levitate, Flash Fire, Volt Absorb, Water Absorb
+ * - Status-blocking: Immunity, Limber, Own Tempo, Oblivious, etc.
+ * - End-of-turn: Speed Boost, Shed Skin, Rain Dish
+ *
+ * ITEM EFFECTS:
+ * ItemBattleEffects handles held item triggers:
+ * - Leftovers/Black Sludge (end-of-turn healing)
+ * - Status-healing berries (Chesto, Rawst, Lum, etc.)
+ * - Stat-boosting pinch berries (Liechi, Ganlon, etc.)
+ * - White Herb (reset negative stat changes)
+ *
+ * OTHER UTILITIES:
+ * - Weather effects and duration management
+ * - Move-end effects (contact abilities, King's Rock flinch, etc.)
+ * - Status condition application and duration
+ * - Experience calculation and distribution
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "item.h"
 #include "text.h"

@@ -1,3 +1,19 @@
+/**
+ * @file trainer_tower.c
+ * @brief Trainer Tower — Multi-Floor Battle Facility on Seven Island
+ *
+ * FILE OVERVIEW:
+ * This file implements the Trainer Tower, a post-game battle facility located on
+ * Seven Island in the Sevii Islands. The player battles through multiple floors
+ * of trainers in sequence, racing against a timer. The tower supports multiple
+ * challenge types (Single, Double, Knockout, Mixed) and can load custom floor
+ * data from e-Reader cards.
+ *
+ * The file manages floor progression, timer tracking, trainer data loading
+ * (from both built-in sets and e-Reader data in flash memory), battle
+ * initialization, prize distribution, and the results screen showing
+ * completion time and records.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "util.h"

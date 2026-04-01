@@ -1,3 +1,20 @@
+/**
+ * =BATTLE ANIMATION: STATUS EFFECTS=
+ *
+ * FILE OVERVIEW:
+ * This file implements the visual animations that play when a Pokemon is
+ * affected by a status condition during battle. These include:
+ *   - Paralysis sparks (yellow lightning bolts)
+ *   - Poison bubbles (purple orbs rising)
+ *   - Burn flames (flickering fire)
+ *   - Freeze ice crystals
+ *   - Sleep "Zzz" floating text
+ *   - Confusion (spinning stars/circles)
+ *
+ * These animations play at the start of a turn when the status activates
+ * (e.g., "X is paralyzed! It can't move!") and give visual feedback
+ * to the player about what condition their Pokemon is suffering from.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

@@ -1,3 +1,40 @@
+/**
+ * @file field_door.c
+ * @brief Door Animation System for Overworld Map Transitions
+ *
+ * FILE OVERVIEW:
+ * This file manages the visual door opening and closing animations that play
+ * when the player enters or exits buildings on the overworld. Each building type
+ * in the game (Pokemon Center, Pallet Town houses, Silph Co., etc.) has its own
+ * unique door appearance, and this system animates them frame-by-frame.
+ *
+ * HOW DOOR ANIMATION WORKS:
+ * 1. Each door has 3 animation frames (closed -> partially open -> fully open)
+ * 2. The door animation tiles are NOT part of the map's tileset — they're separate
+ *    graphics that get temporarily copied into VRAM for the animation
+ * 3. The tiles are copied to the END of the VRAM tile area (DOOR_TILE_START),
+ *    overwriting any tiles that were there. After the animation, the map's
+ *    normal closed-door metatile is restored.
+ *
+ * DOOR TYPES:
+ * - 1x1 doors (DOOR_SIZE_1x1): Standard doors occupying one metatile (16x16 pixels)
+ * - 1x2 doors (DOOR_SIZE_1x2): Tall doors occupying two metatiles vertically (16x32)
+ *   Used for elevator doors, Cable Club doors, SS Anne doors, etc.
+ *
+ * DOOR SOUNDS:
+ * - DOOR_SOUND_NORMAL: Standard wooden door creak (SE_DOOR)
+ * - DOOR_SOUND_SLIDING: Automatic/electric sliding door (SE_SLIDING_DOOR)
+ *
+ * GBA CONTEXT — METATILES AND DOOR ANIMATION:
+ * The GBA Pokemon games use 16x16 pixel "metatiles" as building blocks for maps.
+ * Each metatile is made of 4 hardware tiles (8x8 each) in a 2x2 grid, arranged
+ * in two layers (bottom and top). Door animation works by temporarily replacing
+ * the door metatile's bottom-layer tiles with animation frame tiles, while
+ * keeping the top-layer tiles as tile 0 (transparent or base).
+ *
+ * The INCBIN_U8 directives include raw 4bpp (4 bits per pixel = 16 colors)
+ * tile data from binary files compiled from door animation sprites.
+ */
 #include "global.h"
 #include "field_camera.h"
 #include "task.h"
@@ -309,10 +346,17 @@ static void DrawClosedDoorTiles(const struct DoorGraphics *gfx, int x, int y)
     }
 }
 
-// NOTE: The tiles of a door's animation must be copied to VRAM because they are
-//       not already part of any given tileset. This means that if there are any
-//       pre-existing tiles in this copied region that are visible when the door
-//       animation is played, they will be overwritten.
+/*
+ * NOTE: The tiles of a door's animation must be copied to VRAM because they are
+ *       not already part of any given tileset. This means that if there are any
+ *       pre-existing tiles in this copied region that are visible when the door
+ *       animation is played, they will be overwritten.
+ *
+ * GBA CONTEXT:
+ * VRAM has space for NUM_TILES_TOTAL tiles. We reserve the LAST 8 tile slots
+ * for door animation frames. Each metatile layer uses 4 tiles (2x2 grid),
+ * so 8 tiles = enough for a 1x2 door (2 metatiles stacked vertically).
+ */
 #define DOOR_TILE_START (NUM_TILES_TOTAL - 8)
 
 static void CopyDoorTilesToVram(const u8 *tiles)
@@ -365,6 +409,20 @@ static void BuildDoorTiles(u16 *tiles, u16 tileNum, const u8 *paletteNums)
 #define tX        data[6]
 #define tY        data[7]
 
+/**
+ * FUNCTION: Task_AnimateDoor
+ *
+ * PURPOSE: Task that drives door animation frame-by-frame. Each frame,
+ * it advances the animation and draws the current frame's tiles.
+ * Destroys itself when the animation completes.
+ *
+ * HOW IT WORKS:
+ * Pointers to the animation frames and door graphics are stored in the task
+ * data as split 16-bit halves (because task data is s16[] but pointers are 32-bit).
+ * The pointer is reconstructed by combining the high and low halves.
+ *
+ * @param taskId — task identifier
+ */
 static void Task_AnimateDoor(u8 taskId)
 {
     s16 *data = gTasks[taskId].data;
@@ -476,6 +534,12 @@ static s8 StartDoorCloseAnimation(const struct DoorGraphics *gfx, int x, int y)
         return StartDoorAnimationTask(gfx, sDoorAnimFrames_CloseLarge, x, y);
 }
 
+/**
+ * FUNCTION: FieldSetDoorOpened
+ *
+ * PURPOSE: Instantly draws a door in its fully-open state (no animation).
+ * Used when loading a map where the player is already in a doorway.
+ */
 void FieldSetDoorOpened(int x, int y)
 {
     if (MetatileBehavior_IsWarpDoor_2(MapGridGetMetatileBehaviorAt((s16)x, (s16)y)))
@@ -488,6 +552,16 @@ void FieldSetDoorClosed(int x, int y)
         DrawClosedDoor(sDoorGraphics, x, y);
 }
 
+/**
+ * FUNCTION: FieldAnimateDoorClose
+ *
+ * PURPOSE: Starts the door closing animation at the given map coordinates.
+ * Returns the task ID of the animation task, or -1 if there's no door
+ * or an animation is already running.
+ *
+ * @param x, y — map grid coordinates of the door metatile
+ * @return Task ID of the animation, or -1 on failure
+ */
 s8 FieldAnimateDoorClose(int x, int y)
 {
     if (!MetatileBehavior_IsWarpDoor_2(MapGridGetMetatileBehaviorAt((s16)x, (s16)y)))
@@ -495,6 +569,16 @@ s8 FieldAnimateDoorClose(int x, int y)
     return StartDoorCloseAnimation(sDoorGraphics, x, y);
 }
 
+/**
+ * FUNCTION: FieldAnimateDoorOpen
+ *
+ * PURPOSE: Starts the door opening animation at the given map coordinates.
+ * Returns the task ID of the animation task, or -1 if there's no door
+ * or an animation is already running.
+ *
+ * @param x, y — map grid coordinates of the door metatile
+ * @return Task ID of the animation, or -1 on failure
+ */
 s8 FieldAnimateDoorOpen(int x, int y)
 {
     if (!MetatileBehavior_IsWarpDoor_2(MapGridGetMetatileBehaviorAt((s16)x, (s16)y)))
@@ -502,11 +586,28 @@ s8 FieldAnimateDoorOpen(int x, int y)
     return AnimateDoorOpenInternal(sDoorGraphics, x, y);
 }
 
+/**
+ * FUNCTION: FieldIsDoorAnimationRunning
+ *
+ * PURPOSE: Returns TRUE if a door animation task is currently active.
+ * Used by the warp transition system to wait for door animations to finish
+ * before proceeding with the map transition.
+ */
 bool8 FieldIsDoorAnimationRunning(void)
 {
     return FuncIsActiveTask(Task_AnimateDoor);
 }
 
+/**
+ * FUNCTION: GetDoorSoundEffect
+ *
+ * PURPOSE: Returns the appropriate sound effect ID for the door at the given
+ * coordinates. Normal doors use SE_DOOR (wooden creak), sliding doors use
+ * SE_SLIDING_DOOR (automatic door whoosh).
+ *
+ * @param x, y — map grid coordinates of the door
+ * @return SE_DOOR or SE_SLIDING_DOOR
+ */
 u16 GetDoorSoundEffect(int x, int y)
 {
     if (GetDoorSoundType(sDoorGraphics, x, y) == DOOR_SOUND_NORMAL)

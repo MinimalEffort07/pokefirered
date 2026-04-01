@@ -1,3 +1,26 @@
+/**
+ * @file dynamic_placeholder_text_util.c
+ * @brief Dynamic Text Placeholder System and NPC Text Color Table
+ *
+ * FILE OVERVIEW:
+ * This file provides two systems:
+ *
+ * 1. DYNAMIC PLACEHOLDER TEXT: A system for inserting runtime-determined strings
+ *    into text templates. Scripts can register up to 8 string pointers, and text
+ *    containing CHAR_DYNAMIC markers will have those markers replaced with the
+ *    registered strings. This is used for dialogue that includes variable content
+ *    (like player-chosen names or computed values).
+ *
+ * 2. NPC TEXT COLOR TABLE: Maps each NPC sprite graphic ID to a text color
+ *    (male = blue, female = red, neutral = dark gray, Pokemon = green).
+ *    This is used for colored NPC names in dialogue and the Union Room.
+ *    The table packs two colors per byte (one in the low nibble, one in the high)
+ *    since NPC graphics IDs come in pairs (pairs share a byte).
+ *
+ * TEXT PLACEHOLDER FORMAT:
+ * In a text string, the sequence [CHAR_DYNAMIC][index] is replaced with the
+ * string registered at sStringPointers[index]. The index is a single byte (0-7).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "constants/event_objects.h"

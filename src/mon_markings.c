@@ -1,3 +1,20 @@
+/**
+ * =POKEMON MARKINGS SYSTEM=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Pokemon marking system — the feature that lets
+ * players tag their Pokemon with small symbols (circle, triangle, square,
+ * heart) in the PC storage system and summary screen. Markings serve as a
+ * personal organizational tool with no gameplay effect.
+ *
+ * The file provides two things:
+ * 1. A popup menu for selecting/deselecting marks on a Pokemon
+ * 2. A "combo sprite" system that displays a Pokemon's current markings
+ *    as a small combined icon (used in the PC box view)
+ *
+ * The marking menu is built entirely from sprites rather than BG windows,
+ * which allows it to overlay the PC box interface smoothly.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "text_window_graphics.h"

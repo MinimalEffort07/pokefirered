@@ -1,3 +1,29 @@
+/**
+ * @file link_rfu_2.c
+ * @brief RFU Game-Level Wireless Communication — State Machine and Data Exchange
+ *
+ * FILE OVERVIEW:
+ * This file implements the game-level wireless communication layer that sits on
+ * top of the low-level RFU library. It manages the state machine for wireless
+ * connections used by all multiplayer features: Union Room, wireless battles,
+ * minigames, and Mystery Gift.
+ *
+ * Key responsibilities:
+ *   - Parent/child connection state machine (RFUSTATE_* states)
+ *   - Data packet sending and receiving with error handling
+ *   - Block transfer protocol for large data (save data, battle data, etc.)
+ *   - Heartbeat/keepalive management to detect disconnections
+ *   - Union Room activity broadcasting and discovery
+ *   - Task-based asynchronous communication operations
+ *
+ * GBA CONTEXT:
+ * Wireless communication on the GBA is inherently asynchronous — data exchange
+ * happens during VBlank via DMA, and the game must poll for received data each
+ * frame. This file uses the task system to run communication state machines
+ * without blocking the main game loop. The RFU adapter supports up to 4
+ * connected GBAs, with one acting as "parent" (server) and others as "children"
+ * (clients).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "librfu.h"

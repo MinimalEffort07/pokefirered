@@ -1,3 +1,11 @@
+/**
+ * =AGB FLASH 1M DRIVER=
+ *
+ * Flash memory driver for 1Mbit (128KB) flash chips. This is the main
+ * flash driver used by FireRed for save data storage. It provides chip
+ * identification, sector erase, and program (write) operations for
+ * 128KB flash ROM chips commonly found in GBA cartridges.
+ */
 #include "gba/gba.h"
 #include "gba/flash_internal.h"
 

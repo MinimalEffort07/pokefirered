@@ -1,3 +1,62 @@
+/*
+ * pokemon.c - Pokemon Data Structure Core
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file manages the Pokemon data structure -- the 100-byte struct that
+ * represents every Pokemon in the game. It provides functions for:
+ *
+ * POKEMON CREATION:
+ *   CreateMon: Generate a new Pokemon with species, level, IVs, personality
+ *   CreateMonWithNature: Create with a specific nature
+ *   CreateMonWithGenderNatureLetter: Create with exact gender/nature/Unown form
+ *   CreateEgg: Create an egg for daycare/breeding
+ *
+ * DATA ACCESS:
+ *   GetMonData: Read any field from a Pokemon struct (species, HP, moves, etc.)
+ *   SetMonData: Write any field to a Pokemon struct
+ *   These use a MON_DATA_* enum to select which field to read/write
+ *
+ * ENCRYPTION:
+ *   Pokemon data is XOR-encrypted in memory using the personality value and
+ *   OT ID as keys. The 48-byte data section is split into 4 sub-structures
+ *   (Growth, Attacks, EVs/Condition, Miscellaneous) that are SHUFFLED based
+ *   on personality % 24. This makes memory editing extremely difficult.
+ *
+ *   To read data: DecryptBoxMon → read fields → EncryptBoxMon
+ *   To write data: DecryptBoxMon → modify fields → EncryptBoxMon
+ *
+ *   A checksum (16-bit sum of all sub-structure data) detects corruption.
+ *   If the checksum fails, the Pokemon is flagged as a "Bad Egg".
+ *
+ * STAT CALCULATION:
+ *   CalculateMonStats: Computes HP/Atk/Def/SpA/SpD/Spe from:
+ *     Base stats (per species) + IVs (0-31) + EVs (0-252) + nature modifier
+ *   Formula: stat = ((2*base + IV + EV/4) * level/100 + 5) * natureMod
+ *   HP: ((2*base + IV + EV/4) * level/100 + level + 10)
+ *   Shedinja always has 1 HP regardless of calculation
+ *
+ * PERSONALITY VALUE:
+ *   A 32-bit value that determines:
+ *   - Gender: lower 8 bits compared to species' gender ratio
+ *   - Nature: personality % 25 (Hardy, Lonely, Brave, ...)
+ *   - Ability: bit 0 selects between the species' two ability slots
+ *   - Shiny: XOR of trainer ID halves and personality halves < 8
+ *   - Unown letter: derived from specific bits across all 4 bytes
+ *   - Wurmple evolution: upper 16 bits % 10 determines Silcoon/Cascoon
+ *   - Spinda spots: the full personality is the spot pattern
+ *
+ * OTHER FUNCTIONS:
+ *   GiveMonToPlayer: Add a Pokemon to the party (or PC if party is full)
+ *   GetEvolutionTargetSpecies: Check if a Pokemon can evolve
+ *   MonTryLearningNewMove: Handle move learning at level-up
+ *   GetAbilityBySpecies: Return the ability for a species/ability slot
+ *   GetMonFrontSpritePal/GetMonBackSpritePal: Get sprite palette data
+ * ============================================================================
+ */
+
 #define IS_POKEMON_C
 
 #include "global.h"

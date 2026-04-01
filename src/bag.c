@@ -1,3 +1,30 @@
+/*
+ * bag.c - Bag Menu Window Management
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file manages the UI windows for the bag/inventory screen. It handles:
+ * - Creating and destroying the various text windows used in the bag menu
+ * - Loading the bag-specific palette and window graphics
+ * - Printing text with the correct colors for the bag UI
+ * - Drawing context-sensitive sub-windows (quantity selector, yes/no prompts,
+ *   money display, item descriptions)
+ *
+ * The bag screen uses BG0 for all its windows. Window templates define
+ * the position (tilemapLeft/Top), size (width/height in tiles), and
+ * where in VRAM the tile data is stored (baseBlock).
+ *
+ * GBA CONTEXT:
+ * The GBA's window system (not to be confused with hardware windows WIN0/WIN1)
+ * is a software abstraction built on top of the tilemap BG layers. Each
+ * "window" is a rectangular region of tiles that can be independently filled
+ * with text. The paletteNum field selects which 16-color sub-palette to use
+ * for text rendering.
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "item_menu.h"

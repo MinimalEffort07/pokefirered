@@ -1,3 +1,15 @@
+/**
+ * @file slot_machine.c
+ * @brief Slot Machine Minigame — Game Corner Gambling Mini-Game
+ *
+ * FILE OVERVIEW:
+ * This file implements the slot machine mini-game found in the Celadon City
+ * Game Corner. The player inserts coins and pulls a lever to spin three reels
+ * with various symbols (7, BAR, cherry, Replay, etc.). Matching symbols across
+ * paylines award coin prizes. The system includes reel stop timing, symbol
+ * arrangement tables, payout calculations, animation of spinning reels, and
+ * the bias/probability system that controls the machine's payout rate.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

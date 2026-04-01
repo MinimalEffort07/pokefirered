@@ -1,3 +1,15 @@
+/**
+ * =LIST MENU SYSTEM=
+ *
+ * This file implements the scrollable list menu used throughout the game
+ * for selecting from lists longer than what fits on screen. It supports:
+ *   - Scrolling up/down through items with cursor movement
+ *   - Custom cursor rendering (arrow, highlight bar)
+ *   - Callback functions when the cursor moves (for live preview)
+ *   - Callback functions for custom item rendering (prices, icons)
+ *   - Configurable spacing, fonts, colors, and scroll behavior
+ * Used by: Bag, Shop, PC storage, Move relearner, TM list, etc.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "menu.h"

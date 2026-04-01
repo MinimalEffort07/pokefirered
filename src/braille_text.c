@@ -1,11 +1,29 @@
+/**
+ * =BRAILLE TEXT RENDERER=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Braille font rendering system. In the Pokemon
+ * games, Braille is used as a puzzle element — the player must decode
+ * Braille messages to solve puzzles related to the Regi legendary Pokemon
+ * (Regirock, Regice, Registeel). The in-game Braille messages use actual
+ * Grade 1 Braille patterns.
+ *
+ * This file provides FontFunc_Braille, which plugs into the text printing
+ * system as a custom font renderer. It handles character rendering,
+ * scrolling, line breaks, and text speed just like the normal font, but
+ * draws Braille dot patterns instead of letter glyphs.
+ *
+ * The Braille glyph data is stored as a fixed-width font (each character
+ * is the same width), unlike the normal proportional game fonts.
+ *
+ * For the script command that displays Braille messages, see
+ * ScrCmd_braillemessage in scrcmd.c.
+ */
 #include "global.h"
 #include "main.h"
 #include "window.h"
 #include "text.h"
 #include "sound.h"
-
-// This file handles the braille font.
-// For printing braille messages, see ScrCmd_braillemessage
 
 static const u8 sScrollDistances[] = {
     [OPTIONS_TEXT_SPEED_SLOW] = 1,

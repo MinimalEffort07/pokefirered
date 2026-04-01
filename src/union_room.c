@@ -1,3 +1,22 @@
+/**
+ * @file union_room.c
+ * @brief Union Room — Wireless Multiplayer Hub State Machine
+ *
+ * FILE OVERVIEW:
+ * This is the main file for the Union Room, the wireless multiplayer hub area
+ * where players using the GBA Wireless Adapter can interact. In the Union Room,
+ * players can see other nearby players as walking NPCs and approach them to
+ * initiate activities: trading, battling, chatting, or playing minigames.
+ *
+ * The file implements a complex state machine that handles:
+ *   - Broadcasting the player's presence and activity
+ *   - Discovering and listing nearby players
+ *   - Initiating and accepting trade/battle/chat requests
+ *   - The "talk to NPC" interaction flow with activity selection menus
+ *   - Handling accept/decline responses from remote players
+ *   - Transitioning to the appropriate subsystem (trade, battle, chat, etc.)
+ *   - Error handling for disconnections and communication failures
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

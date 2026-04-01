@@ -1,3 +1,13 @@
+/**
+ * =BATTLE ANIMATION: GENERAL EFFECTS 2=
+ *
+ * FILE OVERVIEW:
+ * The second of three files containing general-purpose battle animation
+ * effects. This file includes sprite callbacks for more complex visual
+ * patterns, often involving multi-stage animations with branching
+ * callback chains. Effects include wave patterns, pulsing effects,
+ * screen overlays, and coordinated multi-sprite animations.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

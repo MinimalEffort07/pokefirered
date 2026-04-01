@@ -1,3 +1,41 @@
+/*
+ * battle_controller_player.c - Player Battle Controller
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This is the controller that handles the human player's side of battle.
+ * When the battle engine sends commands (via BtlController_Emit*), this
+ * controller translates them into visible screen actions and user interactions:
+ *
+ * KEY RESPONSIBILITIES:
+ * - ChooseAction: Display the FIGHT/BAG/POKEMON/RUN menu and read D-pad/A/B
+ * - ChooseMove: Display the 4-move selection screen with PP and type info
+ * - ChoosePokemon: Open the party menu for switching
+ * - ChooseItem: Open the bag menu for item selection
+ * - DrawTrainerPic: Load and display the player's back sprite
+ * - LoadMonSprite: Load and display a Pokemon's front/back sprite
+ * - HealthboxSlideIn/Out: Animate the HP bar and name display
+ * - PrintString: Display battle messages in the text box
+ * - PlayAnimation: Trigger move animations and effects
+ * - HandleFaintAnim: Animate a Pokemon fainting (shrinking + sliding)
+ *
+ * ARCHITECTURE:
+ * The controller uses a function pointer (gBattlerControllerFuncs[battler])
+ * that is called every frame. Different commands install different functions.
+ * Many commands go through multi-frame sequences:
+ *   1. Set up the command (load graphics, start animation)
+ *   2. Wait for completion (animation done, player pressed button)
+ *   3. Write response to gBattleBufferB and clear the exec flag
+ *
+ * INPUT HANDLING:
+ * Button input is read from gMain.newKeys/heldKeys. The controller maintains
+ * cursor positions (gActionSelectionCursor, gMoveSelectionCursor) that
+ * persist between turns so the player's last choice is pre-selected.
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "data.h"

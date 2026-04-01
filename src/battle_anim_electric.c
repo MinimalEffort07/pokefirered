@@ -1,3 +1,10 @@
+/**
+ * =BATTLE ANIMATION: ELECTRIC-TYPE MOVES=
+ *
+ * Visual effects for Electric-type move animations (Thunderbolt lightning,
+ * Thunder strikes, Spark particles, ThunderShock sparks, Volt Tackle
+ * charge-up, Thunder Wave paralysis waves, etc.).
+ */
 #include "global.h"
 #include "battle_anim.h"
 #include "trig.h"

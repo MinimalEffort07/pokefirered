@@ -1,3 +1,16 @@
+/**
+ * =SCRIPT POKEMON UTILITY FUNCTIONS=
+ *
+ * FILE OVERVIEW:
+ * This file provides Pokemon-related utility functions that are called
+ * from map scripts via script commands. These bridge the scripting system
+ * with the Pokemon data system, providing functions for:
+ *   - Giving Pokemon to the player (starters, gifts, event Pokemon)
+ *   - Checking party conditions (is party full? does anyone know move X?)
+ *   - Setting/getting Pokemon data for scripts (species, level, moves)
+ *   - Script-accessible Pokemon operations (healing, evolution checks)
+ *   - Egg-related functions (giving eggs, checking egg compatibility)
+ */
 #include "global.h"
 #include "gflib.h"
 #include "berry.h"

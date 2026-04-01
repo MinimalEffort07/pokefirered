@@ -1,3 +1,25 @@
+/**
+ * =ITEMFINDER=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Itemfinder key item — a device that helps the
+ * player locate hidden items in the overworld. When used:
+ *   1. Scans a radius around the player for hidden items (not yet picked up)
+ *   2. If a hidden item is found, plays a response animation:
+ *      - Arrow sprites appear pointing toward the item's direction
+ *      - Sound effects play with varying intensity based on proximity
+ *   3. If the player is standing directly on a hidden item, it shows a
+ *      special "underfoot" response and digs up the item
+ *   4. If no items are nearby, displays "no response" message
+ *
+ * The Itemfinder also searches connected maps (adjacent map areas) to
+ * find hidden items near the borders of the current map.
+ *
+ * ARROW DIRECTIONS:
+ * The arrow sprite has 4 animation frames corresponding to the 4 cardinal
+ * directions (up/down/left/right), pointing toward the nearest hidden item.
+ * A star sprite appears at the player's feet for the "underfoot" detection.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

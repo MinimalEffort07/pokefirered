@@ -1,3 +1,14 @@
+/**
+ * @file union_room_chat_display.c
+ * @brief Union Room Chat Display — Text Rendering and UI Layout for Chat
+ *
+ * FILE OVERVIEW:
+ * This file handles the visual presentation of the Union Room chat interface.
+ * It manages the chat message display area (rendering sent and received messages),
+ * the keyboard layout and cursor display, the text input preview line, and
+ * all window/background setup needed for the chat screen. It works with
+ * union_room_chat.c (logic) and union_room_chat_objects.c (sprites).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "dynamic_placeholder_text_util.h"

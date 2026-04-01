@@ -1,3 +1,25 @@
+/**
+ * @file quest_log_player.c
+ * @brief Quest Log Player Avatar Graphics — Sprite Transitions During Playback
+ *
+ * FILE OVERVIEW:
+ * During Quest Log playback, the player's avatar sprite may need to change
+ * between different visual states: walking, biking, surfing, fishing, or
+ * using the VS Seeker. This file handles those sprite transitions so the
+ * playback accurately reproduces what the player looked like during the
+ * original gameplay.
+ *
+ * Each transition type has its own handler function, organized in a dispatch
+ * table indexed by QL_PLAYER_GFX_* constants. Some transitions (like fishing)
+ * involve multi-frame animations managed by task functions.
+ *
+ * GAME LOGIC:
+ * The Quest Log records a "graphics transition" event whenever the player's
+ * sprite changes (e.g., mounting a bike, starting to surf). During playback,
+ * QuestLogUpdatePlayerSprite() is called with the recorded state to replay
+ * that visual change, including creating field effect sprites (like the surf
+ * blob that appears under the player while surfing).
+ */
 #include "global.h"
 #include "bike.h"
 #include "script.h"

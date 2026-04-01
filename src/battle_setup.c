@@ -1,3 +1,56 @@
+/*
+ * battle_setup.c - Battle Initiation and Transition System
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file handles STARTING battles from the overworld. It bridges the gap
+ * between "walking in tall grass" / "talking to a trainer" and the actual
+ * battle engine (battle_main.c). Its responsibilities:
+ *
+ * 1. BATTLE TYPE CONFIGURATION
+ *    Sets gBattleTypeFlags to indicate what kind of battle this is:
+ *    - Wild encounter (standard, scripted, roamer, legendary)
+ *    - Trainer battle (single, double, rematch, rival, tutorial)
+ *    - Safari Zone battle
+ *    - Ghost encounter (Pokemon Tower without Silph Scope)
+ *
+ * 2. BATTLE TRANSITIONS
+ *    Selects which visual transition effect plays (slice, blur, pokeballs,
+ *    wipe, etc.) based on the environment (grass/cave/water/flash) and
+ *    whether the player's Pokemon are stronger or weaker than the enemy.
+ *    Stronger player = simpler transition; weaker player = fancier transition.
+ *
+ * 3. TRAINER BATTLE PARAMETER LOADING
+ *    Trainer battles are configured by event scripts. The script command
+ *    "trainerbattle" passes a packed binary blob with: battle mode, trainer
+ *    ID, object event ID, intro speech pointer, defeat speech pointer, etc.
+ *    This file parses that blob into the static variables used during battle.
+ *
+ * 4. BATTLE END CALLBACKS
+ *    After a battle ends, CB2_End*Battle callbacks handle the transition
+ *    back to the overworld: setting trainer-defeated flags, handling
+ *    whiteout on loss, healing party for early rival battles, etc.
+ *
+ * 5. TERRAIN DETECTION
+ *    BattleSetup_GetTerrainId examines the metatile the player stands on
+ *    to determine the battle background (grass, sand, cave, water, building,
+ *    mountain, etc.). This affects the visual appearance of the battle scene.
+ *
+ * ============================================================================
+ * TRAINER BATTLE MODES
+ * ============================================================================
+ *
+ * TRAINER_BATTLE_SINGLE: Standard 1v1 trainer battle
+ * TRAINER_BATTLE_DOUBLE: 2v2 trainer battle
+ * TRAINER_BATTLE_CONTINUE_SCRIPT: After battle, return to event script
+ * TRAINER_BATTLE_SINGLE_NO_INTRO_TEXT: Skip "wants to battle" text
+ * TRAINER_BATTLE_REMATCH: VS Seeker triggered rematch
+ * TRAINER_BATTLE_EARLY_RIVAL: Rival battle (can lose without whiteout)
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "task.h"
 #include "help_system.h"
@@ -82,8 +135,16 @@ static EWRAM_DATA u8 *sTrainerBattleEndScript = NULL;
 static EWRAM_DATA u8 *sTrainerABattleScriptRetAddr = NULL;
 static EWRAM_DATA u16 sRivalBattleFlags = 0;
 
-// The first transition is used if the enemy pokemon are lower level than our pokemon.
-// Otherwise, the second transition is used.
+/*
+ * BATTLE TRANSITION TABLES
+ *
+ * Each row is a terrain type (normal/cave/flash/water).
+ * Column [0] = transition when player's Pokemon are HIGHER level (easy fight).
+ * Column [1] = transition when enemy is HIGHER level (hard fight).
+ *
+ * Harder fights get flashier transitions to build tension.
+ * The level comparison uses the first non-fainted Pokemon on each side.
+ */
 static const u8 sBattleTransitionTable_Wild[][2] =
 {
     [TRANSITION_TYPE_NORMAL] = {B_TRANSITION_SLICE,          B_TRANSITION_WHITE_BARS_FADE},
@@ -234,6 +295,18 @@ static bool8 CheckSilphScopeInPokemonTower(u16 mapGroup, u16 mapNum)
         return FALSE;
 }
 
+/**
+ * FUNCTION: StartWildBattle
+ *
+ * PURPOSE: Initiate a wild Pokemon battle from the overworld.
+ *
+ * HOW IT WORKS:
+ * Called by the wild encounter system after a wild Pokemon has been generated
+ * and placed in gEnemyParty[0]. Routes to the appropriate battle type:
+ * - Safari Zone: special menus (throw ball/bait/rock/run)
+ * - Pokemon Tower without Silph Scope: ghost battle (can't identify Pokemon)
+ * - Normal: standard wild battle
+ */
 void StartWildBattle(void)
 {
     if (GetSafariZoneFlag())
@@ -463,6 +536,20 @@ static void CB2_EndMarowakBattle(void)
     }
 }
 
+/**
+ * FUNCTION: BattleSetup_GetTerrainId
+ *
+ * PURPOSE: Determine the battle background terrain based on the player's
+ *          current tile in the overworld.
+ *
+ * HOW IT WORKS:
+ * Checks the metatile behavior at the player's position, then the map type,
+ * to select from: GRASS, LONG_GRASS, SAND, CAVE, BUILDING, WATER, POND,
+ * UNDERWATER, MOUNTAIN, or PLAIN. This determines which background graphics
+ * are loaded during the battle intro (DrawBattleEntryBackground).
+ *
+ * @return BATTLE_TERRAIN_* constant
+ */
 u8 BattleSetup_GetTerrainId(void)
 {
     u16 tileBehavior;
@@ -784,6 +871,30 @@ static void SetMapVarsToTrainer(void)
     }
 }
 
+/**
+ * FUNCTION: BattleSetup_ConfigureTrainerBattle
+ *
+ * PURPOSE: Parse trainer battle parameters from an event script command and
+ *          return the appropriate event script to execute.
+ *
+ * HOW IT WORKS:
+ * Event scripts use the "trainerbattle" command which encodes: battle mode,
+ * trainer ID, NPC object event ID, intro/defeat/victory/can't-battle speech
+ * pointers, and optionally a return address for post-battle script continuation.
+ *
+ * This function reads the battle mode byte first, then uses the corresponding
+ * parameter spec table (sOrdinaryBattleParams, sDoubleBattleParams, etc.)
+ * to parse the remaining arguments into the static trainer battle variables.
+ *
+ * GAME LOGIC:
+ * The return value is an event script pointer that the script engine will
+ * execute. For most battles, this is EventScript_TryDoNormalTrainerBattle,
+ * which checks if the trainer has been defeated (via flags), shows the intro
+ * speech, starts the battle, and runs the defeat script afterward.
+ *
+ * @param data — Pointer to packed trainer battle parameters in the event script
+ * @return Event script to execute for this battle type
+ */
 const u8 *BattleSetup_ConfigureTrainerBattle(const u8 *data)
 {
     InitTrainerBattleVariables();

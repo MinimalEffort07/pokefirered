@@ -1,3 +1,32 @@
+/**
+ * =SHOP / POKEMART SYSTEM=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Poke Mart shopping interface — the screens the
+ * player sees when buying or selling items at a shop. It handles:
+ *   - The Buy/Sell/Quit menu that appears when talking to a shopkeeper
+ *   - The Buy menu with scrollable item list, prices, descriptions, and icons
+ *   - A "viewport" that renders a portion of the overworld map behind the
+ *     buy menu (so the player can see the shop interior behind the UI)
+ *   - Quantity selection and purchase confirmation
+ *   - Quest Log recording of shopping transactions
+ *
+ * GBA CONTEXT:
+ * The Buy menu is a particularly interesting example of GBA background
+ * layer usage. It uses all 4 background layers:
+ *   BG0 (priority 0): Text windows (item list, descriptions, money)
+ *   BG1 (priority 1): Shop menu frame/border graphics
+ *   BG2 (priority 2): Map viewport lower layer
+ *   BG3 (priority 3): Map viewport upper layer
+ * The map viewport is created by reading actual metatile data from the
+ * current map and rendering a small portion of it into the background
+ * tilemap buffers, giving the illusion of "looking through" the menu.
+ *
+ * TASK-DRIVEN STATE MACHINE:
+ * Like most GBA Pokemon menus, the shop uses the task system as a state
+ * machine. Each "state" is a task function, and transitions happen by
+ * reassigning gTasks[taskId].func to the next state's handler.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "shop.h"
@@ -30,54 +59,82 @@
 #include "constants/game_stat.h"
 #include "constants/field_weather.h"
 
-#define tItemCount data[1]
-#define tItemId data[5]
-#define tListTaskId data[7]
+/* Task data field aliases for readability.
+ * Tasks store their state in a data[] array of 16-bit values.
+ * These macros give meaningful names to specific slots. */
+#define tItemCount data[1]   /* How many of the selected item to buy */
+#define tItemId data[5]      /* The item ID currently being purchased */
+#define tListTaskId data[7]  /* Task ID of the scrollable list menu */
 
-// mart types
+/* Mart types — determines the visual layout and behavior of the shop. */
 enum
 {
-    MART_TYPE_REGULAR = 0,
-    MART_TYPE_TMHM,
-    MART_TYPE_DECOR,
-    MART_TYPE_DECOR2,
+    MART_TYPE_REGULAR = 0,  /* Standard item shop (Potions, Poke Balls, etc.) */
+    MART_TYPE_TMHM,         /* TM/HM shop — shows move names alongside items */
+    MART_TYPE_DECOR,        /* Decoration shop (unused in FireRed) */
+    MART_TYPE_DECOR2,       /* Second decoration shop variant */
 };
 
-// shop view window NPC info enum
+/* Indices for the sViewportObjectEvents array, which stores NPC sprite
+ * data for rendering the map viewport behind the buy menu. */
 enum
 {
-    OBJECT_EVENT_ID,
-    X_COORD,
-    Y_COORD,
-    ANIM_NUM
+    OBJECT_EVENT_ID,  /* Index into gObjectEvents[] */
+    X_COORD,          /* X position in the viewport grid */
+    Y_COORD,          /* Y position in the viewport grid */
+    ANIM_NUM          /* Which directional animation frame to show */
 };
 
+/**
+ * ShopData — all state for the currently active shop session.
+ *
+ * This struct uses BITFIELDS (the ":N" syntax) to pack multiple small values
+ * into a single 16-bit word at offset 0x16. This is a C feature where the
+ * compiler allocates only N bits for a field instead of a full byte/word.
+ * It saves memory but the values are limited to 2^N - 1 maximum.
+ */
 struct ShopData
 {
-    /*0x00*/ void (*callback)(void);
-    /*0x04*/ const u16 *itemList;
-    /*0x08*/ u32 itemPrice;
-    /*0x0C*/ u16 selectedRow;
-    /*0x0E*/ u16 scrollOffset;
-    /*0x10*/ u16 itemCount;
-    /*0x12*/ u16 itemsShowed;
-    /*0x14*/ u16 maxQuantity;
-    /*0x16*/ u16 martType:4;    // 0x1 if tm list
-             u16 fontId:5;
-             u16 itemSlot:2;
-             u16 unk16_11:5;
-    /*0x18*/ u16 unk18;
+    /*0x00*/ void (*callback)(void);  /* Function to call when shop closes (usually re-enables scripts) */
+    /*0x04*/ const u16 *itemList;     /* Pointer to the array of item IDs for sale */
+    /*0x08*/ u32 itemPrice;           /* Price of the currently selected item (or total for quantity) */
+    /*0x0C*/ u16 selectedRow;         /* Currently highlighted row in the item list */
+    /*0x0E*/ u16 scrollOffset;        /* How far the list has scrolled */
+    /*0x10*/ u16 itemCount;           /* Total number of items for sale */
+    /*0x12*/ u16 itemsShowed;         /* How many items are visible on screen at once */
+    /*0x14*/ u16 maxQuantity;         /* Maximum quantity the player can afford */
+    /*0x16*/ u16 martType:4;          /* Bitfield: shop type (regular/TM/decor), 4 bits = 0-15 */
+             u16 fontId:5;            /* Bitfield: font to use (male/female NPC), 5 bits */
+             u16 itemSlot:2;          /* Bitfield: alternating icon slot for smooth item icon swaps */
+             u16 unk16_11:5;          /* Bitfield: scroll indicator arrow pair ID */
+    /*0x18*/ u16 unk18;               /* Temporary value for scroll indicator state */
 };
 
+/* NPC sprite data for the map viewport behind the buy menu.
+ * Each entry stores [object_event_id, x, y, animation_frame] for NPCs
+ * visible in the viewport area. */
 static EWRAM_DATA s16 sViewportObjectEvents[OBJECT_EVENTS_COUNT][4] = {0};
 static EWRAM_DATA struct ShopData sShopData = {0};
 static EWRAM_DATA u8 sShopMenuWindowId = 0;
-EWRAM_DATA u16 (*gShopTilemapBuffer1)[0x400] = {0};
-EWRAM_DATA u16 (*gShopTilemapBuffer2)[0x400] = {0};
-EWRAM_DATA u16 (*gShopTilemapBuffer3)[0x400] = {0};
-EWRAM_DATA u16 (*gShopTilemapBuffer4)[0x400] = {0};
+
+/* Tilemap buffers for the buy menu's map viewport.
+ * Each is 0x400 entries (32x32 tiles = one full GBA screen map).
+ * The GBA's background system uses tilemaps that reference tile indices,
+ * so these buffers store which tile goes at each position.
+ * Four buffers are needed for different metatile layers (bottom/top layers
+ * of the map's lower and upper graphical layers). */
+EWRAM_DATA u16 (*gShopTilemapBuffer1)[0x400] = {0};  /* Frame/border tilemap */
+EWRAM_DATA u16 (*gShopTilemapBuffer2)[0x400] = {0};  /* BG1 map layer */
+EWRAM_DATA u16 (*gShopTilemapBuffer3)[0x400] = {0};  /* BG3 map layer */
+EWRAM_DATA u16 (*gShopTilemapBuffer4)[0x400] = {0};  /* BG2 map layer */
+
+/* Dynamically allocated list menu items and their string buffers.
+ * Each item name string is up to 13 characters (12 + null terminator). */
 EWRAM_DATA struct ListMenuItem *sShopMenuListMenu = {0};
 static EWRAM_DATA u8 (*sShopMenuItemStrings)[13] = {0};
+
+/* Shopping history for Quest Log — tracks up to 2 transaction types
+ * (one for buying, one for selling) within a single shop visit. */
 EWRAM_DATA struct QuestLogEvent_Shop sHistory[2] = {0};
 
 //Function Declarations
@@ -201,16 +258,43 @@ static const struct BgTemplate sShopBuyMenuBgTemplates[4] =
     }
 };
 
-// Functions
+/* ========================================================================
+ * SHOP MENU CREATION AND NAVIGATION
+ * ======================================================================== */
+
+/**
+ * FUNCTION: CreateShopMenu
+ *
+ * PURPOSE: Creates the initial Buy/Sell/Quit menu that appears when the
+ * player talks to a shopkeeper NPC.
+ *
+ * HOW IT WORKS:
+ * 1. Determines the mart type (regular vs TM/HM shop)
+ * 2. Sets the font based on the shopkeeper's gender (male/female NPC)
+ * 3. Creates a window, draws the border, and prints the 3 menu options
+ * 4. Creates a task to handle input on this menu
+ *
+ * GBA CONTEXT:
+ * The GBA text system renders into "windows" — rectangular regions of a
+ * background layer. Each window has its own tile buffer. AddWindow allocates
+ * one, SetStdWindowBorderStyle draws the decorative border, and
+ * CopyWindowToVram sends the rendered pixels to Video RAM for display.
+ *
+ * @param martType — the type of mart (MART_TYPE_REGULAR, etc.)
+ * RETURNS: The task ID of the shop menu handler
+ */
 static u8 CreateShopMenu(u8 martType)
 {
     sShopData.martType = GetMartTypeFromItemList(martType);
     sShopData.selectedRow = 0;
+    /* Use a different font depending on whether the shopkeeper NPC
+     * is male or female — this affects text rendering style. */
     if (ContextNpcGetTextColor() == NPC_TEXT_COLOR_MALE)
         sShopData.fontId = FONT_MALE;
     else
         sShopData.fontId = FONT_FEMALE;
 
+    /* Create and populate the Buy/Sell/Quit menu window. */
     sShopMenuWindowId = AddWindow(&sShopMenuWindowTemplate);
     SetStdWindowBorderStyle(sShopMenuWindowId, 0);
     PrintTextArray(sShopMenuWindowId, FONT_NORMAL, GetMenuCursorDimensionByFont(FONT_NORMAL, 0), 2, 16, 3, sShopMenuActions_BuySellQuit);
@@ -352,6 +436,29 @@ static void VBlankCB_BuyMenu(void)
     TransferPlttBuffer();
 }
 
+/**
+ * FUNCTION: CB2_InitBuyMenu
+ *
+ * PURPOSE: Multi-frame initialization of the Buy menu screen. This is the
+ * main callback2 during the transition from the overworld to the buy screen.
+ *
+ * HOW IT WORKS:
+ * Uses gMain.state as a frame counter to spread initialization across
+ * multiple VBlank cycles, preventing the screen from freezing:
+ *   State 0: Reset all GBA graphics subsystems (OAM, sprites, palettes,
+ *            backgrounds), allocate tilemap buffers, init BG layers,
+ *            clear all 4 BG tilemaps, decompress shop frame graphics
+ *   State 1: Wait for tile data decompression to finish
+ *   State 2+: Draw the map viewport, set up the scrollable item list,
+ *            fade in from black, and hand off to the buy menu task
+ *
+ * GBA CONTEXT:
+ * CpuFastFill(0, (void *)OAM, 0x400) clears the entire OAM (Object
+ * Attribute Memory) — the 1KB region at 0x07000000 that controls all 128
+ * hardware sprites. Writing 0 hides all sprites. This is standard practice
+ * when transitioning between screens to prevent stale sprite data from
+ * briefly appearing.
+ */
 static void CB2_InitBuyMenu(void)
 {
     u8 taskId;
@@ -359,8 +466,10 @@ static void CB2_InitBuyMenu(void)
     switch (gMain.state)
     {
     case 0:
+        /* Full graphics subsystem reset — necessary when transitioning
+         * between major screens to start with a clean slate. */
         SetVBlankHBlankCallbacksToNull();
-        CpuFastFill(0, (void *)OAM, 0x400);
+        CpuFastFill(0, (void *)OAM, 0x400);  /* Clear all 128 sprites */
         ScanlineEffect_Stop();
         ResetTempTileDataBuffers();
         FreeAllSpritePalettes();
@@ -369,9 +478,12 @@ static void CB2_InitBuyMenu(void)
         ResetTasks();
         ClearScheduledBgCopiesToVram();
         ResetItemMenuIconState();
+        /* Allocate tilemap buffers and build the item list.
+         * If allocation fails, bail out and return to the field. */
         if (!(InitShopData()) || !(BuyMenuBuildListMenuTemplate()))
             return;
         BuyMenuInitBgs();
+        /* Clear all 4 background tilemaps (32x32 tiles = 0x20 x 0x20). */
         FillBgTilemapBufferRect_Palette0(0, 0, 0, 0, 0x20, 0x20);
         FillBgTilemapBufferRect_Palette0(1, 0, 0, 0, 0x20, 0x20);
         FillBgTilemapBufferRect_Palette0(2, 0, 0, 0, 0x20, 0x20);
@@ -381,17 +493,24 @@ static void CB2_InitBuyMenu(void)
         gMain.state++;
         break;
     case 1:
+        /* Wait for asynchronous tile decompression to complete.
+         * LZ-compressed graphics are decompressed across multiple frames
+         * to avoid stalling the CPU during VBlank. */
         if (FreeTempTileDataBuffersIfPossible())
             return;
         gMain.state++;
         break;
     default:
+        /* Final setup: draw the map viewport, create the item list,
+         * and fade in from black. */
         sShopData.selectedRow = 0;
         sShopData.scrollOffset = 0;
         BuyMenuDrawGraphics();
         BuyMenuAddScrollIndicatorArrows();
         taskId = CreateTask(Task_BuyMenu, 8);
         gTasks[taskId].tListTaskId = ListMenuInit(&gMultiuseListMenuTemplate, 0, 0);
+        /* Fade in: start fully black (blend coefficient 0x10 = 16 = fully
+         * blended), fade to normal (0). PALETTES_ALL affects all 32 palettes. */
         BlendPalettes(PALETTES_ALL, 0x10, RGB_BLACK);
         BeginNormalPaletteFade(PALETTES_ALL, 0, 0x10, 0, RGB_BLACK);
         SetVBlankCallback(VBlankCB_BuyMenu);
@@ -720,6 +839,27 @@ static void BuyMenuDrawMapView(void)
     BuyMenuDrawMapBg();
 }
 
+/**
+ * FUNCTION: BuyMenuDrawMapBg
+ *
+ * PURPOSE: Renders a portion of the overworld map into the buy menu's
+ * background layers, creating the "viewport" effect where you can see
+ * the shop interior behind the menu UI.
+ *
+ * HOW IT WORKS:
+ * 1. Gets the map tile position one step in front of the player (the counter)
+ * 2. Calculates a 5x10 tile region around that position
+ * 3. For each metatile in the region, looks up its graphics data from the
+ *    current map's tileset and draws it into the tilemap buffers
+ *
+ * GBA CONTEXT:
+ * The GBA's map system uses "metatiles" — each metatile is 16x16 pixels
+ * (2x2 hardware tiles). Metatiles are split into a "primary" tileset
+ * (shared across many maps) and a "secondary" tileset (specific to this
+ * map area). The metatile ID determines which tileset to look up from.
+ * Each metatile has multiple layers that get distributed across BG layers
+ * depending on the metatileLayerType (normal, covered, or split rendering).
+ */
 static void BuyMenuDrawMapBg(void)
 {
     s16 i, j, x, y;
@@ -728,10 +868,13 @@ static void BuyMenuDrawMapBg(void)
     u8 metatileLayerType;
 
     mapLayout = gMapHeader.mapLayout;
+    /* Start from one step in front of the player (the shop counter),
+     * then offset to center the viewport. */
     GetXYCoordsOneStepInFrontOfPlayer(&x, &y);
     x -= 2;
     y -= 3;
 
+    /* Iterate over a 5-wide by 10-tall grid of metatiles. */
     for (j = 0; j < 10; j++)
     {
         for (i = 0; i < 5; i++)
@@ -739,6 +882,10 @@ static void BuyMenuDrawMapBg(void)
             metatile = MapGridGetMetatileIdAt(x + i, y + j);
             metatileLayerType = MapGridGetMetatileLayerTypeAt(x + i, y + j);
 
+            /* Look up metatile graphics from the appropriate tileset.
+             * Metatile IDs below NUM_METATILES_IN_PRIMARY come from the
+             * primary tileset; higher IDs come from the secondary tileset
+             * (with the primary count subtracted as an offset). */
             if (metatile < NUM_METATILES_IN_PRIMARY)
                 BuyMenuDrawMapMetatile(i, j, mapLayout->primaryTileset->metatiles + metatile * NUM_TILES_PER_METATILE, metatileLayerType);
             else
@@ -975,6 +1122,17 @@ static void CreateBuyMenuConfirmPurchaseWindow(u8 taskId)
     BuyMenuConfirmPurchase(taskId, sShopMenuActions_BuyQuit);
 }
 
+/**
+ * FUNCTION: BuyMenuTryMakePurchase
+ *
+ * PURPOSE: Attempts to complete a purchase by adding items to the player's bag.
+ * If the bag is full, shows an error message instead.
+ *
+ * GAME LOGIC:
+ * The bag has limited space per pocket — if AddBagItem returns FALSE, the
+ * player can't hold any more of that item type. The transaction is also
+ * recorded for the Quest Log system.
+ */
 static void BuyMenuTryMakePurchase(u8 taskId)
 {
     s16 *data = gTasks[taskId].data;
@@ -984,6 +1142,9 @@ static void BuyMenuTryMakePurchase(u8 taskId)
     {
         BuyMenuDisplayMessage(taskId, gText_HereYouGoThankYou, BuyMenuSubtractMoney);
         DebugFunc_PrintPurchaseDetails(taskId);
+        /* Record this purchase for the Quest Log. The event ID offset
+         * (QL_EVENT_BOUGHT_ITEM - QL_EVENT_USED_POKEMART) maps to 1,
+         * which RecordItemTransaction uses to calculate the full buy price. */
         RecordItemTransaction(tItemId, tItemCount, QL_EVENT_BOUGHT_ITEM - QL_EVENT_USED_POKEMART);
     }
     else
@@ -992,11 +1153,17 @@ static void BuyMenuTryMakePurchase(u8 taskId)
     }
 }
 
+/**
+ * FUNCTION: BuyMenuSubtractMoney
+ *
+ * PURPOSE: Deducts the purchase price from the player's money, plays the
+ * cash register sound effect, and updates the on-screen money display.
+ */
 static void BuyMenuSubtractMoney(u8 taskId)
 {
     IncrementGameStat(GAME_STAT_SHOPPED);
     RemoveMoney(&gSaveBlock1Ptr->money, sShopData.itemPrice);
-    PlaySE(SE_SHOP);
+    PlaySE(SE_SHOP);  /* The satisfying "ka-ching" sound */
     PrintMoneyAmountInMoneyBox(0, GetMoney(&gSaveBlock1Ptr->money), 0);
     gTasks[taskId].func = Task_ReturnToItemListAfterItemPurchase;
 }
@@ -1055,8 +1222,23 @@ static void DebugFunc_PrintShopMenuHistoryBeforeClearMaybe(void)
 {
 }
 
-// Records a transaction during a single shopping session.
-// This is for the Quest Log to save information about the player's purchases/sales when they finish.
+/**
+ * FUNCTION: RecordItemTransaction
+ *
+ * PURPOSE: Records a buy or sell transaction for the Quest Log system.
+ * Tracks the last item traded, total quantity, and total money spent/earned
+ * during this shopping session.
+ *
+ * HOW IT WORKS:
+ * The sHistory array has 2 slots — one for buying and one for selling.
+ * Each call either finds an existing entry for this transaction type or
+ * creates a new one. It accumulates quantity and money totals, capping
+ * at 999 items and 999,999 Pokedollars.
+ *
+ * @param itemId — the item being bought or sold
+ * @param quantity — how many of that item
+ * @param logEventId — 1 for buying (full price), 2 for selling (half price)
+ */
 void RecordItemTransaction(u16 itemId, u16 quantity, u8 logEventId)
 {
     struct QuestLogEvent_Shop *history;
@@ -1118,6 +1300,20 @@ static void RecordTransactionForQuestLog(void)
         SetQuestLogEvent(eventId + QL_EVENT_USED_POKEMART, (const u16 *)&sHistory[1]);
 }
 
+/**
+ * FUNCTION: CreatePokemartMenu
+ *
+ * PURPOSE: The main entry point for opening a Poke Mart — called from
+ * map scripts when the player interacts with a shopkeeper.
+ *
+ * HOW IT WORKS:
+ * 1. Sets the item list (passed from the map script)
+ * 2. Creates the Buy/Sell/Quit menu
+ * 3. Sets the callback to re-enable scripts when the shop closes
+ * 4. Initializes Quest Log shopping history for this session
+ *
+ * @param itemsForSale — pointer to a 0-terminated array of item IDs
+ */
 void CreatePokemartMenu(const u16 *itemsForSale)
 {
     SetShopItemsForSale(itemsForSale);
@@ -1125,10 +1321,17 @@ void CreatePokemartMenu(const u16 *itemsForSale)
     SetShopMenuCallback(ScriptContext_Enable);
     DebugFunc_PrintShopMenuHistoryBeforeClearMaybe();
     memset(&sHistory, 0, sizeof(sHistory));
+    /* Record which map section (town/city) this shop is in. */
     sHistory[0].mapSec = gMapHeader.regionMapSectionId;
     sHistory[1].mapSec = gMapHeader.regionMapSectionId;
 }
 
+/**
+ * FUNCTION: CreateDecorationShop1Menu
+ *
+ * PURPOSE: Opens a decoration shop (type 1). Used in Ruby/Sapphire's
+ * Secret Base system but largely unused in FireRed.
+ */
 void CreateDecorationShop1Menu(const u16 *itemsForSale)
 {
     SetShopItemsForSale(itemsForSale);
@@ -1136,6 +1339,12 @@ void CreateDecorationShop1Menu(const u16 *itemsForSale)
     SetShopMenuCallback(ScriptContext_Enable);
 }
 
+/**
+ * FUNCTION: CreateDecorationShop2Menu
+ *
+ * PURPOSE: Opens a decoration shop (type 2). Another variant for the
+ * Secret Base decoration system, largely unused in FireRed.
+ */
 void CreateDecorationShop2Menu(const u16 *itemsForSale)
 {
     SetShopItemsForSale(itemsForSale);

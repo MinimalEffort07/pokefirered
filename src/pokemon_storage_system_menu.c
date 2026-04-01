@@ -1,3 +1,14 @@
+/**
+ * @file pokemon_storage_system_menu.c
+ * @brief PC Box Storage Menu — Context Menus and Box Option Selection
+ *
+ * FILE OVERVIEW:
+ * This file implements the menu system for the Pokemon Storage System: the
+ * initial "Deposit/Withdraw/Move/See Ya!" menu when the player accesses the
+ * PC, context menus for individual Pokemon (Summary, Move, Release, etc.),
+ * box management options (Name, Wallpaper, Jump), and confirmation dialogs.
+ * It also handles the screen transition into and out of the box interface.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "event_data.h"

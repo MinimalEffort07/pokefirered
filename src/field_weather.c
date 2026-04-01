@@ -1,3 +1,45 @@
+/**
+ * @file field_weather.c
+ * @brief Weather System Core — Palette Effects, Gamma Shifts, and Weather State Machine
+ *
+ * FILE OVERVIEW:
+ * This is the central weather system file. It manages:
+ *
+ * 1. WEATHER STATE MACHINE: Transitions between weather types (sunny, rain, snow,
+ *    fog, sandstorm, etc.) using a task-based state machine. Each weather type has
+ *    4 callbacks: initVars, main, initAll, and finish.
+ *
+ * 2. GAMMA SHIFT / COLOR GRADING: The weather system applies color adjustments
+ *    to all palettes to simulate lighting conditions. For example:
+ *    - Shade: Darkens all colors (negative gamma)
+ *    - Drought: Washes out colors toward red/orange
+ *    - Fog: Lightens sprite palettes toward white
+ *    These are achieved by pre-computing gamma-shifted palette tables and
+ *    blending between them.
+ *
+ * 3. PALETTE MANAGEMENT: Coordinates weather palette effects with the game's
+ *    existing palette fade system (palette.c). Handles the interaction between
+ *    weather-based palette changes and screen fading.
+ *
+ * GAMMA SHIFT SYSTEM:
+ * Rather than computing gamma-adjusted colors every frame (too slow for GBA),
+ * the system pre-builds lookup tables (gammaShifts[][]) at startup. Each table
+ * entry maps an original 5-bit color channel value (0-31) to its gamma-adjusted
+ * value at a specific shift level (-8 to +8). During gameplay, applying a gamma
+ * shift is a fast table lookup rather than math.
+ *
+ * WEATHER TYPES:
+ * Each weather type is defined by its callbacks in sWeatherFuncs[]:
+ * - initVars: Sets initial parameters (speed, density, target gamma, etc.)
+ * - main: Runs every frame (animates particles, adjusts palettes)
+ * - initAll: Full initialization including sprite creation
+ * - finish: Cleanup when transitioning away from this weather
+ *
+ * GBA CONTEXT — COLOR SYSTEM:
+ * GBA colors are 15-bit RGB555: 5 bits each for red, green, blue (0-31 per channel).
+ * Total of 32768 possible colors. The gamma shift tables work per-channel,
+ * adjusting each 5-bit value independently.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "blend_palette.h"
@@ -140,7 +182,26 @@ const u8 gWeatherAshTiles[] = INCBIN_U8("graphics/weather/ash.4bpp");
 const u8 gWeatherRainTiles[] = INCBIN_U8("graphics/weather/rain.4bpp");
 const u8 gWeatherSandstormTiles[] = INCBIN_U8("graphics/weather/sandstorm.4bpp");
 
-// code
+/* ========================================================================
+ * WEATHER SYSTEM INITIALIZATION AND MAIN LOOP
+ * ======================================================================== */
+
+/**
+ * FUNCTION: StartWeather
+ *
+ * PURPOSE: Initializes the entire weather system. Called once when the overworld
+ * starts. Allocates a sprite palette for weather particle sprites, builds the
+ * gamma shift lookup tables, and creates the weather task.
+ *
+ * HOW IT WORKS:
+ * 1. Allocates a sprite palette (tag 0x1200) for weather particle sprites
+ *    (raindrops, snowflakes, fog sprites, etc.)
+ * 2. Copies the default weather palette and applies the global tint
+ * 3. Builds the gamma shift lookup tables for color grading
+ * 4. Initializes all weather sprite creation flags to FALSE
+ * 5. Sets blend coefficients to 16:0 (fully opaque, no blending)
+ * 6. Creates Task_WeatherInit which waits until the screen is ready
+ */
 void StartWeather(void)
 {
     if (!FuncIsActiveTask(Task_WeatherMain))
@@ -171,6 +232,15 @@ void StartWeather(void)
     }
 }
 
+/**
+ * FUNCTION: SetNextWeather
+ *
+ * PURPOSE: Begins a gradual transition to a new weather type. The current weather
+ * will call its finish() callback to clean up, then the new weather's initVars()
+ * will be called to start it.
+ *
+ * @param weather — the target weather type (WEATHER_* constant)
+ */
 void SetNextWeather(u8 weather)
 {
     if (weather != WEATHER_RAIN && weather != WEATHER_RAIN_THUNDERSTORM && weather != WEATHER_DOWNPOUR)
@@ -216,6 +286,24 @@ static void Task_WeatherInit(u8 taskId)
     }
 }
 
+/**
+ * FUNCTION: Task_WeatherMain
+ *
+ * PURPOSE: The main weather task that runs every frame. Handles both steady-state
+ * weather (running the current weather's main callback) and weather transitions
+ * (finishing the old weather and starting the new one).
+ *
+ * HOW IT WORKS:
+ * If currWeather != nextWeather: the system is transitioning.
+ *   - Call the current weather's finish() until it returns FALSE (cleanup done)
+ *   - Then call the new weather's initVars() to set up the new weather
+ *   - Set currWeather = nextWeather to complete the transition
+ * If currWeather == nextWeather: the system is in steady state.
+ *   - Call the current weather's main() callback every frame
+ *
+ * After either path, calls the appropriate palette processing function
+ * (gamma shift update, fade-in, or do-nothing based on palProcessingState).
+ */
 static void Task_WeatherMain(u8 taskId)
 {
     if (gWeatherPtr->currWeather != gWeatherPtr->nextWeather)

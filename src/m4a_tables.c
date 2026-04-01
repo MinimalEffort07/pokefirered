@@ -1,8 +1,30 @@
+/**
+ * @file m4a_tables.c
+ * @brief M4A Sound Engine Tables — Function Jump Tables and Audio Configuration
+ *
+ * FILE OVERVIEW:
+ * This file defines the lookup tables used by the M4A (Music for Advance) sound
+ * engine — Nintendo's official GBA music/sound driver. The tables include:
+ *
+ *   - gMPlayJumpTableTemplate: The music player instruction jump table. Each
+ *     entry is a function pointer for a music scripting command (play note,
+ *     set tempo, change voice, loop, etc.)
+ *   - Sample rate and audio configuration constants
+ *
+ * GBA CONTEXT:
+ * The M4A engine interprets music tracks stored as sequences of commands
+ * (similar to MIDI). Each command byte indexes into this jump table to execute
+ * the corresponding function. The "ply_" prefixed functions are the actual
+ * implementations: ply_fine = end track, ply_goto = jump, ply_tempo = set
+ * tempo, ply_vol = set volume, ply_pan = set stereo panning, etc.
+ *
+ * The M4A engine runs in software on the ARM7TDMI CPU, mixing audio samples
+ * and writing the result to the GBA's Direct Sound hardware buffers via DMA.
+ */
 #include "gba/m4a_internal.h"
 
-// Some of these functions have different signatures, so we need to make this
-// an array of void pointers or a struct. It's simpler to just make it an array
-// for now.
+/* Music player command jump table. Index 0 = ply_fine (end), index 10 = ply_tempo,
+ * index 12 = ply_voice, etc. Commands with duplicate ply_fine entries are unused. */
 void *const gMPlayJumpTableTemplate[] =
 {
     ply_fine,

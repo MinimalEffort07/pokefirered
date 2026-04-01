@@ -1,3 +1,32 @@
+/*
+ * =Pokemon FireRed Menu System=
+ *
+ * This file implements the game's menu UI framework, including:
+ *   - Dialog box frames (the bordered text boxes used for NPC dialogue)
+ *   - Standard window frames (bordered boxes for menus and info displays)
+ *   - A cursor navigation system for vertical menu lists
+ *   - A grid cursor system for 2D item grids (e.g., bag item display)
+ *   - Yes/No confirmation dialogs
+ *   - A top bar window for status displays
+ *   - Window template construction helpers
+ *
+ * ARCHITECTURE:
+ * The menu system builds on top of the window system (window.c). Each menu
+ * is drawn inside a window, with a decorative frame border around it. The
+ * cursor (a small arrow character) is rendered as text within the window
+ * and redrawn when the player navigates up/down or left/right.
+ *
+ * The frame drawing functions use FillBgTilemapBufferRect to place border
+ * tiles around a window. Frames are constructed from a set of 9 tiles
+ * (corners, edges, for standard frames) or 25+ tiles (for dialog frames
+ * which have more elaborate borders). The frame tiles are arranged using
+ * a base tile number plus sequential offsets.
+ *
+ * GBA CONTEXT:
+ * BG_TILE_V_FLIP() flips a tile vertically by setting bit 11 of the tilemap
+ * entry. This trick lets the dialog frame reuse top-border tiles for the
+ * bottom border by flipping them, halving the number of unique tiles needed.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "menu.h"
@@ -6,20 +35,23 @@
 #include "text_window.h"
 #include "constants/songs.h"
 
+/* Internal state for the menu cursor system. Tracks the cursor's position,
+ * bounds, and which window/font it's rendered in. For grid menus, also
+ * tracks the number of columns and rows. */
 struct Menu
 {
-    u8 left;
-    u8 top;
-    s8 cursorPos;
-    s8 minCursorPos;
-    s8 maxCursorPos;
-    u8 windowId;
-    u8 fontId;
-    u8 optionWidth;
-    u8 optionHeight;
-    u8 columns;
-    u8 rows;
-    bool8 APressMuted;
+    u8 left;          /* X pixel offset of the cursor within the window */
+    u8 top;           /* Y pixel offset of the first menu option */
+    s8 cursorPos;     /* Current selected option index */
+    s8 minCursorPos;  /* Minimum valid cursor position (usually 0) */
+    s8 maxCursorPos;  /* Maximum valid cursor position (numChoices - 1) */
+    u8 windowId;      /* Which window this menu is drawn in */
+    u8 fontId;        /* Font used for the cursor arrow character */
+    u8 optionWidth;   /* Pixel width of each option cell (for grid menus) */
+    u8 optionHeight;  /* Pixel height of each option row */
+    u8 columns;       /* Number of columns (1 for vertical lists, >1 for grids) */
+    u8 rows;          /* Number of rows in a grid menu */
+    bool8 APressMuted; /* If TRUE, suppress the sound effect when A is pressed */
 };
 
 static EWRAM_DATA struct Menu sMenu = {0};
@@ -36,6 +68,26 @@ static u8 MultichoiceGrid_MoveCursor(s8 deltaX, s8 deltaY);
 
 static const u8 sTopBarWindowTextColors[3] = {15, 1, 2};
 
+/**
+ * FUNCTION: DrawDialogFrameWithCustomTileAndPalette
+ *
+ * PURPOSE: Draw a dialog-style frame (the elaborate bordered box used for
+ *          NPC dialogue) around a window, using specified tile and palette.
+ *
+ * HOW IT WORKS:
+ * 1. Stores the tile number and palette in static variables so the callback
+ *    function (WindowFunc_DrawDialogFrameWithCustomTileAndPalette) can use them.
+ * 2. Calls CallWindowFunction which invokes the callback with the window's
+ *    tilemap position and dimensions.
+ * 3. Fills the window interior with color 1 (typically white/light).
+ * 4. Marks the window as active in the tilemap and optionally copies to VRAM.
+ *
+ * PARAMETERS:
+ * @param windowId   - Which window to frame
+ * @param copyToVram - If TRUE, immediately copy tiles + tilemap to VRAM
+ * @param tileNum    - Base tile index for the frame graphics
+ * @param paletteNum - Which of the 16 BG palettes to use for the frame
+ */
 void DrawDialogFrameWithCustomTileAndPalette(u8 windowId, bool8 copyToVram, u16 tileNum, u8 paletteNum)
 {
     sTileNum = tileNum;
@@ -104,6 +156,19 @@ static void WindowFunc_ClearDialogWindowAndFrameNullPalette(u8 bg, u8 tilemapLef
     FillBgTilemapBufferRect(bg, 0, tilemapLeft - 2, tilemapTop - 1, width + 4, height + 2, 0);
 }
 
+/**
+ * FUNCTION: DrawStdFrameWithCustomTileAndPalette
+ *
+ * PURPOSE: Draw a standard rectangular frame (simpler than the dialog frame)
+ *          around a window. Used for menus, info boxes, and other UI panels.
+ *
+ * HOW IT WORKS:
+ * The standard frame uses 9 tile positions arranged in a 3x3 grid pattern:
+ *   [0][1][2]   (top-left corner, top edge, top-right corner)
+ *   [3][.][5]   (left edge, window content area, right edge)
+ *   [6][7][8]   (bottom-left corner, bottom edge, bottom-right corner)
+ * Tile 4 is skipped (the interior is the window content, not a frame tile).
+ */
 void DrawStdFrameWithCustomTileAndPalette(u8 windowId, bool8 copyToVram, u16 baseTileNum, u8 paletteNum)
 {
     sTileNum = baseTileNum;
@@ -160,6 +225,27 @@ static void WindowFunc_ClearStdWindowAndFrameToTransparent(u8 bg, u8 tilemapLeft
    as well as the bar width.
    The xPos is simply computed according to width (always right aligned). 
 */
+/**
+ * FUNCTION: CreateTopBarWindowLoadPalette
+ *
+ * PURPOSE: Create a right-aligned top bar window (used in Hall of Fame and
+ *          pre-Oak-intro screens) and load its text palette.
+ *
+ * HOW IT WORKS:
+ * Creates a window template positioned at the top of the screen, right-aligned
+ * by computing tilemapLeft as 0x1E (30) minus the desired width. The window
+ * is always 2 tiles (16 pixels) tall. Loads text window palette #2 into the
+ * specified palette slot for text coloring.
+ *
+ * PARAMETERS:
+ * @param bg       - Background layer (0-3, clamped to 0 if > 3)
+ * @param width    - Width of the bar in tiles
+ * @param yPos     - Y position in tiles from the top of the screen
+ * @param palette  - Palette slot number (0-15)
+ * @param baseTile - Starting tile index for the window in the BG tilemap
+ *
+ * RETURNS: The window ID of the created top bar window.
+ */
 u8 CreateTopBarWindowLoadPalette(u8 bg, u8 width, u8 yPos, u8 palette, u16 baseTile)
 {
     struct WindowTemplate window;
@@ -260,6 +346,30 @@ void DestroyTopBarWindow(void)
     }
 }
 
+/**
+ * FUNCTION: Menu_InitCursorInternal
+ *
+ * PURPOSE: Initialize the menu cursor system with full control over all parameters.
+ *          Sets up the cursor position, bounds, and draws the initial cursor arrow.
+ *
+ * GAME LOGIC:
+ * This is the internal initialization that all menu cursor setups go through.
+ * It validates the initial cursor position (clamping to 0 if out of range),
+ * stores all configuration into the static sMenu struct, and draws the
+ * initial cursor by calling Menu_MoveCursor(0) (move by 0 = just draw).
+ *
+ * PARAMETERS:
+ * @param windowId       - Window containing the menu options
+ * @param fontId         - Font for the cursor arrow character
+ * @param left           - X pixel offset of the cursor column
+ * @param top            - Y pixel offset of the first option
+ * @param cursorHeight   - Height of each option in pixels
+ * @param numChoices     - Total number of menu options
+ * @param initialCursorPos - Which option to highlight initially
+ * @param APressMuted    - If TRUE, don't play a sound when A is pressed
+ *
+ * RETURNS: The validated cursor position.
+ */
 u8 Menu_InitCursorInternal(u8 windowId, u8 fontId, u8 left, u8 top, u8 cursorHeight, u8 numChoices, u8 initialCursorPos, bool8 APressMuted)
 {
     s32 pos;
@@ -303,6 +413,19 @@ static void Menu_RedrawCursor(u8 oldPos, u8 newPos)
     AddTextPrinterParameterized(sMenu.windowId, sMenu.fontId, gText_SelectorArrow2, sMenu.left, sMenu.optionHeight * newPos + sMenu.top, 0, 0);
 }
 
+/**
+ * FUNCTION: Menu_MoveCursor
+ *
+ * PURPOSE: Move the menu cursor by the given delta, wrapping around at the
+ *          top and bottom. Erases the old cursor and draws it at the new position.
+ *
+ * GAME LOGIC:
+ * If moving past the bottom (maxCursorPos), wraps to the top (minCursorPos).
+ * If moving past the top, wraps to the bottom. This gives the player a
+ * "circular" navigation feel typical of Pokemon menus.
+ *
+ * RETURNS: The new cursor position index.
+ */
 u8 Menu_MoveCursor(s8 cursorDelta)
 {
     u8 oldPos = sMenu.cursorPos;
@@ -339,6 +462,17 @@ u8 Menu_GetCursorPos(void)
     return sMenu.cursorPos;
 }
 
+/**
+ * FUNCTION: Menu_ProcessInput
+ *
+ * PURPOSE: Handle D-pad and button input for a vertical menu with wrapping.
+ *          This is the standard menu input handler used throughout the game.
+ *
+ * RETURNS:
+ *   >= 0: The selected option index (A was pressed)
+ *   MENU_B_PRESSED (-1): B was pressed (cancel)
+ *   MENU_NOTHING_CHOSEN (-2): No selection made yet (cursor moved or no input)
+ */
 s8 Menu_ProcessInput(void)
 {
     if (JOY_NEW(A_BUTTON))
@@ -528,6 +662,22 @@ static u16 CreateWindowTemplate(u8 bg, u8 left, u8 top, u8 width, u8 height, u8 
     return AddWindow(&template);
 }
 
+/**
+ * FUNCTION: CreateYesNoMenu
+ *
+ * PURPOSE: Create and display a Yes/No confirmation dialog box. This is one
+ *          of the most commonly used UI elements in the game (confirming saves,
+ *          purchases, item usage, etc.)
+ *
+ * HOW IT WORKS:
+ * 1. Creates a new window from the provided template.
+ * 2. Draws a standard frame border around it.
+ * 3. Prints "Yes" and "No" text using the specified font.
+ * 4. Initializes the cursor with 2 choices (Yes=0, No=1).
+ *
+ * The caller then uses Menu_ProcessInputNoWrapClearOnChoose() each frame
+ * to get the player's selection and auto-destroy the menu when chosen.
+ */
 void CreateYesNoMenu(const struct WindowTemplate *window, u8 fontId, u8 left, u8 top, u16 baseTileNum, u8 paletteNum, u8 initialCursorPos)
 {
     struct TextPrinterTemplate textSubPrinter;
@@ -571,6 +721,18 @@ void DestroyYesNoMenu(void)
     RemoveWindow(sYesNoWindowId);
 }
 
+/**
+ * FUNCTION: MultichoiceGrid_PrintItems
+ *
+ * PURPOSE: Print menu items arranged in a 2D grid layout (multiple columns).
+ *          Used for item grids, move selection screens, and similar UIs where
+ *          options are arranged in rows and columns rather than a single list.
+ *
+ * HOW IT WORKS:
+ * Iterates through all rows and columns, positioning each text string at
+ * (column * itemWidth + fontWidth, row * itemHeight + yOffset). The yOffset
+ * centers text vertically within 16-pixel-tall cells.
+ */
 void MultichoiceGrid_PrintItems(u8 windowId, u8 fontId, u8 itemWidth, u8 itemHeight, u8 cols, u8 rows, const struct MenuAction *strs)
 {
     u8 width, i, j, yOffset;
@@ -744,6 +906,15 @@ static s8 Menu_ProcessGridInput_NoSoundLimit(void)
     return MENU_NOTHING_CHOSEN;
 }
 
+/**
+ * FUNCTION: Menu_ProcessInputGridLayout
+ *
+ * PURPOSE: Handle D-pad and button input for a 2D grid menu. Supports
+ *          movement in all four directions without wrapping (stops at edges).
+ *          Also supports L/R shoulder buttons for horizontal navigation.
+ *
+ * RETURNS: Same as Menu_ProcessInput (cursor pos, MENU_B_PRESSED, or MENU_NOTHING_CHOSEN).
+ */
 s8 Menu_ProcessInputGridLayout(void)
 {
     u8 oldPos = sMenu.cursorPos;

@@ -1,3 +1,11 @@
+/**
+ * =BATTLE ANIMATION: GHOST-TYPE MOVES=
+ *
+ * Visual effects for Ghost-type move animations (Shadow Ball dark orbs,
+ * Night Shade ghostly waves, Confuse Ray spinning lights, Lick tongue,
+ * Destiny Bond linking aura, Curse nail-driving, etc.). Several effects
+ * use the GBA's scanline/BG manipulation for screen distortion.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

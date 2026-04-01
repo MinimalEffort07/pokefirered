@@ -1,3 +1,18 @@
+/**
+ * @file help_system.c
+ * @brief Help System — Context-Sensitive In-Game Help (Activated by L Button)
+ *
+ * FILE OVERVIEW:
+ * The Help System is a FireRed/LeafGreen feature that provides context-sensitive
+ * help text when the player presses the L button. Based on the player's current
+ * situation (location, menu screen, battle state), the system displays relevant
+ * help topics explaining game mechanics, controls, and objectives.
+ *
+ * The help system manages its own full-screen display mode, overlaying help
+ * text on top of whatever the player was doing. It maintains a topic list
+ * organized by category (Controls, Adventuring, Battling, Using Items, etc.)
+ * that updates based on game progression and the player's current context.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "event_data.h"

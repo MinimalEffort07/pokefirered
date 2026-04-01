@@ -1,3 +1,10 @@
+/**
+ * =BATTLE ANIMATION: FIGHTING-TYPE MOVES=
+ *
+ * Visual effects for Fighting-type move animations (Karate Chop slashes,
+ * Focus Punch charging fist, Cross Chop X-shape, Hi Jump Kick foot,
+ * Dynamic Punch explosion, Brick Break barrier-smash, etc.).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"
