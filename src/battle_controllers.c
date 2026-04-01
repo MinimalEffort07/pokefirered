@@ -1,3 +1,40 @@
+/*
+ * battle_controllers.c - Battle Controller Dispatch and Communication
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * The battle system uses a CONTROLLER architecture to decouple game logic
+ * from input/output. Each battler position has a controller that handles
+ * all I/O for that position:
+ *
+ *   Player Controller: Displays menus, reads button input, shows text
+ *   Opponent Controller: AI selects moves, switches, items
+ *   Link Opponent Controller: Receives choices from link cable
+ *   Link Partner Controller: Partner in multi battles (link)
+ *   Safari Controller: Safari Zone UI (ball/bait/rock/run)
+ *   Oak/Old Man Controller: Tutorial battle (scripted inputs)
+ *   Pokedude Controller: Teaching battle (scripted demonstration)
+ *
+ * COMMUNICATION PROTOCOL:
+ * The battle engine communicates with controllers via command buffers:
+ *   gBattleBufferA[battler][]: Commands TO the controller (engine → controller)
+ *   gBattleBufferB[battler][]: Responses FROM the controller (controller → engine)
+ *
+ * BtlController_Emit* functions serialize commands into BufferA.
+ * Controller functions read BufferA, do their work, write results to BufferB.
+ * MarkBattlerForControllerExec sets a bit in gBattleControllerExecFlags.
+ * The battle state machine pauses while any exec flags are set.
+ *
+ * This file provides:
+ * - InitBattleControllers: Assigns the correct controller to each battler
+ * - BtlController_Emit* functions: Serialize all 50+ command types
+ * - Link battle buffer send/receive tasks
+ * - Controller exec flag management
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "battle.h"
 #include "battle_ai_script_commands.h"

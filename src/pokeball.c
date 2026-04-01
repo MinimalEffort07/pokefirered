@@ -1,3 +1,29 @@
+/**
+ * =POKEBALL ANIMATIONS=
+ *
+ * FILE OVERVIEW:
+ * This file implements all Poke Ball animations in battle:
+ *   - Throwing a ball at a wild Pokemon (the capture sequence)
+ *   - Sending out a Pokemon at the start of battle or when switching
+ *   - The ball opening animation when releasing a Pokemon
+ *   - Ball shaking animation during capture attempts
+ *   - The "click" animation when a capture succeeds
+ *   - Health box slide-in after a Pokemon appears
+ *
+ * GBA CONTEXT:
+ * The ball animations are driven entirely by the GBA's sprite (OBJ) system.
+ * Each ball type has its own compressed sprite sheet and palette stored in
+ * ROM. The animations use sprite callbacks — each frame, the sprite's
+ * callback function updates its position, rotation, and animation state.
+ * This callback-chain approach creates complex multi-step animations:
+ *   SpriteCB_BallThrow → SpriteCB_BallThrow_ReachMon →
+ *   SpriteCB_BallThrow_ShrinkMon → SpriteCB_BallThrow_Close →
+ *   SpriteCB_BallThrow_FallToGround → SpriteCB_BallThrow_StartShakes →
+ *   SpriteCB_BallThrow_Shake → ... → SpriteCB_BallThrow_CaptureMon
+ *
+ * Each callback does its animation step, then reassigns sprite->callback
+ * to the next step in the sequence.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

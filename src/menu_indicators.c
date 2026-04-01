@@ -1,3 +1,12 @@
+/**
+ * =MENU INDICATORS (SCROLL ARROWS)=
+ *
+ * This file implements the animated scroll indicator arrows that appear
+ * in scrollable menus (item lists, move lists, PC box lists, etc.).
+ * These small arrow sprites bounce up and down to indicate that more
+ * items exist above or below the visible portion of the list. The
+ * bouncing animation uses sine-wave motion for smooth oscillation.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

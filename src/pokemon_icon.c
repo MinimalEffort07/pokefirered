@@ -1,9 +1,33 @@
+/**
+ * =POKEMON ICON SPRITES=
+ *
+ * FILE OVERVIEW:
+ * This file manages the small 32x32 pixel Pokemon icons used throughout
+ * the game's menus — the party screen, PC storage boxes, Pokedex lists,
+ * and battle switch screens. Each species has a unique icon with a simple
+ * 2-frame bobbing animation.
+ *
+ * Unlike the large battle sprites, icons use only 3 shared palettes
+ * (indexed by gMonIconPaletteIndices) to save palette RAM. This means
+ * every Pokemon icon's colors must fit within one of these 3 palettes,
+ * which is why icons often look different from their battle sprites.
+ *
+ * GBA CONTEXT:
+ * The GBA has 16 sprite (OBJ) palette slots, each holding 16 colors.
+ * Since there are 386 Pokemon species but only 16 palette slots, icons
+ * must share palettes. The 3 icon palettes (POKE_ICON_BASE_PAL_TAG +
+ * 0/1/2) provide different color schemes that cover all species.
+ * gMonIconTable maps each species to its compressed icon sprite sheet
+ * stored in ROM.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "mail_data.h"
 #include "pokemon_icon.h"
 #include "graphics.h"
 
+/* Base palette tag for Pokemon icon sprites. Each of the 3 palettes
+ * uses tag 56000, 56001, or 56002. */
 #define POKE_ICON_BASE_PAL_TAG 56000
 
 struct MonIconSpriteTemplate

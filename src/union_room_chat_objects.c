@@ -1,3 +1,13 @@
+/**
+ * @file union_room_chat_objects.c
+ * @brief Union Room Chat Sprites — Avatar and UI Sprite Management for Chat
+ *
+ * FILE OVERVIEW:
+ * This file manages the sprite objects (OAM entries) used in the Union Room chat
+ * interface. It handles loading and displaying player avatar sprites, the text
+ * cursor, scroll indicators, and other graphical elements used in the wireless
+ * chat feature. Each connected player's avatar is shown alongside their messages.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

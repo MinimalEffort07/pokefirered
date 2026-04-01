@@ -1,3 +1,22 @@
+/**
+ * @file pokedex_screen.c
+ * @brief Pokedex Screen — Pokemon Encyclopedia Interface
+ *
+ * FILE OVERVIEW:
+ * This file implements the Pokedex screen UI, the in-game Pokemon encyclopedia
+ * that displays information about all Pokemon the player has seen or caught.
+ * The Pokedex features:
+ *   - A scrollable list of all Pokemon (numbered by Kanto or National order)
+ *   - Individual entry pages with species info, habitat, height, weight, and
+ *     a description (for caught Pokemon)
+ *   - Area map showing where the Pokemon can be found
+ *   - Cry playback
+ *   - Search/sort functionality by name, type, weight, height
+ *   - Seen/caught status tracking and completion counts
+ *
+ * The Pokedex also manages the seen/caught flags in the save data and provides
+ * functions for other systems to query Pokedex status.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "graphics.h"

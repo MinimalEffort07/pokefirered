@@ -1,3 +1,13 @@
+/**
+ * @file ereader_screen.c
+ * @brief e-Reader Screen — UI for Receiving e-Reader Card Data
+ *
+ * FILE OVERVIEW:
+ * This file implements the e-Reader connection screen shown when the player
+ * initiates an e-Reader card scan from the game. It handles the UI state
+ * machine: displaying instructions, managing the link connection, showing
+ * transfer progress, validating received data, and saving it to flash memory.
+ */
 #include "global.h"
 #include "malloc.h"
 #include "decompress.h"

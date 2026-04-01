@@ -1,3 +1,21 @@
+/**
+ * =METATILE BEHAVIOR LOOKUP=
+ *
+ * FILE OVERVIEW:
+ * This file provides lookup functions for metatile behaviors — the
+ * gameplay properties assigned to each 16x16 tile on the overworld map.
+ * Each metatile has a "behavior" ID that determines how the player and
+ * NPCs interact with it. This file contains lookup tables and functions
+ * that answer questions like:
+ *   - "Can the player Surf on this tile?"
+ *   - "Is this tile a warp pad?"
+ *   - "Does this tile trigger a wild encounter?"
+ *   - "Can the player walk through this tile?"
+ *   - "Is this a ledge tile?" "A door?" "Tall grass?"
+ *
+ * The lookup tables are arrays indexed by behavior ID, providing O(1)
+ * constant-time lookups for any behavior query.
+ */
 #include "global.h"
 #include "metatile_behavior.h"
 #include "constants/metatile_behaviors.h"

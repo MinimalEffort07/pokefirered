@@ -1,3 +1,12 @@
+/**
+ * =MINIGAME COUNTDOWN=
+ *
+ * This file implements the "3... 2... 1... START!" countdown animation
+ * used before multiplayer minigames (Berry Crush, Pokemon Jump, Dodrio
+ * Berry Picking). The countdown numbers are displayed as sprites that
+ * bounce and fade, creating a dramatic "get ready" effect before the
+ * minigame begins.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

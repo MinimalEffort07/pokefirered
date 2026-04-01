@@ -1,3 +1,18 @@
+/**
+ * =BATTLE ANIMATION: GENERAL EFFECTS 1=
+ *
+ * FILE OVERVIEW:
+ * This is the first of three large files containing general-purpose
+ * battle animation sprite callbacks and task functions. These effects
+ * are shared across many different move animations and include:
+ *   - Projectile motion (linear, arcing, homing)
+ *   - Impact effects (stars, sparks, explosions)
+ *   - Trail effects (afterimages, fading copies)
+ *   - Growth/shrink animations
+ *   - Spiral and circular motion patterns
+ * The effects are referenced by the animation command scripts in
+ * battle_anim_scripts.s through sprite template pointers.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

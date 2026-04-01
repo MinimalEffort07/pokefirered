@@ -1,3 +1,21 @@
+/**
+ * =BUY MENU HELPER FUNCTIONS=
+ *
+ * FILE OVERVIEW:
+ * This file contains window layout definitions and helper functions
+ * specifically for the Buy Menu within the Poke Mart shopping system.
+ * It defines two sets of window templates:
+ *   - Normal shop layout: For regular item shops (Potions, Poke Balls, etc.)
+ *   - TM/HM shop layout: Modified layout with extra space for move names
+ *
+ * The helper functions handle:
+ *   - Initializing buy menu windows
+ *   - Drawing the money display box
+ *   - Printing item quantities and prices
+ *   - Drawing the "quantity box" border variants (thin and normal)
+ *   - Showing confirmation purchase dialogs
+ *   - Displaying message text during purchases
+ */
 #include "global.h"
 #include "task.h"
 #include "text.h"

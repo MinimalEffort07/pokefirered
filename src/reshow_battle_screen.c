@@ -1,3 +1,31 @@
+/**
+ * =RESHOW BATTLE SCREEN=
+ *
+ * FILE OVERVIEW:
+ * This file handles reconstructing the battle screen after the player exits
+ * a sub-menu (such as the Bag, Party, or Summary screens) and returns to
+ * the main battle view.
+ *
+ * WHY IS THIS NEEDED?
+ * When the player opens the Bag or Party menu during battle, those screens
+ * completely take over the GBA's display — loading their own graphics into
+ * VRAM, their own palettes, and their own sprites. When the player returns,
+ * ALL battle graphics must be rebuilt from scratch:
+ *   - All 4 BG layers must be reconfigured
+ *   - VRAM must be cleared and refilled with battle tiles
+ *   - All battler sprites (up to 4 Pokemon) must be reloaded and recreated
+ *   - All health box sprites must be recreated and updated
+ *   - Shadow sprites must be recreated
+ *   - The cursor must be restored to its previous position
+ *
+ * GBA CONTEXT:
+ * The GBA has no concept of "saving and restoring" display state. VRAM,
+ * OAM, and palette RAM are just memory — when a new screen writes over
+ * them, the old data is gone. This file systematically rebuilds everything
+ * across 21 frames (states 0-20) to avoid freezing the display. Each
+ * frame does one step of the reconstruction, and the state counter
+ * (reshowMainState) advances to the next step on the following frame.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "link.h"
@@ -19,6 +47,19 @@ void ReshowBattleScreenDummy(void)
 {
 }
 
+/**
+ * FUNCTION: ReshowBattleScreenAfterMenu
+ *
+ * PURPOSE: Initiates the reconstruction of the battle screen after
+ * returning from a sub-menu (Bag, Party, etc.).
+ *
+ * HOW IT WORKS:
+ * Disables palette transfer (to prevent partial graphics from showing),
+ * clears any mosaic effect, resets the reconstruction state machine,
+ * sets up the appropriate help context for the battle type, and hands
+ * off to CB2_ReshowBattleScreenAfterMenu which runs the 21-step
+ * reconstruction sequence across subsequent frames.
+ */
 void ReshowBattleScreenAfterMenu(void)
 {
     gPaletteFade.bufferTransferDisabled = 1;

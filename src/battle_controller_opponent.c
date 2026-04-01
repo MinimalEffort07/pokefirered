@@ -1,3 +1,34 @@
+/**
+ * =OPPONENT BATTLE CONTROLLER=
+ *
+ * FILE OVERVIEW:
+ * This file implements the battle controller for AI-controlled opponent
+ * trainers (and wild Pokemon in trainer-style battles). It is the counterpart
+ * to battle_controller_player.c — while that file handles player input,
+ * this file handles the AI's responses to battle commands.
+ *
+ * ARCHITECTURE — THE CONTROLLER PATTERN:
+ * The Pokemon battle system uses a "controller" abstraction to handle
+ * different types of battlers uniformly. The battle engine sends the same
+ * commands to all battlers (draw sprite, choose move, play animation, etc.),
+ * and each controller interprets them differently:
+ *   - Player controller: Shows menus, reads button input
+ *   - Opponent controller: Uses AI scripts, auto-selects moves
+ *   - Link controller: Sends/receives choices over link cable
+ *   - Safari controller: Shows rock/bait/ball options
+ *
+ * This file's sOpponentBufferCommands[] table maps each command ID to a
+ * handler function, just like the player controller. The key difference is
+ * in commands like CONTROLLER_CHOOSEACTION and CONTROLLER_CHOOSEMOVE —
+ * instead of showing menus, they call the AI system to decide automatically.
+ *
+ * COMMAND FLOW:
+ * 1. Battle engine writes a command to gBattleBufferA[battlerId]
+ * 2. OpponentBufferRunCommand reads the command byte
+ * 3. Looks up the handler in sOpponentBufferCommands[]
+ * 4. Handler executes (e.g., loads sprite, plays animation, calls AI)
+ * 5. Handler calls OpponentBufferExecCompleted() when done
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"
@@ -90,6 +121,17 @@ static void Task_StartSendOutAnim(u8 taskId);
 static void SpriteCB_FreeOpponentSprite(struct Sprite *sprite);
 static void EndDrawPartyStatusSummary(void);
 
+/**
+ * The opponent command dispatch table — maps controller command IDs to
+ * handler functions. This is the opponent's equivalent of the player's
+ * sPlayerBufferCommands table. Most visual commands (sprites, animations,
+ * health bars) work identically to the player versions. The key differences
+ * are in the decision-making commands:
+ *   CONTROLLER_CHOOSEACTION → calls AI instead of showing Fight/Bag/Run menu
+ *   CONTROLLER_CHOOSEMOVE   → runs AI scripts instead of move selection menu
+ *   CONTROLLER_OPENBAG      → AI item usage logic
+ *   CONTROLLER_CHOOSEPOKEMON → AI switch logic
+ */
 static void (*const sOpponentBufferCommands[CONTROLLER_CMDS_COUNT])(void) =
 {
     [CONTROLLER_GETMONDATA]               = OpponentHandleGetMonData,
@@ -1336,6 +1378,19 @@ static void OpponentHandlePrintSelectionString(void)
     OpponentBufferExecCompleted();
 }
 
+/**
+ * FUNCTION: OpponentHandleChooseAction
+ *
+ * PURPOSE: Handles the opponent's turn action selection — the AI equivalent
+ * of the player's "Fight / Bag / Pokemon / Run" menu.
+ *
+ * GAME LOGIC:
+ * Instead of showing a menu, the AI calls AI_TrySwitchOrUseItem() which
+ * decides whether to switch Pokemon or use an item. If it decides to fight,
+ * the battle engine will then call OpponentHandleChooseMove to pick a move.
+ * This separation mirrors the player flow: first choose an action type,
+ * then choose the specific action (which move, which item, etc.).
+ */
 static void OpponentHandleChooseAction(void)
 {
     AI_TrySwitchOrUseItem();
@@ -1347,6 +1402,33 @@ static void OpponentHandleUnknownYesNoBox(void)
     OpponentBufferExecCompleted();
 }
 
+/**
+ * FUNCTION: OpponentHandleChooseMove
+ *
+ * PURPOSE: Handles AI move selection — the core decision point where the
+ * opponent picks which of its 4 moves to use this turn.
+ *
+ * HOW IT WORKS:
+ * Two paths depending on battle type:
+ *
+ * FOR TRAINER/SCRIPTED BATTLES:
+ * 1. Sets up the AI scoring system (BattleAI_SetupAIData)
+ * 2. Runs all applicable AI scripts to score each move
+ * 3. BattleAI_ChooseMoveOrAction returns the best move index (0-3)
+ * 4. Special cases for Safari Zone (watch/flee) are handled
+ * 5. Move targeting is resolved (self-targeting, hit-both, etc.)
+ * 6. The choice is emitted back to the battle engine
+ *
+ * FOR WILD POKEMON:
+ * Wild Pokemon use no AI at all — they just pick a random valid move.
+ * This is why wild Pokemon sometimes use ineffective moves.
+ *
+ * GAME LOGIC:
+ * The return value is packed into a 16-bit value:
+ *   Low byte: move slot index (0-3)
+ *   High byte: target battler ID
+ * This tells the battle engine both WHAT move to use and WHO to target.
+ */
 static void OpponentHandleChooseMove(void)
 {
     u8 chosenMoveId;
@@ -1354,7 +1436,7 @@ static void OpponentHandleChooseMove(void)
 
     if (gBattleTypeFlags & (BATTLE_TYPE_TRAINER | BATTLE_TYPE_FIRST_BATTLE | BATTLE_TYPE_SAFARI | BATTLE_TYPE_ROAMER))
     {
-
+        /* Use AI scripts to intelligently select a move. */
         BattleAI_SetupAIData();
         chosenMoveId = BattleAI_ChooseMoveOrAction();
 
@@ -1367,6 +1449,8 @@ static void OpponentHandleChooseMove(void)
             BtlController_EmitTwoReturnValues(1, B_ACTION_RUN, 0);
             break;
         default:
+            /* Resolve move targeting — some moves target the user (like
+             * Swords Dance), and some hit both opponents in doubles. */
             if (gBattleMoves[moveInfo->moves[chosenMoveId]].target & (MOVE_TARGET_USER_OR_SELECTED | MOVE_TARGET_USER))
                 gBattlerTarget = gActiveBattler;
             if (gBattleMoves[moveInfo->moves[chosenMoveId]].target & MOVE_TARGET_BOTH)
@@ -1375,6 +1459,7 @@ static void OpponentHandleChooseMove(void)
                 if (gAbsentBattlerFlags & gBitTable[gBattlerTarget])
                     gBattlerTarget = GetBattlerAtPosition(B_POSITION_PLAYER_RIGHT);
             }
+            /* Pack move index in low byte, target in high byte. */
             BtlController_EmitTwoReturnValues(1, 10, (chosenMoveId) | (gBattlerTarget << 8));
             break;
         }
@@ -1382,6 +1467,8 @@ static void OpponentHandleChooseMove(void)
     }
     else
     {
+        /* Wild Pokemon: pick a random move with no intelligence.
+         * Keep re-rolling until we get a non-empty move slot. */
         u16 move;
 
         do
@@ -1407,10 +1494,24 @@ static void OpponentHandleChooseItem(void)
     OpponentBufferExecCompleted();
 }
 
+/**
+ * FUNCTION: OpponentHandleChoosePokemon
+ *
+ * PURPOSE: Handles the AI's Pokemon switch selection — picks which party
+ * member to send out when the current one faints or the AI decides to switch.
+ *
+ * HOW IT WORKS:
+ * First checks if the AI already pre-selected a switch target (set by
+ * AI_TrySwitchOrUseItem earlier). If not, calls GetMostSuitableMonToSwitchInto
+ * which evaluates type matchups and available moves. As a last resort, if
+ * no "suitable" mon exists, it just picks the first alive party member.
+ */
 static void OpponentHandleChoosePokemon(void)
 {
     s32 chosenMonId;
 
+    /* Check if the AI already decided who to switch to. PARTY_SIZE means
+     * "no pre-selected choice." */
     if (*(gBattleStruct->AI_monToSwitchIntoId + (GetBattlerPosition(gActiveBattler) >> 1)) == PARTY_SIZE)
     {
         chosenMonId = GetMostSuitableMonToSwitchInto();

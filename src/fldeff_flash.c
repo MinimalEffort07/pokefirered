@@ -1,3 +1,36 @@
+/**
+ * @file fldeff_flash.c
+ * @brief Flash Field Move and Cave Transition Animations
+ *
+ * FILE OVERVIEW:
+ * This file handles TWO related systems:
+ *
+ * 1. HM FLASH FIELD EFFECT: When the player uses Flash in a dark cave, the
+ *    screen brightens by expanding the visibility circle (see field_screen_effect.c).
+ *    Flash can only be used once per cave visit (tracked by FLAG_SYS_FLASH_ACTIVE).
+ *
+ * 2. CAVE TRANSITION ANIMATIONS: The visual transitions that play when entering
+ *    or exiting caves (MAP_TYPE_UNDERGROUND). These are the dramatic "entering
+ *    cave" and "exiting cave" screen effects:
+ *    - Enter: Screen starts bright, fades through a cave-mouth silhouette to black
+ *    - Exit: Screen starts dark, fades through the silhouette to bright
+ *    Both use a special tilemap (cave_transition) that shows a rocky cave opening
+ *    shape, with alpha blending to create a smooth fade effect.
+ *
+ * 3. MAP PREVIEW SCREEN: The "[CAVE NAME]" text that appears when entering a new
+ *    cave area. Shows the name of the location before the cave transition plays.
+ *
+ * MAP TRANSITION TABLE:
+ * The sTransitionTypes[] table maps every possible (fromType, toType) pair to
+ * determine whether a cave transition animation should play. Any transition
+ * TO MAP_TYPE_UNDERGROUND is an "enter" animation; any FROM it is an "exit."
+ *
+ * GBA CONTEXT — ALPHA BLENDING FOR TRANSITIONS:
+ * The cave transitions use the GBA's alpha blending hardware to smoothly fade
+ * a cave-shaped silhouette in or out. BLDCNT configures BG0 (the cave shape)
+ * as the first target, and all other layers as second targets. BLDALPHA controls
+ * the blend ratio, which is gradually adjusted each frame.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "event_data.h"
@@ -162,6 +195,16 @@ static const u16 sCaveTransitionPalette_Exit[] = INCBIN_U16("graphics/cave_trans
 static const u32 sCaveTransitionTilemap[] = INCBIN_U32("graphics/cave_transition/tilemap.bin.lz");
 static const u32 sCaveTransitionTiles[] = INCBIN_U32("graphics/cave_transition/tiles.4bpp.lz");
 
+/**
+ * FUNCTION: SetUpFieldMove_Flash
+ *
+ * PURPOSE: Validates whether Flash can be used. Requirements:
+ * 1. The current map must be a cave (gMapHeader.cave == TRUE)
+ * 2. Flash must not have already been used in this cave visit
+ *    (FLAG_SYS_FLASH_ACTIVE is not set)
+ *
+ * @return TRUE if Flash can be used, FALSE otherwise
+ */
 bool8 SetUpFieldMove_Flash(void)
 {
     if (gMapHeader.cave != TRUE)
@@ -207,6 +250,23 @@ static void VBC_ChangeMapVBlank(void)
     TransferPlttBuffer();
 }
 
+/**
+ * FUNCTION: CB2_DoChangeMap
+ *
+ * PURPOSE: Main callback that handles the map change transition screen.
+ * Resets all GPU state, clears VRAM/OAM/palette, then checks if a cave
+ * transition animation should play.
+ *
+ * GBA CONTEXT:
+ * This function performs a full GPU reset — the same kind of cleanup done
+ * when transitioning between major game screens. It:
+ * - Disables the display (DISPCNT = 0) to prevent garbage on screen
+ * - Zeros all BG control and scroll registers
+ * - Clears all of VRAM (96KB), OAM (1KB), and palette RAM (512 bytes)
+ *   using DMA channel 3 for fast hardware-accelerated fills
+ * - Resets the task, sprite, and palette fade systems
+ * - Re-enables VBlank interrupt and sets up the transition callbacks
+ */
 void CB2_DoChangeMap(void)
 {
     SetVBlankCallback(NULL);
@@ -256,6 +316,17 @@ static bool8 TryDoMapTransition(void)
     return FALSE;
 }
 
+/**
+ * FUNCTION: MapTransitionIsEnter
+ *
+ * PURPOSE: Checks if a map transition from one type to another is an "enter"
+ * transition (going into a cave/underground area). Used by the fade system
+ * to decide whether to fade to white (enter) or black (exit).
+ *
+ * @param _fromType — the source map's type
+ * @param _toType — the destination map's type
+ * @return TRUE if this is an enter transition, FALSE otherwise
+ */
 bool8 MapTransitionIsEnter(u8 _fromType, u8 _toType)
 {
     u8 fromType = _fromType;
@@ -271,6 +342,16 @@ bool8 MapTransitionIsEnter(u8 _fromType, u8 _toType)
     return FALSE;
 }
 
+/**
+ * FUNCTION: MapTransitionIsExit
+ *
+ * PURPOSE: Checks if a map transition is an "exit" transition (leaving a cave
+ * to go back to an outdoor/indoor area).
+ *
+ * @param _fromType — the source map's type
+ * @param _toType — the destination map's type
+ * @return TRUE if this is an exit transition, FALSE otherwise
+ */
 bool8 MapTransitionIsExit(u8 _fromType, u8 _toType)
 {
     u8 fromType = _fromType;

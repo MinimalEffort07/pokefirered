@@ -1,25 +1,78 @@
+/**
+ * @file librfu_sio32id.c
+ * @brief RFU Wireless Adapter ID Check — 32-bit Serial I/O Identification Protocol
+ *
+ * FILE OVERVIEW:
+ * This file implements the hardware identification protocol for the GBA Wireless
+ * Adapter (RFU — Radio Frequency Unit). Before wireless communication can begin,
+ * the GBA must verify that the device connected to the serial port is actually an
+ * RFU adapter by exchanging a specific handshake sequence.
+ *
+ * The protocol works by sending the ASCII bytes for "NINTENDO" one pair at a time
+ * over the 32-bit serial I/O interface, and checking that the adapter echoes back
+ * the expected responses. If all 4 exchanges succeed, the adapter returns its
+ * device ID (RFU_ID = 0x00008001).
+ *
+ * GBA CONTEXT:
+ * The GBA's serial port (link cable connector) can operate in several modes.
+ * This code uses SIO_32BIT_MODE, which transfers 32 bits per transaction.
+ * The GBA can be either "master" (drives the clock) or "slave" (receives the
+ * clock). REG_SIOCNT controls the serial port configuration. REG_SIODATA32
+ * is the 32-bit data register for sending/receiving. REG_IME/REG_IE control
+ * the interrupt system — serial transfers trigger interrupts when complete.
+ *
+ * The handshake uses a timer (selected by gSTWIStatus->timerSelect) as a delay
+ * between retry attempts. Timer registers come in pairs: REG_TMCNT_L (counter
+ * value) and REG_TMCNT_H (control: prescaler, enable bit).
+ */
 #include "librfu.h"
 
 static void Sio32IDIntr(void);
 static void Sio32IDInit(void);
 static s32 Sio32IDMain(void);
 
+/* State tracking for the 32-bit SIO identification handshake */
 struct RfuSIO32Id
 {
-    u8 MS_mode;
-    u8 state;
-    u16 count;
-    u16 send_id;
-    u16 recv_id;
-    u16 unk8; // unused
-    u16 lastId;
+    u8 MS_mode;    /* Master/Slave mode (AGB_CLK_MASTER or AGB_CLK_SLAVE) */
+    u8 state;      /* Protocol state machine step */
+    u16 count;     /* Number of successful handshake exchanges (needs 4) */
+    u16 send_id;   /* Current value being sent to the adapter */
+    u16 recv_id;   /* Expected receive value (complement of what was sent) */
+    u16 unk8;      /* Unused padding */
+    u16 lastId;    /* The adapter's ID once handshake completes (RFU_ID on success) */
 };
 
 COMMON_DATA struct RfuSIO32Id gRfuSIO32Id = {0};
 
-static const u16 Sio32ConnectionData[] = { 0x494e, 0x544e, 0x4e45, 0x4f44 }; // NINTENDO
+/* The handshake sequence: "IN", "TN", "NE", "DO" — spells "NINTENDO" when read
+ * as pairs of ASCII bytes. Each 16-bit value is sent one at a time. */
+static const u16 Sio32ConnectionData[] = { 0x494e, 0x544e, 0x4e45, 0x4f44 }; /* "NINTENDO" */
 static const char Sio32IDLib_Var[] = "Sio32ID_030820";
 
+/**
+ * FUNCTION: AgbRFU_checkID
+ *
+ * PURPOSE: Attempts to identify an RFU Wireless Adapter connected to the serial port.
+ *
+ * HOW IT WORKS:
+ * Sets up 32-bit serial I/O mode and repeatedly runs the handshake protocol.
+ * Each attempt calls Sio32IDMain() to progress the state machine. Between
+ * attempts, a hardware timer introduces a short delay. The adapter gets
+ * maxTries * 8 attempts to respond before giving up.
+ *
+ * GBA CONTEXT:
+ * REG_IME (Interrupt Master Enable) is toggled to safely modify REG_IE
+ * (Interrupt Enable). This pattern — disable interrupts, modify IE, re-enable —
+ * prevents race conditions where an interrupt could fire while the enable
+ * mask is in a half-modified state.
+ *
+ * PARAMETERS:
+ * @param maxTries — Number of retry cycles (each cycle = 8 actual attempts)
+ *
+ * RETURNS: The adapter ID (positive) on success, 0 if no response, -1 if
+ *          interrupts are disabled.
+ */
 s32 AgbRFU_checkID(u8 maxTries)
 {
     u16 ieBak;

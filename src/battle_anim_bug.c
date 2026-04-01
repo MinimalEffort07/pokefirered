@@ -1,3 +1,9 @@
+/**
+ * =BATTLE ANIMATION: BUG-TYPE MOVES=
+ *
+ * Visual effects for Bug-type move animations (Pin Missile needles,
+ * String Shot threads, Silver Wind sparkles, Leech Life particles, etc.).
+ */
 #include "global.h"
 #include "battle_anim.h"
 #include "gpu_regs.h"

@@ -1,3 +1,18 @@
+/**
+ * @file union_room_chat.c
+ * @brief Union Room Chat — Wireless Text Chat Between Players
+ *
+ * FILE OVERVIEW:
+ * This file implements the wireless chat feature available in the Union Room.
+ * Two players can exchange short text messages using an on-screen keyboard
+ * that supports letters, numbers, and emoji-style symbols. Messages are sent
+ * in real-time over the wireless link and displayed in a scrolling chat log.
+ *
+ * The file manages the chat state machine, keyboard input handling, message
+ * composition/sending/receiving, the chat display scrolling, and the
+ * exit/disconnect flow. It coordinates with union_room_chat_display.c for
+ * rendering and union_room_chat_objects.c for sprite management.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "dynamic_placeholder_text_util.h"

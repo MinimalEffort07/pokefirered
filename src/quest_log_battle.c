@@ -1,3 +1,25 @@
+/**
+ * @file quest_log_battle.c
+ * @brief Quest Log Battle Event Recording — Logging Wins for the Adventure Log
+ *
+ * FILE OVERVIEW:
+ * This file records battle outcomes into the Quest Log (Adventure Log) system.
+ * When the player wins or catches a Pokemon in battle, the game logs information
+ * about the battle so it can be displayed in the Quest Log and, in some cases,
+ * replayed as an event scene.
+ *
+ * Different event types are logged depending on the opponent:
+ *   - Wild Pokemon: records the species defeated or caught
+ *   - Regular Trainers: records the trainer ID and ending HP fraction
+ *   - Gym Leaders: logged as a special "defeated gym leader" event
+ *   - Elite Four / Champion: logged with their own event types
+ *   - Link Battles: records opponent names and battle outcome
+ *
+ * GAME LOGIC:
+ * The HP fraction at the end of a trainer battle determines the flavor text
+ * shown in the Quest Log (e.g., "handily defeated" vs "barely managed to win").
+ * Three tiers: full/high HP, moderate HP (< 2/3), and low HP (< 1/3).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"
@@ -9,6 +31,18 @@
 
 static void GetLinkMultiBattlePlayerIndexes(s32 *, s32 *);
 
+/**
+ * FUNCTION: TrySetQuestLogBattleEvent
+ *
+ * PURPOSE: After a battle ends, records the outcome in the Quest Log if applicable.
+ *
+ * HOW IT WORKS:
+ * Only records for non-link, non-tutorial battles that the player won or caught.
+ * For trainer battles, determines the event type by trainer class (gym leader,
+ * champion, E4, or regular trainer), then logs the trainer ID, species involved,
+ * map section, and an HP fraction tier. For wild battles, records whether the
+ * wild Pokemon was defeated or caught.
+ */
 void TrySetQuestLogBattleEvent(void)
 {
     if (!(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_OLD_MAN_TUTORIAL | BATTLE_TYPE_POKEDUDE)) && (gBattleOutcome == B_OUTCOME_WON || gBattleOutcome == B_OUTCOME_CAUGHT))
@@ -91,6 +125,16 @@ void TrySetQuestLogBattleEvent(void)
     }
 }
 
+/**
+ * FUNCTION: TrySetQuestLogLinkBattleEvent
+ *
+ * PURPOSE: Records a link battle (multiplayer) outcome in the Quest Log.
+ *
+ * HOW IT WORKS:
+ * Only runs for link battles. Records the outcome (won/lost/drew), opponent
+ * names, and the battle type (single, double, multi, or Union Room). For multi
+ * battles, records the partner's name and both opponents' names.
+ */
 void TrySetQuestLogLinkBattleEvent(void)
 {
     s32 partnerIdx;
@@ -135,6 +179,17 @@ void TrySetQuestLogLinkBattleEvent(void)
     }
 }
 
+/**
+ * FUNCTION: GetLinkMultiBattlePlayerIndexes
+ *
+ * PURPOSE: Identifies which link players are the partner and which are opponents
+ *          in a multi battle (2v2 with 4 human players).
+ *
+ * HOW IT WORKS:
+ * In multi battles, each player has a 2-bit ID. The partner's ID is the player's
+ * ID XORed with 2 (swapping the high bit). The function scans all 4 battler
+ * slots to find which index matches the partner ID, and which are opponents.
+ */
 static void GetLinkMultiBattlePlayerIndexes(s32 * partnerIdx, s32 * opponentIdxs)
 {
     s32 i;

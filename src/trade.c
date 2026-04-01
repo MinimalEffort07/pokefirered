@@ -1,3 +1,18 @@
+/**
+ * @file trade.c
+ * @brief In-Game NPC Trades — Scripted Pokemon Exchanges with Fixed NPCs
+ *
+ * FILE OVERVIEW:
+ * This file handles the in-game trade system where the player can trade Pokemon
+ * with specific NPCs for predetermined species. Unlike link trades (between
+ * players), these are scripted exchanges: an NPC offers a specific Pokemon in
+ * exchange for a specific species. Examples include trading a Spearow for a
+ * Farfetch'd, or a Poliwhirl for a Jynx.
+ *
+ * The file manages the trade data tables (which NPCs trade what), the trade
+ * animation sequence, and the Pokemon data generation for the traded Pokemon
+ * (including setting the correct OT name, ID, nature, and IVs).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

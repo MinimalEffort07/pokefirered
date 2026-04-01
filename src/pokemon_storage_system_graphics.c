@@ -1,3 +1,14 @@
+/**
+ * @file pokemon_storage_system_graphics.c
+ * @brief PC Box Storage Graphics — Visual Rendering for Box Screen
+ *
+ * FILE OVERVIEW:
+ * This file handles the graphical rendering for the Pokemon Storage System UI.
+ * It manages box wallpaper loading/display, Pokemon icon sprite creation and
+ * positioning within the box grid, the cursor/hand sprite animation, box
+ * label rendering, and the visual effects for moving/grabbing Pokemon
+ * (including the pickup animation and shadow sprites).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "event_data.h"

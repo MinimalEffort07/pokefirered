@@ -1,3 +1,23 @@
+/**
+ * =FIELD CONTROL: AVATAR INTERACTION PROCESSING=
+ *
+ * FILE OVERVIEW:
+ * This is one of the most important overworld files — it processes all
+ * interactions between the player avatar and the game world each frame.
+ * When the player takes a step, presses A, or moves to a new tile, this
+ * file determines what happens:
+ *
+ *   - Stepping on a tile: Check for wild encounters, warp tiles,
+ *     coordinate-triggered events, stepping on scripts
+ *   - Pressing A: Check for NPC dialogs, signposts, hidden items,
+ *     PC interaction, shop counters, bookshelves
+ *   - Moving to a new map: Trigger map enter scripts, weather changes,
+ *     map name popup, daycare egg hatching step counter
+ *
+ * This file is essentially the "event dispatcher" — it reads the map's
+ * event data (warps, triggers, NPCs) and decides which scripts or
+ * functions to invoke based on the player's position and actions.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "bike.h"

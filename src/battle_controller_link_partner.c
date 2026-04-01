@@ -1,3 +1,14 @@
+/**
+ * =LINK PARTNER BATTLE CONTROLLER=
+ *
+ * FILE OVERVIEW:
+ * This file implements the battle controller for a human partner in a
+ * multi-battle (2v2 with link partner). This controller handles the
+ * partner's Pokemon on the player's side — it receives the partner's
+ * choices via the link cable and displays their Pokemon's sprites,
+ * health bars, and animations. The partner's Pokemon appear on the
+ * player's side of the screen but their decisions come from the link.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"

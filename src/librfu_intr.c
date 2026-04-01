@@ -1,3 +1,25 @@
+/**
+ * @file librfu_intr.c
+ * @brief RFU Interrupt Handlers — Serial I/O and Timer Interrupt Service Routines
+ *
+ * FILE OVERVIEW:
+ * This file implements the interrupt service routines (ISRs) for the GBA's serial
+ * I/O hardware when communicating with the Wireless Adapter. It handles both
+ * master (clock provider) and slave (clock receiver) modes of the 32-bit serial
+ * interface.
+ *
+ * The main entry point is IntrSIO32(), which dispatches to either the master or
+ * slave handler based on the current STWI (Serial Transfer Wire Interface) state.
+ * The handshake process involves exchanging specific magic values to establish
+ * clock synchronization between the GBA and the wireless adapter.
+ *
+ * GBA CONTEXT:
+ * When a serial transfer completes, the GBA generates a Serial I/O interrupt
+ * (INTR_FLAG_SERIAL). This ISR reads the received data from REG_SIODATA32,
+ * processes it, and initiates the next transfer. The master/slave distinction
+ * determines which device drives the serial clock — the GBA (master) or the
+ * wireless adapter (slave). Timer interrupts are used for timeout detection.
+ */
 #include "librfu.h"
 
 static void sio32intr_clock_master(void);

@@ -1,3 +1,14 @@
+/**
+ * @file tm_case.c
+ * @brief TM Case — Technical Machine / Hidden Machine Item Menu
+ *
+ * FILE OVERVIEW:
+ * This file implements the TM Case menu screen, a Key Item that lets the player
+ * browse and use their collection of TMs (Technical Machines) and HMs (Hidden
+ * Machines). Each TM/HM teaches a specific move to compatible Pokemon. The menu
+ * displays the TM list with move names, type icons, quantities, and move
+ * descriptions, with sorting and search functionality.
+ */
 #include "global.h"
 #include "tm_case.h"
 #include "gflib.h"

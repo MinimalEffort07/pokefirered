@@ -1,3 +1,9 @@
+/**
+ * =BATTLE ANIMATION: DRAGON-TYPE MOVES=
+ *
+ * Visual effects for Dragon-type move animations (Dragon Rage fireballs,
+ * Outrage energy, Dragon Claw slashes, Dragonbreath beam, etc.).
+ */
 #include "global.h"
 #include "battle_anim.h"
 #include "scanline_effect.h"

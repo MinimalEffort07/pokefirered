@@ -1,3 +1,11 @@
+/**
+ * =ITEM PC (PC ITEM STORAGE SCREEN)=
+ *
+ * This file implements the full-screen UI for the Player's PC item
+ * storage system. It provides the visual interface for depositing,
+ * withdrawing, and tossing items stored in the PC, including the
+ * scrollable item list, quantity selection, and confirmation dialogs.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"

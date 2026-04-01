@@ -1,10 +1,33 @@
+/**
+ * @file mystery_gift_server.c
+ * @brief Mystery Gift Server — Script Interpreter for Distributing Gifts
+ *
+ * FILE OVERVIEW:
+ * This file implements the "server" side of Mystery Gift distribution. When a
+ * GBA acts as a gift distributor (sending Wonder Cards or Wonder News to another
+ * GBA), this server runs a script that orchestrates the data exchange.
+ *
+ * The server is a simple virtual machine that executes MysteryGiftServerCmd
+ * instructions. These commands handle:
+ *   - Sending/receiving data blocks over the link
+ *   - Loading Wonder Cards, Wonder News, and RAM scripts from save data
+ *   - Checking game compatibility and existing card/stamp status
+ *   - Conditional branching based on responses from the client
+ *   - Returning with a result message for the UI
+ *
+ * The server and client (mystery_gift_client.c) work in lockstep — the server
+ * sends "client scripts" to tell the client what to do next.
+ *
+ * NOTE: Original Game Freak source file was named "mevent_server.c" (visible
+ * in the assert macros). "mevent" = Mystery Event.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "script.h"
 #include "mystery_gift.h"
 #include "mystery_gift_server.h"
 
-// Assert statements use the original GF names, which are defined below.
+/* Assert statements use the original GF names, which are defined below. */
 // Note that their name "flag" is especially misleading,
 // as it's not a boolean (for example it can contain a size argument).
 // 'parameter' is shortened to param explicitly to avoid a collision with

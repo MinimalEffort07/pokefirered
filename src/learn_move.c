@@ -1,3 +1,27 @@
+/**
+ * =MOVE RELEARNER / LEARN MOVE SYSTEM=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Move Relearner (also called Move Tutor) screen —
+ * the interface where a Pokemon can relearn forgotten moves in exchange for
+ * a Heart Scale. This is the NPC typically found in specific houses in the
+ * game world.
+ *
+ * The system uses a detailed state machine (documented in the comment block
+ * below) that handles:
+ *   - Displaying a scrollable list of moves the Pokemon can relearn
+ *   - Showing move details (power, accuracy, PP, description)
+ *   - Confirming the player's choice
+ *   - Handling the case where all 4 move slots are full (must forget a move)
+ *   - The Summary Screen integration for choosing which move to forget
+ *   - Teaching the new move and playing the success fanfare
+ *
+ * GBA CONTEXT:
+ * The screen uses the ListMenu system to display scrollable move lists,
+ * and the BG system to show a "battle-style" move info panel on the right
+ * side of the screen. VAR_0x8004 is used to communicate the result back
+ * to the map script (TRUE = move was learned, FALSE = player gave up).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "script.h"

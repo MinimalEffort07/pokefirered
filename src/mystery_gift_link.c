@@ -1,13 +1,32 @@
+/**
+ * @file mystery_gift_link.c
+ * @brief Mystery Gift Link Layer — Reliable Data Transfer over GBA Link Cable/Wireless
+ *
+ * FILE OVERVIEW:
+ * This file implements the data transfer protocol used by the Mystery Gift system
+ * to reliably send and receive large data blocks between two GBA systems. It sits
+ * between the raw link hardware layer (link.c / link_rfu_*.c) and the Mystery Gift
+ * application layer (mystery_gift_client.c / mystery_gift_server.c).
+ *
+ * The protocol handles:
+ *   - Splitting large payloads into 252-byte chunks (the link block size limit)
+ *   - Sending a header first (identifier, CRC16 checksum, total size)
+ *   - Reassembling chunks on the receiving end
+ *   - CRC16 verification after reassembly to detect data corruption
+ *   - Fatal error handling if sizes exceed buffer limits or IDs don't match
+ *
+ * GBA CONTEXT:
+ * The GBA link cable can only send small blocks at a time. gBlockRecvBuffer and
+ * gBlockSendBuffer are the hardware-level transfer buffers. SendBlock() queues
+ * data for transmission, and GetBlockReceivedStatus() checks if data has arrived.
+ * Each transfer is acknowledged before the next block is sent, ensuring reliable
+ * in-order delivery. Internal functions use the MGL_ prefix (MysteryGiftLink).
+ */
 #include "global.h"
 #include "util.h"
 #include "link.h"
 #include "link_rfu.h"
 #include "mystery_gift_server.h"
-
-/*
-    Handles the link connection functions used by the Mystery Gift client/server.
-    Note: MysteryGiftLink is shortened to MGL for internal functions.
-*/
 
 struct SendRecvHeader
 {

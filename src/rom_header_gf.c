@@ -1,3 +1,33 @@
+/**
+ * @file rom_header_gf.c
+ * @brief Game Freak ROM Header — Metadata Embedded in the ROM
+ *
+ * FILE OVERVIEW:
+ * This file defines a special struct called the GFRomHeader that is embedded
+ * directly in the game's ROM. This header contains pointers to important data
+ * tables and offsets within save data structures, allowing external tools
+ * (like the GameCube-GBA link cable interface or debugging tools) to locate
+ * game data without needing hardcoded addresses.
+ *
+ * WHAT THE HEADER CONTAINS:
+ * - Game version and language identifiers
+ * - Pointers to sprite/palette tables for Pokemon, items, moves
+ * - Offsets within SaveBlock1/SaveBlock2 for finding player data
+ * - Bag pocket sizes and item counts
+ * - Pokedex configuration (species count, flags)
+ * - Mystery Gift and GameCube link cable flag offsets
+ *
+ * GBA CONTEXT — SECTION PLACEMENT:
+ * The __attribute__((section(".text.consts"))) forces this data into the .text
+ * section (normally for executable code, not data). This is a workaround to
+ * ensure the header ends up at a known location in the ROM, since the linker
+ * script places .text at a fixed address. External tools scan for this header
+ * by looking for the game name string at this known ROM offset.
+ *
+ * The offsetof() calls compute byte offsets within save block structs at compile
+ * time, so external tools can find specific fields (like player name, party data)
+ * within the save file without knowing the full struct layout.
+ */
 #include "global.h"
 #include "data.h"
 #include "pokemon_icon.h"

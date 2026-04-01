@@ -1,3 +1,11 @@
+/**
+ * =MENU 2 (ADDITIONAL MENU FUNCTIONS)=
+ *
+ * Supplementary menu functions that extend the base menu system. This
+ * includes specialized menu operations like the repel/lure expired prompt,
+ * and other menu utilities that were added after the initial menu.c file
+ * was established.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

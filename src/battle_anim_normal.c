@@ -1,3 +1,11 @@
+/**
+ * =BATTLE ANIMATION: NORMAL-TYPE MOVES=
+ *
+ * Visual effects for Normal-type move animations (Tackle impact star,
+ * Scratch claw marks, Body Slam shockwave, Hyper Beam charging beam,
+ * Swift star projectiles, Protect barrier shield, Return/Frustration
+ * hearts/anger marks, etc.).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

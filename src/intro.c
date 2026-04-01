@@ -1,3 +1,35 @@
+/*
+ * =Pokemon FireRed Intro Sequence=
+ *
+ * This file implements the game's boot-up intro sequence, which plays from
+ * power-on before the title screen. It consists of several distinct scenes:
+ *
+ *   1. COPYRIGHT SCREEN: The standard "Game Freak" text display.
+ *   2. GAME FREAK LOGO: The animated GF logo with sparkle effects and star
+ *      particles, accompanied by the jingle sound.
+ *   3. SCENE 1 - GRASS: A brief close-up shot of grass blowing in the wind.
+ *   4. SCENE 2 - WIDE SHOT: A panning wide shot of a field, transitioning to
+ *      a close-up view of Gengar and Nidorino facing off.
+ *   5. SCENE 3 - BATTLE: An animated fight sequence between Gengar and Nidorino,
+ *      featuring attack animations, movement, and screen effects.
+ *
+ * After this sequence, the game transitions to the title screen.
+ *
+ * ARCHITECTURE:
+ * The intro uses the GBA's full graphical capabilities simultaneously:
+ *   - Multiple BG layers for parallax scrolling backgrounds
+ *   - Hardware sprites for character animations (Gengar, Nidorino)
+ *   - Scanline effects for screen wipes and transitions
+ *   - Palette manipulation for fades and flashes
+ *   - The m4a sound engine for music and sound effects
+ *
+ * Each scene has its own set of BG layer assignments, tilesets, tilemaps,
+ * and sprite resources. Scene transitions involve complete reloads of
+ * graphical assets since the GBA's VRAM is limited (96KB total).
+ *
+ * The player can skip the intro at any time by pressing A, B, or Start,
+ * which triggers a fade-out and jump to the title screen.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "m4a.h"

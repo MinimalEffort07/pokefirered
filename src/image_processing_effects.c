@@ -1,7 +1,35 @@
+/**
+ * @file image_processing_effects.c
+ * @brief Image Processing Effects — Pixel-Level Art Transformations
+ *
+ * FILE OVERVIEW:
+ * This file implements various image processing effects applied to Pokemon
+ * sprite data for visual effects in the game. Effects include:
+ *
+ *   - Pointillism (dithering/stipple effects)
+ *   - Grayscale and color quantization
+ *   - Blur and sharpen filters
+ *   - Color inversion and palette manipulation
+ *   - Pixelation (mosaic-style block averaging)
+ *   - Canvas-based drawing operations
+ *
+ * These are used primarily in the Trainer Card and certain special screens
+ * where Pokemon sprites are displayed with artistic filter effects. The
+ * operations work directly on pixel buffers in RAM, manipulating individual
+ * pixel values and palette entries.
+ *
+ * GBA CONTEXT:
+ * Images on the GBA use indexed color — each pixel is a palette index (0-15 for
+ * 4bpp, 0-255 for 8bpp) rather than a direct RGB value. Image processing must
+ * work with both the pixel index data and the palette simultaneously. The
+ * "canvas" concept here is a RAM buffer that sprites are rendered into for
+ * processing before being copied back to VRAM for display. COMMON_DATA places
+ * variables in IWRAM (Internal Work RAM, 32 KB) for faster access.
+ */
 #include "global.h"
 #include "image_processing_effects.h"
 
-// IWRAM common
+/* IWRAM common — canvas rendering bounds (faster access than EWRAM) */
 COMMON_DATA u8 gCanvasColumnStart = 0;
 COMMON_DATA u16 (*gCanvasPixels)[][32] = {0};
 COMMON_DATA u8 gCanvasRowEnd = 0;

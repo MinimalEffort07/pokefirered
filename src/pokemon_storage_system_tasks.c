@@ -1,3 +1,21 @@
+/**
+ * @file pokemon_storage_system_tasks.c
+ * @brief PC Box Storage Tasks — Main State Machine and Input Handling
+ *
+ * FILE OVERVIEW:
+ * This is the main task/state machine file for the Pokemon Storage System. It
+ * contains the primary input handling loop, the cursor movement logic, the
+ * scrolling between boxes, and the coordination of all visual and data updates
+ * when the player interacts with the box interface.
+ *
+ * The file manages:
+ *   - The main task that runs the box screen update loop
+ *   - D-pad cursor movement within and between boxes
+ *   - Box scrolling animations (left/right to switch boxes)
+ *   - Pokemon pickup/place operations with the cursor hand
+ *   - Integration with the summary, release, and item subsystems
+ *   - Display of Pokemon info (name, level, type, etc.) in the status bar
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"

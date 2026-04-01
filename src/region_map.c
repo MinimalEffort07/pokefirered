@@ -1,3 +1,18 @@
+/**
+ * @file region_map.c
+ * @brief Region Map — Town Map Display and Navigation
+ *
+ * FILE OVERVIEW:
+ * This file implements the Town Map (Region Map) feature, which displays a
+ * scrollable map of the Kanto region and Sevii Islands. The player can view
+ * their current location, select destinations for the Fly HM move, and see
+ * location names and descriptions. The map uses cursor-based navigation where
+ * the player moves a blinking indicator across map sections.
+ *
+ * The file handles map rendering, cursor movement, location name/description
+ * display, Fly destination selection, and the separate Sevii Islands map pages.
+ * It supports both the overworld map view and the Pokedex area map mode.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "scanline_effect.h"

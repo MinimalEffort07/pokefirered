@@ -1,3 +1,40 @@
+/*
+ * item_use.c - Item Usage Effects (Field and Battle)
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file defines what happens when the player uses an item, both in the
+ * overworld (field use) and during battle. Each usable item has a function
+ * pointer in the gItems[] data (fieldUseFunc / battleUseFunc) that points
+ * to one of the functions here.
+ *
+ * FIELD USAGE:
+ * - Bicycle: Toggle on/off, with terrain checks
+ * - Fishing Rods: Start fishing sequence if near water
+ * - Poke Flute: Wake up sleeping Pokemon or play music
+ * - Repel/Super Repel/Max Repel: Set step counter for encounter prevention
+ * - Escape Rope: Teleport to last Pokemon Center
+ * - Town Map: Open the region map viewer
+ * - TM Case / Berry Pouch: Open sub-menus
+ * - VS Seeker: Scan for rematchable trainers
+ * - Black/White Flute: Toggle encounter rate modifiers
+ * - Fame Checker: Open the NPC info database
+ * - Teachy TV: Open the tutorial videos
+ *
+ * BATTLE USAGE:
+ * - X Attack/Defense/Speed/etc.: Stat boosters that apply for the battle
+ * - Guard Spec: Prevent stat reduction for 5 turns
+ * - Poke Doll/Fluffy Tail: Guarantee escape from wild battles
+ *
+ * Most items use a task-based callback pattern:
+ * 1. Item use function creates a task
+ * 2. Task handles the multi-frame sequence (fade, effect, message, return)
+ * 3. Task destroys itself when done
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

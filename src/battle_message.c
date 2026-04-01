@@ -1,3 +1,37 @@
+/*
+ * battle_message.c - Battle Text Message System
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file manages all text displayed during battles. It provides:
+ *
+ * STRING EXPANSION:
+ * Battle messages contain placeholder tokens that are expanded at runtime:
+ *   {B_ATK_NAME_WITH_PREFIX} → "Foe CHARIZARD" or "PIKACHU"
+ *   {B_DEF_NAME_WITH_PREFIX} → Target's name with appropriate prefix
+ *   {B_ATK_ABILITY}         → Attacker's ability name
+ *   {B_BUFF1/2/3}           → Dynamic text buffers (item names, move names, etc.)
+ *
+ * These are expanded by BufferStringBattle / ExpandBattleTextBuffPlaceholders
+ * which read the placeholder bytes and substitute the actual text.
+ *
+ * STRING SELECTION:
+ * Many battle messages have multiple variants selected by gBattleCommunication:
+ *   "Wild PIKACHU appeared!" vs "TRAINER wants to battle!"
+ *   "It's super effective!" vs "It's not very effective..."
+ *   "It had no effect!" vs "It doesn't affect FOE's POKEMON..."
+ *
+ * TRAINER CLASSES:
+ * The trainer class table maps class IDs to display names. When a trainer
+ * battle starts, the class name is prepended to the trainer name.
+ *
+ * This file also handles the battle textbox window graphics loading
+ * and the healthbox/info panel palette management.
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

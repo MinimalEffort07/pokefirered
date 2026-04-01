@@ -1,3 +1,14 @@
+/**
+ * @file mystery_gift_show_card.c
+ * @brief Wonder Card Display — Rendering the Received Wonder Card Screen
+ *
+ * FILE OVERVIEW:
+ * This file handles displaying a received Wonder Card to the player. Wonder Cards
+ * are special event items received via Mystery Gift that contain a title, body text,
+ * icon graphic, and stamp collection area. This file manages the full card
+ * rendering: loading the card background, decompressing the icon graphic, printing
+ * the card text, and displaying collected stamps.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

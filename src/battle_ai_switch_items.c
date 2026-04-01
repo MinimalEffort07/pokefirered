@@ -1,3 +1,34 @@
+/**
+ * @file battle_ai_switch_items.c
+ * @brief AI Decision Making — Switching Pokemon and Using Items
+ *
+ * FILE OVERVIEW:
+ * This file implements the AI logic for deciding when an opponent trainer should
+ * switch Pokemon or use items during battle. These are separate from the move
+ * selection AI (battle_ai_script_commands.c) and handle strategic decisions like:
+ *
+ * SWITCHING DECISIONS (checked in priority order):
+ * 1. Perish Song doom: Switch out if Perish Song counter is at 0 (about to faint)
+ * 2. Wonder Guard: If opponent has Wonder Guard, switch to a Pokemon with a
+ *    super-effective move (since only super-effective moves damage Wonder Guard)
+ * 3. Super-effective threat: If the opponent has a super-effective move against
+ *    the current Pokemon, consider switching to something more resistant
+ * 4. Natural Cure ability: If the current Pokemon has a status condition and
+ *    Natural Cure ability, switching out cures the status
+ * 5. Type disadvantage: If the current Pokemon is at a type disadvantage and
+ *    has no super-effective moves, consider switching
+ *
+ * ITEM DECISIONS:
+ * AI trainers with items in their bag can use:
+ * - Full Restores/Potions when Pokemon HP is low
+ * - Status healers (Full Heal, etc.) for status conditions
+ * - X Attack, X Defense, etc. for stat boosts
+ * The AI evaluates whether using an item would be more beneficial than attacking.
+ *
+ * DIFFICULTY SCALING:
+ * Some checks use random number modulos to make the AI imperfect — it doesn't
+ * always make the optimal switching decision, making battles feel more natural.
+ */
 #include "global.h"
 #include "battle.h"
 #include "battle_anim.h"

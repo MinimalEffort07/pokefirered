@@ -1,3 +1,132 @@
+/*
+ * battle_main.c - Pokemon Battle System Core
+ *
+ * ============================================================================
+ * BATTLE SYSTEM ARCHITECTURE
+ * ============================================================================
+ *
+ * This file is the heart of the Pokemon battle engine. It implements:
+ *
+ * 1. BATTLE INITIALIZATION (CB2_InitBattle → CB2_HandleStartBattle)
+ *    - Allocates battle resources (sprites, data structures, VRAM buffers)
+ *    - Sets up GBA video hardware for battle screen (4 BG layers, sprites)
+ *    - For link battles: exchanges party data over the link cable
+ *    - Creates NPC trainer parties from data tables
+ *    - Initializes all battle state variables to clean defaults
+ *
+ * 2. BATTLE INTRO SEQUENCE (BeginBattleIntro → TryDoEventsBeforeFirstTurn)
+ *    A chain of state-machine functions that play the battle intro:
+ *    - BattleIntroGetMonsData: Request mon data from controllers
+ *    - BattleIntroPrepareBackgroundSlide: Start the slide-in animation
+ *    - BattleIntroDrawTrainersOrMonsSprites: Draw trainer/wild mon sprites
+ *    - BattleIntroDrawPartySummaryScreens: Show party ball indicators
+ *    - BattleIntroPrint*: Display "Wild X appeared!" or "Trainer wants to battle!"
+ *    - BattleIntroOpponent/PlayerSendsOutMonAnimation: Ball throw animations
+ *    - TryDoEventsBeforeFirstTurn: Process switch-in abilities (Intimidate, etc.)
+ *
+ * 3. TURN LOOP (HandleTurnActionSelectionState → RunTurnActionsFunctions)
+ *    Each battle turn follows this flow:
+ *    a. ACTION SELECTION: Each battler chooses Fight/Bag/Pokemon/Run
+ *       - HandleTurnActionSelectionState: State machine per battler
+ *       - For Fight: Check for Encore, Disable, valid PP
+ *       - For Switch: Check for trapping (Mean Look, Shadow Tag, etc.)
+ *       - For Item: Validate item usage (no items in link battles)
+ *       - For Run: Check escape conditions (speed comparison, abilities)
+ *    b. TURN ORDER: SetActionsAndBattlersTurnOrder sorts actions:
+ *       - Items and Switches always go first (no speed check)
+ *       - Moves sorted by: priority → speed → random tiebreaker
+ *       - Run goes first if anyone chooses to flee
+ *    c. ACTION EXECUTION: RunTurnActionsFunctions dispatches to handlers:
+ *       - HandleAction_UseMove: The big one - sets up move execution
+ *       - HandleAction_Switch: Runs switch-out battle script
+ *       - HandleAction_UseItem: Determines ball throw vs heal vs stat boost
+ *       - HandleAction_Run: Calculates escape probability
+ *       - Safari Zone actions: Watch/Ball/Bait/Rock
+ *    d. END-OF-TURN: BattleTurnPassed checks field/battler end-turn effects
+ *       (weather damage, Leftovers, status damage, etc.)
+ *
+ * 4. BATTLE END (HandleEndTurn_BattleWon/Lost/FinishBattle)
+ *    - Record battle results (Quest Log, Pokedex, etc.)
+ *    - Play victory/defeat music
+ *    - Handle evolution checks for leveled-up Pokemon
+ *    - Clean up and return to overworld
+ *
+ * ============================================================================
+ * CONTROLLER-BASED ARCHITECTURE
+ * ============================================================================
+ *
+ * The battle system uses a "controller" pattern to abstract input/output:
+ *
+ *   Player Controller: Shows menus, reads button input
+ *   Opponent Controller: AI chooses actions
+ *   Link Controller: Receives actions from link cable
+ *   Safari Controller: Safari Zone specific menus
+ *
+ * The main battle logic doesn't care WHO is playing - it sends commands
+ * (via BtlController_Emit*) and waits for responses (via gBattleBufferB).
+ * This makes the same battle engine work for player battles, AI battles,
+ * link battles, and even tutorial battles (Pokedude controller).
+ *
+ * The exec flag system (gBattleControllerExecFlags) ensures the battle
+ * state machine pauses while controllers are processing (e.g., waiting
+ * for the player to choose a move from the menu).
+ *
+ * ============================================================================
+ * BATTLE SCRIPT ENGINE
+ * ============================================================================
+ *
+ * Move effects are NOT hardcoded in C. Instead, each move effect has a
+ * "battle script" - a bytecode program stored in ROM. The script engine
+ * (battle_script_commands.c) interprets these scripts to:
+ *   - Print messages ("X used Thunderbolt!")
+ *   - Play animations
+ *   - Calculate damage
+ *   - Apply status effects
+ *   - Handle fainting
+ *
+ * gBattlescriptCurrInstr points to the current instruction.
+ * gCurrentActionFuncId = B_ACTION_EXEC_SCRIPT tells RunTurnActionsFunctions
+ * to call RunBattleScriptCommands() instead of advancing to the next action.
+ *
+ * ============================================================================
+ * KEY GLOBAL VARIABLES
+ * ============================================================================
+ *
+ * gBattleMons[4]         - Active battler stats (HP, Attack, moves, status, etc.)
+ * gBattlerAttacker       - Index of the mon currently attacking
+ * gBattlerTarget         - Index of the mon being targeted
+ * gActiveBattler         - Index used when iterating over battlers
+ * gCurrentMove           - The move currently being executed
+ * gBattleMoveDamage      - Calculated damage for the current move
+ * gMoveResultFlags       - Bitmask: missed, not effective, critical hit, etc.
+ * gBattleOutcome         - 0 = ongoing, 1 = won, 2 = lost, etc.
+ * gBattleTypeFlags       - Bitmask: TRAINER, DOUBLE, LINK, SAFARI, etc.
+ * gBattleMainFunc        - Function pointer: the current battle state
+ * gBattlescriptCurrInstr - Current position in the battle script bytecode
+ *
+ * ============================================================================
+ * GBA HARDWARE USAGE IN BATTLES
+ * ============================================================================
+ *
+ * BG0: Battle textbox and menu text
+ * BG1: Battle info panels (healthboxes)
+ * BG2: Battle terrain/floor
+ * BG3: Battle background (sky, cave walls, etc.)
+ *
+ * Sprites (OAM): Pokemon sprites (64x64 each, using affine transforms for
+ *   scaling), trainer sprites, health bars, Pokeball throw animations
+ *
+ * Window system: WIN0/WIN1 used to clip sprite visibility during intro
+ *   slide animations (the black bars that slide apart to reveal the battle)
+ *
+ * Scanline effects: BG3 horizontal offset is modified per-scanline during
+ *   the battle intro to create the "sliding background" effect
+ *
+ * Palette manipulation: Pokemon sprites use palette 0-3 (player/opponent),
+ *   with palette fades for fainting, Pokeball capture flash, etc.
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"
@@ -108,6 +237,21 @@ static void ReturnFromBattleToOverworld(void);
 static void TryEvolvePokemon(void);
 static void WaitForEvoSceneToFinish(void);
 
+/*
+ * ============================================================================
+ * BATTLE-SCREEN SCROLL & WINDOW VARIABLES (in EWRAM)
+ * ============================================================================
+ * These shadow the GBA's BG scroll and window registers. They're written to
+ * the actual hardware during VBlank via VBlankCB_Battle. Modifying these
+ * mid-frame is safe because the hardware isn't touched until VBlank.
+ *
+ * BG0: Textbox layer (scrolled for intro slide)
+ * BG1: Info panels (healthboxes)
+ * BG2: Terrain/floor
+ * BG3: Background (sky, cave, etc.) -- scrolled for intro slide effect
+ * WIN0/WIN1: Hardware windows used to clip sprite visibility during
+ *            the intro slide animation (the black bars effect)
+ */
 EWRAM_DATA u16 gBattle_BG0_X = 0;
 EWRAM_DATA u16 gBattle_BG0_Y = 0;
 EWRAM_DATA u16 gBattle_BG1_X = 0;
@@ -137,6 +281,28 @@ EWRAM_DATA struct MultiBattlePokemonTx gMultiPartnerParty[3] = {0};
 EWRAM_DATA u8 *gBattleAnimBgTileBuffer = NULL;
 EWRAM_DATA u8 *gBattleAnimBgTilemapBuffer = NULL;
 static EWRAM_DATA u16 *sUnknownDebugSpriteDataBuffer = NULL;
+/*
+ * CONTROLLER COMMUNICATION BUFFERS
+ *
+ * BufferA: Commands SENT TO controllers (battle engine → controller).
+ *   BtlController_Emit* functions write here. Each battler has its own
+ *   512-byte (0x200) buffer. Commands include: "choose action", "show move
+ *   menu", "play animation", "show healthbox", etc.
+ *
+ * BufferB: Responses RECEIVED FROM controllers (controller → battle engine).
+ *   After a controller processes a command, it writes the result here.
+ *   For example, "player chose move Thunderbolt at position 2 targeting slot 1".
+ *
+ * gActiveBattler: The battler currently being processed. Used as an index
+ *   into many arrays. Values: 0-3 (up to 4 battlers in a double battle).
+ *
+ * gBattleControllerExecFlags: Bitmask of battlers whose controllers are
+ *   still processing a command. The battle state machine PAUSES whenever
+ *   this is non-zero. When a controller finishes, it clears its bit.
+ *   This is how the battle engine waits for animations, menu selections, etc.
+ *
+ * gBattlersCount: 2 for single battles, 4 for double battles.
+ */
 EWRAM_DATA u8 gBattleBufferA[MAX_BATTLERS_COUNT][0x200] = {0};
 EWRAM_DATA u8 gBattleBufferB[MAX_BATTLERS_COUNT][0x200] = {0};
 EWRAM_DATA u8 gActiveBattler = 0;
@@ -559,6 +725,21 @@ const struct TrainerMoney gTrainerMoneyTable[] =
 
 #include "data/text/abilities.h"
 
+/*
+ * TURN ACTION DISPATCH TABLE
+ *
+ * This table maps each possible battle action to its handler function.
+ * RunTurnActionsFunctions() reads gCurrentActionFuncId and calls the
+ * corresponding function. The actions are executed in the order determined
+ * by SetActionsAndBattlersTurnOrder().
+ *
+ * Normal flow: an action handler (e.g., HandleAction_UseMove) sets up
+ * state and then sets gCurrentActionFuncId = B_ACTION_EXEC_SCRIPT,
+ * which causes RunBattleScriptCommands to start interpreting the battle
+ * script for that move/item/switch. When the script finishes, it sets
+ * gCurrentActionFuncId = B_ACTION_FINISHED, which advances to the next
+ * battler's action via HandleAction_ActionFinished.
+ */
 static void (*const sTurnActionsFuncsTable[])(void) =
 {
     [B_ACTION_USE_MOVE]               = HandleAction_UseMove,
@@ -577,6 +758,14 @@ static void (*const sTurnActionsFuncsTable[])(void) =
     [B_ACTION_NOTHING_FAINTED]        = HandleAction_NothingIsFainted,
 };
 
+/*
+ * END-OF-TURN DISPATCH TABLE
+ *
+ * After all battlers have acted (RunTurnActionsFunctions finishes),
+ * gBattleOutcome determines what happens next. Index 0 means the battle
+ * continues to the next turn. Non-zero outcomes trigger battle-end
+ * sequences (victory fanfare, defeat screen, run-away message, etc.).
+ */
 static void (*const sEndTurnFuncsTable[])(void) =
 {
     [0]                           = HandleEndTurn_ContinueBattle,
@@ -609,6 +798,19 @@ const u8 *const gStatusConditionStringsTable[][2] =
     {gStatusConditionString_LoveJpn, gText_Love}
 };
 
+/**
+ * FUNCTION: CB2_InitBattle
+ *
+ * PURPOSE: Entry point for starting a battle -- set as the main callback2
+ *          by the overworld when a battle is triggered.
+ *
+ * HOW IT WORKS:
+ * Resets the heap and allocates all battle-specific memory (sprite data,
+ * battle structs, mon graphics buffers). For multi battles (4-player link),
+ * it takes a different initialization path that first exchanges partner
+ * party data over the link cable before setting up the screen.
+ * Also configures the FireRed help system context based on battle type.
+ */
 void CB2_InitBattle(void)
 {
     MoveSaveBlocks_ResetHeap();
@@ -645,6 +847,30 @@ void CB2_InitBattle(void)
     }
 }
 
+/**
+ * FUNCTION: CB2_InitBattleInternal
+ *
+ * PURPOSE: Set up the GBA hardware and battle screen for a new battle.
+ *
+ * HOW IT WORKS:
+ * 1. Disables interrupts and clears all 96KB of VRAM to black
+ * 2. Configures hardware windows for the intro slide effect:
+ *    - WIN0 spans full width, 1px tall at center (for the split-open effect)
+ *    - Scanline buffers set up: top half gets 0xF0 (full width visible),
+ *      bottom half gets 0xFF10 (shifted off-screen)
+ * 3. Resets all BG scroll positions to 0
+ * 4. Loads battle background graphics based on terrain (grass, cave, water...)
+ * 5. Resets sprite/task systems and draws the battle entry background
+ * 6. Creates enemy trainer party from ROM data tables
+ * 7. Installs BattleMainCB1 as callback1 (battle logic) and
+ *    BattleMainCB2 as callback2 (rendering) once sprites are ready
+ *
+ * GBA CONTEXT:
+ * The hardware window registers (WIN0H/V, WININ, WINOUT) control rectangular
+ * clipping regions. During the battle intro, the window starts as a 1px-tall
+ * slit at screen center and expands to reveal the battle scene, creating the
+ * dramatic "opening" effect players see when entering a battle.
+ */
 static void CB2_InitBattleInternal(void)
 {
     s32 i;
@@ -652,6 +878,9 @@ static void CB2_InitBattleInternal(void)
     SetHBlankCallback(NULL);
     SetVBlankCallback(NULL);
 
+    /* Clear all 96KB of VRAM (0x06000000-0x06017FFF) to zero/black.
+     * CpuFill32 uses a CPU loop to write 32-bit zeros. This ensures no
+     * leftover graphics from the overworld are visible. */
     CpuFill32(0, (void *)(VRAM), VRAM_SIZE);
 
     SetGpuReg(REG_OFFSET_MOSAIC, 0);
@@ -1532,6 +1761,32 @@ static void SpriteCB_UnusedDebugSprite_Step(struct Sprite *sprite)
     }
 }
 
+/**
+ * FUNCTION: CreateNPCTrainerParty
+ *
+ * PURPOSE: Generate the enemy trainer's Pokemon party from ROM data tables.
+ *
+ * HOW IT WORKS:
+ * Each trainer in gTrainers[] has a party definition with species, levels,
+ * and optionally custom movesets and held items. The personality value
+ * (which determines gender, nature, ability slot, and shiny status) is
+ * generated deterministically from the trainer's name + species name hash.
+ * This means the same trainer always has the same Pokemon genders/natures.
+ *
+ * IV calculation: partyData[i].iv is 0-255, scaled to 0-31 (MAX_PER_STAT_IVS).
+ * A trainer with iv=255 gets perfect 31 IVs; iv=0 gets 0 IVs.
+ *
+ * GAME LOGIC:
+ * There are 4 party data formats based on partyFlags:
+ *   0: Default moves, no held item (simplest)
+ *   F_TRAINER_PARTY_CUSTOM_MOVESET: Custom moves, no held item
+ *   F_TRAINER_PARTY_HELD_ITEM: Default moves, with held item
+ *   Both flags: Custom moves AND held item (most complex, used for bosses)
+ *
+ * @param party — Pointer to the enemy party array to populate
+ * @param trainerNum — Index into gTrainers[] ROM data
+ * @return Number of Pokemon in the trainer's party
+ */
 static u8 CreateNPCTrainerParty(struct Pokemon *party, u16 trainerNum)
 {
     u32 nameHash = 0;
@@ -1640,9 +1895,28 @@ static void HBlankCB_Battle(void)
         REG_BG0CNT = BGCNT_PRIORITY(0) | BGCNT_CHARBASE(0) | BGCNT_SCREENBASE(24) | BGCNT_16COLOR | BGCNT_TXT256x512;
 }
 
+/**
+ * FUNCTION: VBlankCB_Battle
+ *
+ * PURPOSE: Battle-specific VBlank callback -- syncs buffered state to hardware.
+ *
+ * GBA CONTEXT:
+ * During VBlank (scanlines 160-227), the GPU is not reading VRAM/OAM/palettes,
+ * so it's safe to update them. This function copies all buffered battle-screen
+ * state to the actual GBA hardware registers:
+ * - BG scroll positions (for text scrolling, intro slide, etc.)
+ * - Window positions (for clipping effects)
+ * - OAM data (sprite positions, via LoadOam)
+ * - Sprite tile data (via ProcessSpriteCopyRequests)
+ * - Palette data (via TransferPlttBuffer)
+ * - Scanline effect DMA setup (for per-scanline scroll tricks)
+ *
+ * Random() is called to advance the PRNG even when the player is idle,
+ * making battle outcomes less predictable by wall-clock timing.
+ */
 void VBlankCB_Battle(void)
 {
-    // Change gRngSeed every vblank.
+    /* Advance the PRNG every frame to add timing-based randomness */
     Random();
 
     SetGpuReg(REG_OFFSET_BG0HOFS, gBattle_BG0_X);
@@ -2196,6 +2470,25 @@ void BeginBattleIntro(void)
     gBattleMainFunc = BattleIntroGetMonsData;
 }
 
+/**
+ * FUNCTION: BattleMainCB1
+ *
+ * PURPOSE: The battle's main callback1 -- runs once per frame as gMain.callback1.
+ *
+ * HOW IT WORKS:
+ * 1. Calls gBattleMainFunc() -- the current battle state machine function.
+ *    This pointer changes as the battle progresses through phases:
+ *    BattleIntroGetMonsData → ... → HandleTurnActionSelectionState →
+ *    SetActionsAndBattlersTurnOrder → RunTurnActionsFunctions →
+ *    BattleTurnPassed → HandleTurnActionSelectionState (loop)
+ *
+ * 2. Ticks each battler's controller function. Controllers run independently
+ *    and asynchronously -- they process their current command (show menu,
+ *    play animation, etc.) and clear their exec flag when done.
+ *
+ * This two-phase approach lets the battle logic advance the state machine
+ * while controllers handle I/O at their own pace.
+ */
 static void BattleMainCB1(void)
 {
     gBattleMainFunc();
@@ -2322,6 +2615,25 @@ static void BattleStartClearSetData(void)
     }
 }
 
+/**
+ * FUNCTION: SwitchInClearSetData
+ *
+ * PURPOSE: Clear a battler's volatile state when a new Pokemon switches in.
+ *
+ * GAME LOGIC:
+ * When a Pokemon switches in, most volatile conditions are cleared:
+ * - Stat stages reset to default (6, the neutral stage)
+ * - Status2 cleared (confusion, infatuation, trapping, etc.)
+ * - Status3 cleared (Leech Seed, Perish Song, Ingrain, etc.)
+ * - Disable/Encore/Taunt counters cleared
+ * - Last-used-move tracking reset
+ *
+ * EXCEPTION: Baton Pass preserves certain conditions:
+ * - Stat stage changes carry over
+ * - Confusion, Focus Energy, Substitute, Mean Look trap carry over
+ * - Leech Seed, Perish Song, Ingrain, Mud/Water Sport carry over
+ * This is what makes Baton Pass strategically unique.
+ */
 void SwitchInClearSetData(void)
 {
     struct DisableStruct disableStructCopy = gDisableStructs[gActiveBattler];
@@ -2946,6 +3258,27 @@ static void HandleEndTurn_ContinueBattle(void)
     }
 }
 
+/**
+ * FUNCTION: BattleTurnPassed
+ *
+ * PURPOSE: Process all end-of-turn effects, then set up the next turn.
+ *
+ * GAME LOGIC:
+ * End-of-turn processing happens in multiple phases (each can pause for
+ * animations, so this function may be called many times per turn end):
+ *
+ * 1. TurnValuesCleanUp: Clear Protect, decrement timers (Recharge, etc.)
+ * 2. DoFieldEndTurnEffects: Weather (Sandstorm damage, Rain/Sun duration),
+ *    Future Sight hit, Wish healing, Perish Song countdown
+ * 3. DoBattlerEndTurnEffects: Per-battler effects -- Ingrain healing,
+ *    Leech Seed drain, Poison/Burn damage, Nightmare, Curse,
+ *    Wrap damage, Leftovers/Black Sludge healing, etc.
+ * 4. HandleFaintedMonActions: Force switches for fainted mons
+ * 5. HandleWishPerishSongOnTurnEnd: Process Wish and Perish Song
+ *
+ * After all effects resolve, resets state for the next turn's action
+ * selection phase. Increments the turn counter (capped at 255).
+ */
 void BattleTurnPassed(void)
 {
     s32 i;
@@ -2995,6 +3328,24 @@ void BattleTurnPassed(void)
     gRandomTurnNumber = Random();
 }
 
+/**
+ * FUNCTION: IsRunningFromBattleImpossible
+ *
+ * PURPOSE: Check if the active battler is prevented from fleeing.
+ *
+ * GAME LOGIC:
+ * Can always run with: Smoke Ball (hold effect), Run Away ability, link battles.
+ * Prevented by:
+ *  - Shadow Tag: Any opponent with this ability traps non-Shadow Tag mons
+ *  - Arena Trap: Traps non-Flying, non-Levitate grounded mons
+ *  - Magnet Pull: Traps Steel-type mons specifically
+ *  - Mean Look/Block (STATUS2_ESCAPE_PREVENTION)
+ *  - Wrap/Fire Spin/etc. (STATUS2_WRAPPED)
+ *  - Ingrain (STATUS3_ROOTED)
+ *  - gBattleTypeFlags & BATTLE_TYPE_FIRST_BATTLE (tutorial: can't flee)
+ *
+ * @return BATTLE_RUN_SUCCESS, BATTLE_RUN_FAILURE, or BATTLE_RUN_FORBIDDEN
+ */
 u8 IsRunningFromBattleImpossible(void)
 {
     u8 holdEffect;
@@ -3090,6 +3441,46 @@ enum
     STATE_WAIT_SET_BEFORE_ACTION,
 };
 
+/**
+ * FUNCTION: HandleTurnActionSelectionState
+ *
+ * PURPOSE: Per-frame state machine that handles action selection for ALL battlers.
+ *
+ * HOW IT WORKS:
+ * Each battler progresses through states independently (tracked in
+ * gBattleCommunication[battlerIndex]):
+ *
+ *   STATE_BEFORE_ACTION_CHOSEN:
+ *     Send ChooseAction command to the battler's controller.
+ *     If the mon is locked (multi-turn move, recharge), auto-select UseMove.
+ *     If fainted or absent, auto-select NothingIsFainted.
+ *
+ *   STATE_WAIT_ACTION_CHOSEN:
+ *     Read the controller's response from gBattleBufferB.
+ *     Validate the action: can't use items in link battles, can't run from
+ *     trainers, check trapping abilities (Shadow Tag, Arena Trap, etc.)
+ *     For UseMove: send ChooseMove command. For Switch: send ChoosePokemon.
+ *
+ *   STATE_WAIT_ACTION_CASE_CHOSEN:
+ *     Process the specific action choice (which move? which pokemon? etc.)
+ *     Check for move restrictions (Disable, Taunt, Imprison, etc.)
+ *
+ *   STATE_WAIT_ACTION_CONFIRMED_STANDBY:
+ *     Tell the controller to stop the bouncing animation (standby mode).
+ *
+ *   STATE_WAIT_ACTION_CONFIRMED:
+ *     Controller acknowledged. Increment confirmed count.
+ *
+ *   STATE_SELECTION_SCRIPT:
+ *     Running a selection-time battle script (e.g., "Can't use that move!")
+ *
+ * When all battlers reach CONFIRMED, transitions to SetActionsAndBattlersTurnOrder.
+ *
+ * GAME LOGIC:
+ * In double battles, the left-side battler always chooses first. The right-side
+ * battler waits until the left side confirms. The "Cancel Partner" action lets
+ * the right battler undo and send the left battler back to action selection.
+ */
 static void HandleTurnActionSelectionState(void)
 {
     s32 i;
@@ -3393,6 +3784,34 @@ void SwapTurnOrder(u8 id1, u8 id2)
     SWAP(gBattlerByTurnOrder[id1], gBattlerByTurnOrder[id2], temp);
 }
 
+/**
+ * FUNCTION: GetWhoStrikesFirst
+ *
+ * PURPOSE: Determine which of two battlers acts first based on speed and
+ *          move priority -- implements the core turn-order mechanic.
+ *
+ * HOW IT WORKS:
+ * Speed calculation for each battler:
+ * 1. Start with base Speed stat
+ * 2. Apply weather-based ability multipliers (Swift Swim in rain = 2x,
+ *    Chlorophyll in sun = 2x)
+ * 3. Apply stat stage modifiers (from Agility, Scary Face, etc.)
+ *    using gStatStageRatios lookup table
+ * 4. Apply badge boost (Lt. Surge badge = +10% speed for player)
+ * 5. Apply Macho Brace penalty (halves speed)
+ * 6. Apply Paralysis penalty (quarters speed)
+ * 7. Quick Claw chance: if random number hits, speed = UINT_MAX (always first)
+ *
+ * Then compare:
+ * - If move priorities differ: higher priority goes first (regardless of speed)
+ * - If same priority: faster mon goes first
+ * - If same speed: random coin flip (50/50)
+ *
+ * @param battler1 — First battler index
+ * @param battler2 — Second battler index
+ * @param ignoreChosenMoves — If TRUE, compare only by speed (no priority check)
+ * @return 0 = battler1 first, 1 = battler2 first, 2 = random (same speed)
+ */
 u8 GetWhoStrikesFirst(u8 battler1, u8 battler2, bool8 ignoreChosenMoves)
 {
     u8 strikesFirst = 0;
@@ -3525,6 +3944,21 @@ u8 GetWhoStrikesFirst(u8 battler1, u8 battler2, bool8 ignoreChosenMoves)
     return strikesFirst;
 }
 
+/**
+ * FUNCTION: SetActionsAndBattlersTurnOrder
+ *
+ * PURPOSE: Sort all battlers' chosen actions into execution order for the turn.
+ *
+ * GAME LOGIC:
+ * Turn order follows these rules (matching the real Pokemon games):
+ * 1. If anyone chose RUN, they go first (to flee before being hit)
+ * 2. ITEMS and SWITCHES always execute before moves (no speed check)
+ * 3. MOVES are sorted by: priority bracket → speed → random tiebreaker
+ *    (handled by GetWhoStrikesFirst using bubble sort on the move slots)
+ *
+ * The sorted order is stored in gBattlerByTurnOrder[] and gActionsByTurnOrder[].
+ * RunTurnActionsFunctions iterates through these arrays to execute each action.
+ */
 static void SetActionsAndBattlersTurnOrder(void)
 {
     s32 turnOrderId = 0;
@@ -3697,6 +4131,23 @@ static void CheckFocusPunch_ClearVarsBeforeTurnStarts(void)
     gBattleResources->battleScriptsStack->size = 0;
 }
 
+/**
+ * FUNCTION: RunTurnActionsFunctions
+ *
+ * PURPOSE: Execute each battler's action in sorted turn order.
+ *
+ * HOW IT WORKS:
+ * Called repeatedly as gBattleMainFunc. Each call dispatches to the handler
+ * for gCurrentActionFuncId (via sTurnActionsFuncsTable). Most handlers set
+ * gCurrentActionFuncId = B_ACTION_EXEC_SCRIPT, which causes this function
+ * to call RunBattleScriptCommands() on subsequent frames until the script
+ * finishes and sets gCurrentActionFuncId = B_ACTION_FINISHED.
+ *
+ * HandleAction_ActionFinished increments gCurrentTurnActionNumber and loads
+ * the next action. When all battlers have acted, this function transitions
+ * to the appropriate end-turn handler (continue, won, lost, ran, etc.)
+ * via sEndTurnFuncsTable[gBattleOutcome].
+ */
 static void RunTurnActionsFunctions(void)
 {
     if (gBattleOutcome != 0)
@@ -3956,6 +4407,31 @@ void RunBattleScriptCommands(void)
         gBattleScriptingCommandsTable[gBattlescriptCurrInstr[0]]();
 }
 
+/**
+ * FUNCTION: HandleAction_UseMove
+ *
+ * PURPOSE: Set up everything needed to execute a Pokemon's move.
+ *
+ * HOW IT WORKS:
+ * This is the most complex action handler. It determines:
+ * 1. WHICH MOVE: Check for Struggle, locked moves (Outrage, Thrash),
+ *    Encore forcing, or the normally chosen move
+ * 2. WHICH TARGET: Follow Me redirect → Lightning Rod redirect →
+ *    random target (for Random-target moves in doubles) → chosen target.
+ *    If the target fainted, retarget to the partner on that side.
+ * 3. Sets gBattlescriptCurrInstr to the battle script for this move's
+ *    effect (looked up from gBattleScriptsForMoveEffects[effect]).
+ * 4. Sets gCurrentActionFuncId = B_ACTION_EXEC_SCRIPT to start executing
+ *    the move's battle script on the next frame.
+ *
+ * GAME LOGIC:
+ * The target selection has complex double-battle logic:
+ * - Follow Me: If active, redirects single-target moves to the user
+ * - Lightning Rod: Electric moves redirected to Lightning Rod user
+ * - Random targeting: Some moves (like Outrage) hit a random opponent
+ * - Absent target fallback: If target fainted, try the other opponent;
+ *   if that also fainted, target the other side entirely
+ */
 static void HandleAction_UseMove(void)
 {
     u8 side;
@@ -4222,6 +4698,25 @@ static void HandleAction_UseItem(void)
     gCurrentActionFuncId = B_ACTION_EXEC_SCRIPT;
 }
 
+/**
+ * FUNCTION: TryRunFromBattle
+ *
+ * PURPOSE: Calculate whether the player successfully flees from a wild battle.
+ *
+ * GAME LOGIC:
+ * The escape formula (from the official Pokemon games):
+ * - Smoke Ball / Run Away ability: always escape
+ * - Ghost encounters without Silph Scope: always escape
+ * - Otherwise: escapeOdds = (playerSpeed * 128 / enemySpeed) + 30 * runAttempts
+ *   If escapeOdds > random(0-255), escape succeeds
+ *   If player is faster or equal speed, always escape
+ *
+ * Each failed attempt increments runTries, making the next attempt more
+ * likely to succeed (the +30 per attempt term).
+ *
+ * @param battler — Index of the battler trying to flee
+ * @return TRUE if escape succeeded, FALSE if failed
+ */
 bool8 TryRunFromBattle(u8 battler)
 {
     bool8 effect = FALSE;

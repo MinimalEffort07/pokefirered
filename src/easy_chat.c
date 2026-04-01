@@ -1,3 +1,14 @@
+/**
+ * @file easy_chat.c
+ * @brief Easy Chat System Core — Word Selection UI and Data Management
+ *
+ * FILE OVERVIEW:
+ * The Easy Chat system allows players to compose messages from a dictionary of
+ * predefined words organized by category (Pokemon, Moves, Types, Greetings,
+ * etc.). It is used for setting Trainer profile phrases, mail messages, and
+ * battle taunts. This file contains the core logic: word database management,
+ * category filtering, and the interface between Easy Chat data and the game.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"

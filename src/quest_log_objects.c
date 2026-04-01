@@ -1,9 +1,48 @@
+/**
+ * @file quest_log_objects.c
+ * @brief Quest Log Object Event Serialization — Save/Restore NPC States for Playback
+ *
+ * FILE OVERVIEW:
+ * The Quest Log (called "Adventure Log" in-game) is a FireRed/LeafGreen feature
+ * that records and replays recent gameplay events. To replay a scene accurately,
+ * the game must save and restore the exact state of every NPC and object on the
+ * map — their positions, facing directions, animation states, visibility, etc.
+ *
+ * This file handles the serialization (recording) and deserialization (loading)
+ * of all object events (NPCs, the player, and interactive objects) for the Quest
+ * Log system. It copies each object's many state fields into a compact Quest Log
+ * format for storage, and can reconstruct them for playback.
+ *
+ * The file also handles a special case: if the Quest Log playback moves the player
+ * from water to land, it must stop the surfing animation and switch back to walking.
+ *
+ * GBA CONTEXT:
+ * Object events on the GBA are tracked in a fixed-size array (gObjectEvents) in
+ * RAM. Each entry has dozens of bitfields for state like visibility, animation,
+ * facing direction, elevation, etc. The Quest Log system must snapshot all of
+ * this data compactly because save RAM is limited.
+ */
 #include "global.h"
 #include "quest_log.h"
 #include "fieldmap.h"
 #include "field_player_avatar.h"
 #include "metatile_behavior.h"
 
+/**
+ * FUNCTION: QL_RecordObjects
+ *
+ * PURPOSE: Snapshots the current state of all object events (NPCs, player, etc.)
+ *          into the Quest Log scene structure for later playback.
+ *
+ * HOW IT WORKS:
+ * Iterates through all OBJECT_EVENTS_COUNT slots and copies each object's fields
+ * one-by-one from the live gObjectEvents array into the compact questLog format.
+ * The Quest Log struct uses a separate QuestLogObjectEvent layout that stores
+ * only the fields needed for replay.
+ *
+ * PARAMETERS:
+ * @param questLog — Pointer to the Quest Log scene to write into
+ */
 void QL_RecordObjects(struct QuestLogScene * questLog)
 {
     u32 i;
@@ -45,6 +84,25 @@ void QL_RecordObjects(struct QuestLogScene * questLog)
     }
 }
 
+/**
+ * FUNCTION: QL_LoadObjects
+ *
+ * PURPOSE: Restores all object events from a Quest Log snapshot for playback.
+ *
+ * HOW IT WORKS:
+ * 1. Zeroes out the entire gObjectEvents array with CpuFill16
+ * 2. Copies all saved fields from the Quest Log back into gObjectEvents
+ * 3. Cross-references each object's localId against the map's ObjectEventTemplates
+ *    to restore initial coordinates and movement ranges (not saved in Quest Log)
+ * 4. Recalculates the metatile behavior at each object's current position
+ * 5. Attempts to reconstruct previousCoords by checking adjacent tiles for a
+ *    matching metatile behavior (since exact previous coords weren't saved)
+ * 6. Copies the reconstructed state into the save block for consistency
+ *
+ * PARAMETERS:
+ * @param questLog  — The Quest Log scene containing saved object states
+ * @param templates — The current map's object event templates (for initial coords)
+ */
 void QL_LoadObjects(const struct QuestLogScene * questLog, const struct ObjectEventTemplate * templates)
 {
     u32 i, j;
@@ -129,6 +187,18 @@ void QL_LoadObjects(const struct QuestLogScene * questLog, const struct ObjectEv
     CpuCopy16(gObjectEvents, gSaveBlock1Ptr->objectEvents, sizeof(gObjectEvents));
 }
 
+/**
+ * FUNCTION: QL_TryStopSurfing
+ *
+ * PURPOSE: During Quest Log playback, checks if the player has moved from water
+ *          to land and stops the surfing animation if so.
+ *
+ * HOW IT WORKS:
+ * Only acts during Quest Log playback (QL_STATE_PLAYBACK). Gets the player's
+ * destination tile and checks if it's a non-surfable metatile. If the player
+ * is currently flagged as surfing but standing on land, transitions them to
+ * the on-foot state and destroys the surf Pokemon sprite that follows behind.
+ */
 void QL_TryStopSurfing(void)
 {
     if (gQuestLogState == QL_STATE_PLAYBACK)

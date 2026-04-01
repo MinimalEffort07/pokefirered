@@ -1,3 +1,21 @@
+/**
+ * =PROFESSOR OAK'S PC (POKEDEX RATING)=
+ *
+ * FILE OVERVIEW:
+ * This file implements Professor Oak's Pokedex rating system, accessed
+ * through the PC in the player's room. When the player checks Oak's PC,
+ * they see how many Pokemon they've caught and receive a motivational
+ * message from Professor Oak based on their Pokedex completion.
+ *
+ * GAME LOGIC:
+ * The rating messages are tiered in increments of 10 caught Pokemon.
+ * When the player has caught all 150 Kanto Pokemon (excluding Mew),
+ * Professor Oak gives a special "Complete" message and sets
+ * gSpecialVar_Result to TRUE, which triggers the diploma event.
+ * Mew explicitly does NOT count toward completion — even if caught,
+ * reaching exactly KANTO_DEX_COUNT - 1 still counts as complete as
+ * long as Mew is the only missing entry.
+ */
 #include "global.h"
 #include "event_data.h"
 #include "pokedex.h"

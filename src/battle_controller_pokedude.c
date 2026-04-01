@@ -1,3 +1,21 @@
+/**
+ * =POKEDUDE BATTLE CONTROLLER (TEACHY TV)=
+ *
+ * FILE OVERVIEW:
+ * This file implements the battle controller for the "Pokedude" — the
+ * character in the Teachy TV key item who demonstrates various battle
+ * techniques. Unlike normal battles, the Pokedude's actions are fully
+ * scripted from predefined move sequences to teach the player about:
+ *   - Type effectiveness (using super effective moves)
+ *   - Status moves (using stat-boosting moves)
+ *   - Catching Pokemon (throwing balls at weakened targets)
+ *   - Double battles (coordinating two Pokemon)
+ *
+ * The controller reads from a script table that specifies exactly which
+ * move to use on each turn, creating a reproducible "tutorial replay."
+ * This is unique to FireRed/LeafGreen — the Teachy TV was added to
+ * help new players learn Pokemon battle mechanics.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

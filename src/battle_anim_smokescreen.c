@@ -1,3 +1,13 @@
+/**
+ * =SMOKESCREEN BATTLE ANIMATION=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Smokescreen move's visual effect — the puff of
+ * smoke that covers the target when the accuracy-reducing move hits. It also
+ * provides the shadow sprite system used to draw circular shadows beneath
+ * Pokemon during battle. These are related because both use small sprite
+ * effects tied to battler positions.
+ */
 #include "global.h"
 #include "battle_gfx_sfx_util.h"
 #include "decompress.h"

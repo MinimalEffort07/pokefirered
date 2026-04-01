@@ -1,3 +1,27 @@
+/**
+ * =SAVE FAILED SCREEN=
+ *
+ * FILE OVERVIEW:
+ * This file implements the error recovery screen that appears when saving
+ * to the GBA cartridge's flash memory fails. Flash memory can develop bad
+ * sectors over time (or from power loss during writes), causing save
+ * operations to fail. This screen:
+ *
+ *   1. Displays "Save failed" message to the player
+ *   2. Attempts to identify which flash sectors are damaged
+ *   3. Tries to wipe (erase) the damaged sectors to recover them
+ *   4. Retries the save operation
+ *   5. If recovery fails, shows "Please exchange the backup memory"
+ *
+ * GBA CONTEXT:
+ * The GBA uses flash ROM (typically 128KB) for save data, organized into
+ * sectors. Each sector must be fully erased before writing new data.
+ * Flash memory has a limited number of write cycles (typically ~100,000
+ * per sector). If a sector becomes unwritable, this screen attempts to
+ * erase it (which may reset the write cycle counter) and retry. If the
+ * flash chip is physically degraded, the backup memory needs replacement
+ * — hence the "exchange" message.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"
@@ -7,6 +31,8 @@
 #include "save.h"
 #include "strings.h"
 
+/* Flag indicating whether we're currently in the save failed screen.
+ * Stored in IWRAM (COMMON_DATA) for fast access from interrupt context. */
 COMMON_DATA bool32 sIsInSaveFailedScreen = 0;
 
 static EWRAM_DATA u16 sSaveType = SAVE_NORMAL;

@@ -1,3 +1,30 @@
+/**
+ * =HALL OF FAME=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Hall of Fame sequence — the celebration scene
+ * that plays after the player defeats the Champion and becomes the new
+ * Pokemon League Champion. It also handles viewing past Hall of Fame
+ * records from the PC in the player's room.
+ *
+ * The sequence includes:
+ *   1. Saving the player's winning team to flash memory
+ *   2. Displaying each team member one by one with their stats
+ *   3. A confetti celebration with all team members on screen
+ *   4. Showing the player's trainer sprite and play time
+ *   5. Transitioning to the credits sequence
+ *
+ * GBA CONTEXT:
+ * Hall of Fame data is saved to a dedicated section of flash memory
+ * (separate from the main save data). Up to 50 teams can be stored,
+ * meaning the game records the last 50 times the player beat the
+ * Elite Four. Each team entry stores the trainer ID, personality,
+ * species, level, and nickname of each party member.
+ *
+ * The confetti effect uses the GBA's sprite system — each confetti
+ * piece is a small 8x8 pixel sprite with random animation frame,
+ * position, and falling speed.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"
@@ -26,31 +53,51 @@
 #include "constants/songs.h"
 #include "constants/maps.h"
 
+/* Maximum number of Hall of Fame entries stored in flash memory.
+ * After 50 entries, old ones are overwritten. */
 #define HALL_OF_FAME_MAX_TEAMS 50
+/* The muted blue-gray background color for the Hall of Fame screen. */
 #define HALL_OF_FAME_BG_PAL    RGB(22, 24, 29)
 
+/**
+ * HallofFameMon — data stored for each Pokemon in a Hall of Fame entry.
+ *
+ * Uses bitfields to pack species (9 bits = 0-511, enough for Gen 3's 386
+ * species) and level (7 bits = 0-127, enough for max level 100) into a
+ * single 16-bit word, saving precious flash storage space.
+ */
 struct HallofFameMon
 {
-    u32 tid;
-    u32 personality;
-    u16 species:9;
-    u16 lvl:7;
-    u8 nick[POKEMON_NAME_LENGTH];
+    u32 tid;                           /* Original Trainer ID (for shiny check) */
+    u32 personality;                   /* Personality value (for sprite variant) */
+    u16 species:9;                     /* Bitfield: Pokemon species (0-511) */
+    u16 lvl:7;                         /* Bitfield: Pokemon level (0-127) */
+    u8 nick[POKEMON_NAME_LENGTH];      /* Nickname string */
 };
 
+/**
+ * HallofFameTeam — one complete team entry (up to 6 Pokemon).
+ * Multiple of these are stored sequentially in flash memory.
+ */
 struct HallofFameTeam
 {
     struct HallofFameMon mon[PARTY_SIZE];
 };
 
+/* Compile-time check that all 50 teams fit within the flash sectors
+ * allocated for Hall of Fame data. If this fails, the storage is too small. */
 STATIC_ASSERT(sizeof(struct HallofFameTeam) * HALL_OF_FAME_MAX_TEAMS <= SECTOR_DATA_SIZE * NUM_HOF_SECTORS, HallOfFameFreeSpace);
 
+/**
+ * HofGfx — graphics state for the Hall of Fame display.
+ * Contains two 4KB tilemap buffers for the background layers.
+ */
 struct HofGfx
 {
     u16 state;
     u8 field_2[4];
-    u8 tilemap1[0x1000];
-    u8 tilemap2[0x1000];
+    u8 tilemap1[0x1000];  /* 4KB tilemap for BG layer 1 */
+    u8 tilemap2[0x1000];  /* 4KB tilemap for BG layer 2 */
 };
 
 static EWRAM_DATA u32 sSelectedPaletteIndices = 0;
@@ -358,27 +405,58 @@ static bool8 InitHallOfFameScreen(void)
     return TRUE;
 }
 
+/**
+ * FUNCTION: CB2_DoHallOfFameScreen
+ *
+ * PURPOSE: Main entry point for the Hall of Fame sequence after defeating
+ * the Champion. Initializes the screen and begins the celebration sequence
+ * with data saving.
+ *
+ * GAME LOGIC:
+ * This is called from the overworld after the Champion battle script
+ * completes. data[0] = FALSE means "do save the team data to flash."
+ */
 void CB2_DoHallOfFameScreen(void)
 {
     u8 taskId;
     if (!InitHallOfFameScreen())
     {
         taskId = CreateTask(Task_Hof_InitMonData, 0);
-        gTasks[taskId].data[0] = FALSE;
+        gTasks[taskId].data[0] = FALSE;  /* Save team data */
         sHofMonPtr = AllocZeroed(sizeof(struct HallofFameTeam));
     }
 }
 
+/**
+ * FUNCTION: CB2_DoHallOfFameScreenDontSaveData
+ *
+ * PURPOSE: Shows the Hall of Fame display without saving new data.
+ * Used when viewing past records from the PC, or when re-entering
+ * the Hall of Fame after already saving.
+ */
 void CB2_DoHallOfFameScreenDontSaveData(void)
 {
     u8 taskId;
     if (!InitHallOfFameScreen())
     {
         taskId = CreateTask(Task_Hof_InitMonData, 0);
-        gTasks[taskId].data[0] = TRUE;
+        gTasks[taskId].data[0] = TRUE;  /* Skip saving */
     }
 }
 
+/**
+ * FUNCTION: Task_Hof_InitMonData
+ *
+ * PURPOSE: Copies the player's current party data into the Hall of Fame
+ * format, extracting species, trainer ID, personality, level, and nickname
+ * for each team member.
+ *
+ * GAME LOGIC:
+ * data[2] counts how many valid Pokemon are in the party. Empty slots
+ * are filled with zeroed-out dummy data. After collection, this task
+ * transitions to either saving (if this is a real HoF entry) or directly
+ * displaying the team (if just viewing old records).
+ */
 static void Task_Hof_InitMonData(u8 taskId)
 {
     u16 i;

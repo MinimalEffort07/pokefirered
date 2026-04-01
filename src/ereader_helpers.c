@@ -1,3 +1,20 @@
+/**
+ * @file ereader_helpers.c
+ * @brief e-Reader Communication Helpers — Data Transfer Protocol for e-Reader Cards
+ *
+ * FILE OVERVIEW:
+ * This file implements the data transfer protocol used when scanning e-Reader
+ * cards (a GBA peripheral that reads dot-code strips from physical cards). The
+ * e-Reader sends scanned data to the game cartridge via the link cable, and this
+ * file manages the multi-step send/receive process with checksum validation.
+ *
+ * GBA CONTEXT:
+ * The e-Reader connects to the GBA via the link cable port. Data is exchanged
+ * using the same serial I/O registers as normal link cable communication, but
+ * the e-Reader acts as the data source rather than another GBA. The protocol
+ * uses a manager struct to track transfer state, with separate modes for
+ * sending and receiving halves of the exchange.
+ */
 #include "global.h"
 #include "link.h"
 #include "ereader_helpers.h"

@@ -1,3 +1,31 @@
+/**
+ * @file battle.h
+ * @brief Battle System Master Header — Core Battle Structures and Declarations
+ *
+ * FILE OVERVIEW:
+ * This is the central header for the entire battle system. It defines the data
+ * structures that represent the battle state: battler information, move data,
+ * battle resources, type effectiveness, AI data, and the various battle state
+ * machines. Nearly every battle-related source file includes this header.
+ *
+ * Key structures defined here:
+ *   - BattleMon: A Pokemon's in-battle state (stats, HP, status, ability, moves)
+ *   - BattleStruct: Global battle state (turn order, AI decisions, animation state)
+ *   - BattleResults: Post-battle summary data (experience, caught species, etc.)
+ *   - BattleMove: Move properties (power, type, accuracy, PP, effect)
+ *
+ * GBA CONTEXT:
+ * The battle system is the most complex subsystem in the game. It runs as a
+ * completely separate mode from the overworld, with its own callback system,
+ * graphics engine, and state machine. All battle data is allocated in EWRAM
+ * and freed when returning to the overworld.
+ *
+ * BATTLER ID SYSTEM:
+ * Each battler (Pokemon in battle) has a 2-bit ID:
+ *   - Bit 0 (0x1): Side — 0 = player's side, 1 = opponent's side
+ *   - Bit 1 (0x2): Position — 0 = first Pokemon, 1 = second (doubles only)
+ * So: 0 = player's first, 1 = opponent's first, 2 = player's second, 3 = opponent's second
+ */
 #ifndef GUARD_BATTLE_H
 #define GUARD_BATTLE_H
 

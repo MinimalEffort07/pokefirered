@@ -1,3 +1,20 @@
+/**
+ * @file pokemon_summary_screen.c
+ * @brief Pokemon Summary Screen — Detailed Pokemon Information Pages
+ *
+ * FILE OVERVIEW:
+ * This file implements the Pokemon Summary Screen, a multi-page display showing
+ * detailed information about a single Pokemon. The screen has several pages:
+ *   - Info page: Species, OT, ID number, type, nature
+ *   - Skills page: Stats (HP, Attack, Defense, etc.), ability, held item
+ *   - Moves page: All 4 moves with PP, type, and power/accuracy
+ *   - Move detail page: Description of a selected move
+ *
+ * The summary screen is accessed from the Party Menu, PC Box, and various other
+ * contexts. It supports special modes like "select a move to forget" (for move
+ * learning) and "select a move to use" (for field move usage). The screen
+ * features the Pokemon's animated sprite, type icons, and stat bar graphs.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "pokemon.h"

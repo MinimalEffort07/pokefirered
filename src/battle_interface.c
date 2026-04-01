@@ -1,3 +1,26 @@
+/**
+ * =BATTLE INTERFACE (HEALTH BOXES)=
+ *
+ * FILE OVERVIEW:
+ * This file implements the health box UI elements that display during battle.
+ * The "health box" (also called "status bar") shows:
+ *   - Pokemon's nickname
+ *   - Current level
+ *   - Gender symbol
+ *   - HP bar (the colored bar that depletes as HP decreases)
+ *   - HP numbers (current/max) for the player's Pokemon
+ *   - Status condition icon (PSN, PAR, SLP, BRN, FRZ)
+ *   - Poke Ball caught indicator (for wild Pokemon)
+ *   - EXP bar (for the player's active Pokemon)
+ *   - Safari Zone ball count display
+ *
+ * GBA CONTEXT:
+ * Health boxes are composed of multiple sprites layered together, not BG
+ * windows. This allows them to slide in/out smoothly and overlay the
+ * battle scene. The HP bar uses palette manipulation to change colors
+ * (green → yellow → red) as health decreases, which is done by modifying
+ * palette entries in palette RAM without changing the tile graphics.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

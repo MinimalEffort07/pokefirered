@@ -1,3 +1,45 @@
+/*
+ * wild_encounter.c - Wild Pokemon Encounter System
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file determines when, where, and what wild Pokemon the player
+ * encounters while walking, surfing, or fishing. It handles:
+ *
+ * ENCOUNTER RATE:
+ * Each step the player takes, this system rolls a random number against
+ * the map's encounter rate (0-255). Higher rates = more frequent encounters.
+ * The actual check uses a buffer system: the encounter rate accumulates
+ * over multiple steps, and a random check fires every 4 steps. Modifiers
+ * include: Repel (blocks encounters below lead Pokemon's level), Black/White
+ * Flute (decrease/increase rate), Cleanse Tag (decreases rate if lead
+ * Pokemon holds it), and abilities like Stench and Illuminate.
+ *
+ * SPECIES SELECTION:
+ * Each map has encounter tables defined in data/wild_encounters.h with
+ * 12 land slots and 5 water slots. Each slot has a species, level range,
+ * and encounter probability. Slot 0 has ~20% chance, slot 11 has ~1% chance.
+ * This creates the tiered rarity system players experience in-game.
+ *
+ * SPECIAL ENCOUNTERS:
+ * - Roaming Pokemon (Legendary Beasts): Use separate tracking system
+ * - Unown (Tanoby Chambers): Letter determined by chamber, personality
+ *   generated to match the required letter via trial-and-error
+ * - Rock Smash encounters: Separate 2-slot table
+ * - Fishing: Separate tables for Old/Good/Super Rod (5 slots each)
+ *
+ * ABILITY EFFECTS:
+ * Lead Pokemon abilities modify encounters:
+ *   Intimidate/Keen Eye: 50% less encounters with lower-level Pokemon
+ *   Stench: 50% less encounters overall
+ *   Illuminate: 100% more encounters
+ *   Magnet Pull: 50% more Steel-type encounters
+ *   Static: 50% more Electric-type encounters
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "random.h"
 #include "wild_encounter.h"

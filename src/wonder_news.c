@@ -1,3 +1,28 @@
+/**
+ * @file wonder_news.c
+ * @brief Wonder News Reward System — Berry Rewards for Sharing Mystery Gift News
+ *
+ * FILE OVERVIEW:
+ * Wonder News was a feature (primarily used in Japanese releases) where players
+ * could receive and share news bulletins via the Mystery Gift system. As a reward
+ * for receiving or forwarding Wonder News to other players, the game gives the
+ * player random berries.
+ *
+ * The reward system has several anti-farming mechanisms:
+ *   - Maximum of 5 rewards before a 500-step cooldown
+ *   - Every 4th "sent" reward is a "big" reward (better berry range)
+ *   - Separate tracking for received vs. sent rewards
+ *
+ * GAME LOGIC:
+ * Berry rewards are randomly selected from different ranges depending on how
+ * the news was obtained:
+ *   - Received from a friend: random berry from Razz to Nomel range
+ *   - Sent to another player: random berry from Cheri to Iapapa range
+ * The system uses ITEM_TO_BERRY() to convert item IDs to berry IDs for storage.
+ *
+ * NOTE: The original Japanese filename is "menews_jisan.c" (visible in the
+ * assert at the bottom), where "menews" = Mystery Event News, "jisan" = reward.
+ */
 #include "global.h"
 #include "mystery_gift.h"
 #include "random.h"
@@ -5,11 +30,10 @@
 #include "wonder_news.h"
 #include "constants/items.h"
 
-// Every 4th reward for sending Wonder News to a link partner is a "big" reward.
+/* Every 4th reward for sending Wonder News to a link partner is a "big" reward */
 #define MAX_SENT_REWARD 4
 
-// Only up to 5 rewards can be received in a short period. After this the player
-// must take 500 steps before any more rewards can be received.
+/* Maximum rewards before the 500-step cooldown activates */
 #define MAX_REWARD 5
 
 static u32 GetRewardItem(struct WonderNewsMetadata *);
@@ -18,6 +42,16 @@ static void IncrementRewardCounter(struct WonderNewsMetadata *);
 static void IncrementSentRewardCounter(struct WonderNewsMetadata *);
 static void ResetSentRewardCounter(struct WonderNewsMetadata *);
 
+/**
+ * FUNCTION: WonderNews_SetReward
+ *
+ * PURPOSE: Sets up a pending reward based on how Wonder News was obtained.
+ *          Randomly selects a berry from the appropriate range.
+ *
+ * PARAMETERS:
+ * @param newsType — How the news was obtained (WONDER_NEWS_RECV_FRIEND,
+ *                   WONDER_NEWS_RECV_WIRELESS, or WONDER_NEWS_SENT)
+ */
 void WonderNews_SetReward(u32 newsType)
 {
     struct WonderNewsMetadata *data = GetSavedWonderNewsMetadata();
@@ -39,6 +73,12 @@ void WonderNews_SetReward(u32 newsType)
     }
 }
 
+/**
+ * FUNCTION: WonderNews_Reset
+ *
+ * PURPOSE: Clears all Wonder News reward state — news type, counters, berry,
+ *          and step counter. Called when Wonder News data is invalidated.
+ */
 void WonderNews_Reset(void)
 {
     struct WonderNewsMetadata *data = GetSavedWonderNewsMetadata();
@@ -50,6 +90,13 @@ void WonderNews_Reset(void)
     VarSet(VAR_WONDER_NEWS_STEP_COUNTER, 0);
 }
 
+/**
+ * FUNCTION: WonderNews_IncrementStepCounter
+ *
+ * PURPOSE: Called each step the player takes. If the reward limit has been reached,
+ *          counts steps until 500 are taken, then resets the reward counter to
+ *          allow the player to receive rewards again.
+ */
 void WonderNews_IncrementStepCounter(void)
 {
     u16 *stepCounter = GetVarPointer(VAR_WONDER_NEWS_STEP_COUNTER);
@@ -65,6 +112,16 @@ void WonderNews_IncrementStepCounter(void)
     }
 }
 
+/**
+ * FUNCTION: WonderNews_GetRewardInfo
+ *
+ * PURPOSE: Determines what reward (if any) the player should receive and stores
+ *          the reward item ID in gSpecialVar_Result.
+ *
+ * RETURNS: The reward type (NEWS_REWARD_NONE, _WAITING, _AT_MAX, _RECV_SMALL,
+ *          _RECV_BIG, _SENT_SMALL, or _SENT_BIG). The calling code uses this
+ *          to display the appropriate message.
+ */
 u16 WonderNews_GetRewardInfo(void)
 {
     u16 *result = &gSpecialVar_Result;

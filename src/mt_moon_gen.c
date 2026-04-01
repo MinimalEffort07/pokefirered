@@ -1,3 +1,46 @@
+/*
+ * mt_moon_gen.c - Procedural Cave Generation for Mt. Moon
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file implements a procedurally generated version of Mt. Moon. Instead
+ * of using a fixed map layout from ROM, it generates a random cave layout
+ * each time the player enters. This is a CUSTOM ADDITION to Pokemon FireRed
+ * (not present in the original game).
+ *
+ * ALGORITHM:
+ * The cave generator uses a cellular automata approach:
+ * 1. Initialize a 48x40 grid with random walls/floors (configurable density)
+ * 2. Run cellular automata smoothing passes: a cell becomes a wall if it has
+ *    too many wall neighbors, or a floor if it has enough floor neighbors
+ * 3. Enforce border walls (2-tile thick borders on all sides)
+ * 4. Place entrance and exit points with doorframe tiles
+ * 5. Ensure a walkable path exists between entrance and exit (flood fill check)
+ * 6. If no valid path exists, force corridors to connect them
+ * 7. Convert the abstract grid to GBA metatile data and write to the map
+ * 8. Set up warp events for entrance/exit connections
+ *
+ * DATA STRUCTURE:
+ * The cave grid uses 2-bit packed storage (4 cells per byte) to save memory:
+ *   0 = wall
+ *   1 = floor (walkable)
+ *   2 = visited (used during flood fill pathfinding)
+ *
+ * METATILE MAPPING:
+ * The grid cells are converted to visual metatiles based on their neighbors.
+ * Wall tiles are selected based on which adjacent cells are floors, creating
+ * natural-looking cave walls with proper cliff edges, corners, and interiors.
+ *
+ * GBA CONTEXT:
+ * Map data on the GBA is stored as a 2D array of metatile IDs. Each metatile
+ * is a 16x16 pixel block composed of four 8x8 tiles. The metatile ID also
+ * encodes collision (walkable/blocked) and elevation (used for bridges/ledges).
+ * Format: metatileId | (collision << 10) | (elevation << 12)
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "fieldmap.h"
 #include "overworld.h"
@@ -9,6 +52,7 @@
 #include "constants/event_objects.h"
 #include "constants/event_object_movement.h"
 
+/* Cave dimensions in metatiles (16x16 pixel blocks) */
 #define CAVE_W 48
 #define CAVE_H 40
 #define CAVE_SIZE (CAVE_W * CAVE_H)

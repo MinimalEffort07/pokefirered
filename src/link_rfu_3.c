@@ -1,3 +1,13 @@
+/**
+ * @file link_rfu_3.c
+ * @brief RFU Wireless Utilities — Block Transfer, Chat, and Union Room Data Exchange
+ *
+ * FILE OVERVIEW:
+ * This file provides additional wireless communication utilities built on top of
+ * the RFU link layer. It handles block data transfers, chat message routing,
+ * player data exchange for the Union Room, trade/battle coordination, and
+ * various helper functions for wireless multiplayer features.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

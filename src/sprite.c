@@ -1,3 +1,149 @@
+/*
+ * sprite.c - Sprite (OBJ) System
+ *
+ * ============================================================================
+ * GBA SPRITE HARDWARE (OAM - Object Attribute Memory)
+ * ============================================================================
+ *
+ * The GBA can display up to 128 hardware sprites, called "objects" (OBJ).
+ * Unlike backgrounds (which are tile grids), sprites are independently
+ * positioned graphics that can be placed anywhere on screen.
+ *
+ * OAM (Object Attribute Memory) at 0x07000000 (1 KB):
+ *   128 entries, each 8 bytes (6 attribute bytes + 2 affine parameter bytes).
+ *   Each entry defines one sprite's position, size, tile, palette, and flags.
+ *
+ * OAM ENTRY FORMAT (6 bytes of attributes per sprite):
+ *
+ *   Attribute 0 (16 bits):
+ *     Bits 0-7:   Y coordinate (0-255, wraps at 256)
+ *     Bits 8-9:   OBJ Mode:
+ *                   0 = Normal
+ *                   1 = Semi-transparent (alpha blending)
+ *                   2 = OBJ Window (masks other layers)
+ *                   3 = Prohibited
+ *     Bits 10-11: GFX Mode (affine):
+ *                   0 = Off (no rotation/scaling)
+ *                   1 = On (uses affine matrix)
+ *                   2 = Off + hidden (sprite not rendered)
+ *                   3 = On + double-size rendering area
+ *     Bit 12:     Mosaic enable
+ *     Bit 13:     Color mode (0 = 4bpp/16 palettes, 1 = 8bpp/256 colors)
+ *     Bits 14-15: Shape (0 = square, 1 = horizontal rect, 2 = vertical rect)
+ *
+ *   Attribute 1 (16 bits):
+ *     Bits 0-8:   X coordinate (0-511, wraps at 512)
+ *     Bits 9-13:  Affine matrix index (if affine enabled) OR
+ *                 Bit 12: Horizontal flip, Bit 13: Vertical flip (if affine off)
+ *     Bits 14-15: Size (0-3, combined with shape determines pixel dimensions)
+ *
+ *   Attribute 2 (16 bits):
+ *     Bits 0-9:   Tile index (which 8x8 tile from OBJ VRAM, 0-1023)
+ *     Bits 10-11: Priority relative to BGs (0 = on top, 3 = behind all BGs)
+ *     Bits 12-15: Palette number (in 4bpp mode)
+ *
+ * SPRITE SIZES (Shape × Size):
+ *   Shape=Square:   8×8,  16×16, 32×32, 64×64
+ *   Shape=H-Rect:   16×8, 32×8,  32×16, 64×32
+ *   Shape=V-Rect:   8×16, 8×32,  16×32, 32×64
+ *
+ * OBJ VRAM (0x06010000, 32 KB):
+ *   Sprite tile graphics, separate from BG VRAM.
+ *   1024 tiles available (TOTAL_OBJ_TILE_COUNT).
+ *   In 4bpp mode: each tile = 32 bytes.
+ *   In 8bpp mode: each tile = 64 bytes (uses 2 tile slots).
+ *
+ * OBJ PALETTE (0x05000200, 256 bytes):
+ *   16 palettes × 16 colors each (4bpp mode).
+ *   The palette index in OAM selects which palette a sprite uses.
+ *   OBJ palette is separate from BG palette (at 0x05000000).
+ *
+ * AFFINE SPRITES (rotation/scaling):
+ *   32 affine matrices available. Each matrix is 4 × 16-bit parameters
+ *   (PA, PB, PC, PD) that define a 2D transformation.
+ *   The matrix data is INTERLEAVED with OAM attribute data:
+ *     OAM[0].attr3 = Matrix[0].PA
+ *     OAM[1].attr3 = Matrix[0].PB
+ *     OAM[2].attr3 = Matrix[0].PC
+ *     OAM[3].attr3 = Matrix[0].PD
+ *     OAM[4].attr3 = Matrix[1].PA
+ *     ...
+ *   This means every 4th OAM entry shares space with affine params.
+ *   CopyMatricesToOamBuffer() writes the matrix data into the correct
+ *   interleaved positions.
+ *
+ * ============================================================================
+ * SOFTWARE SPRITE SYSTEM
+ * ============================================================================
+ *
+ * The game's sprite system adds significant functionality on top of
+ * the raw OAM hardware:
+ *
+ * SPRITE STRUCT (gSprites[MAX_SPRITES]):
+ *   Each software sprite (struct Sprite) contains:
+ *   - oam: The OAM attribute data to write to hardware
+ *   - x, y: Sprite position (world coordinates)
+ *   - x2, y2: Position offsets (for animation/effects)
+ *   - centerToCornerVecX/Y: Offset from center to top-left corner
+ *   - callback: Per-frame update function (like a mini-game-loop per sprite)
+ *   - anims: Pointer to animation command table
+ *   - affineAnims: Pointer to affine animation command table
+ *   - data[8]: General-purpose s16 storage (used by callbacks for state)
+ *   - template: Original creation template (for reference)
+ *   - subpriority: Fine-grained draw order within same OAM priority
+ *   - inUse: Whether this sprite slot is allocated
+ *   - invisible: Whether to skip rendering (but still update)
+ *   - coordOffsetEnabled: Whether to apply camera scroll offset
+ *
+ * PER-FRAME PIPELINE (called from OverworldBasic/CB2):
+ *   1. AnimateSprites():
+ *      For each active sprite, call its callback function, then
+ *      advance its animation state (frame animation + affine animation).
+ *
+ *   2. BuildOamBuffer():
+ *      a. UpdateOamCoords() - Convert world coords to screen coords,
+ *         applying camera offset (gSpriteCoordOffsetX/Y) if enabled.
+ *      b. BuildSpritePriorities() - Compute sort key from priority+subpriority.
+ *      c. SortSprites() - Insertion sort by priority, then by Y coordinate
+ *         (lower Y = drawn first = behind higher Y sprites).
+ *      d. AddSpritesToOamBuffer() - Copy sorted sprite OAM data to the
+ *         output buffer (gMain.oamBuffer).
+ *      e. CopyMatricesToOamBuffer() - Write affine matrices interleaved.
+ *
+ *   3. During VBlank (LoadOam()):
+ *      DMA-copy gMain.oamBuffer to hardware OAM (0x07000000).
+ *
+ * TILE MANAGEMENT:
+ *   Two modes for sprite tile graphics:
+ *
+ *   1. SHEET mode (usingSheet=TRUE):
+ *      Tiles are pre-loaded to OBJ VRAM in a contiguous block ("sheet").
+ *      Multiple sprites share the same sheet. sheetTileStart indexes into it.
+ *      Used for: NPC sprites, player character, Pokemon sprites.
+ *      Efficient: one DMA load, many sprites reference it.
+ *
+ *   2. IMAGE mode (usingSheet=FALSE):
+ *      Each sprite allocates its own tile space via AllocSpriteTiles().
+ *      Tile data is copied per-frame via sprite copy requests.
+ *      Used for: animated sprites that change tile data frequently.
+ *      Flexible but uses more VRAM and DMA bandwidth.
+ *
+ *   gSpriteTileAllocBitmap: Bitmap tracking allocated OBJ VRAM tiles.
+ *   128 bytes = 1024 bits = 1024 tile slots.
+ *
+ * ANIMATION SYSTEM:
+ *   Sprites can have frame-by-frame animations defined as command lists:
+ *   - AnimCmd_frame: Display a specific tile frame for N VBlanks
+ *   - AnimCmd_end: Stop animation
+ *   - AnimCmd_jump: Jump to a different animation index
+ *   - AnimCmd_loop: Repeat a section N times
+ *
+ *   Affine animations work similarly but modify the transformation matrix:
+ *   - AffineAnimCmd_frame: Set/adjust rotation, scale, position
+ *   - AffineAnimCmd_end/jump/loop: Flow control
+ *
+ * ============================================================================
+ */
 #include "global.h"
 #include "gflib.h"
 
@@ -301,6 +447,23 @@ void ResetSpriteData(void)
     gSpriteCoordOffsetY = 0;
 }
 
+/*
+ * AnimateSprites - Run all sprite callbacks and advance animations.
+ *
+ * Called every frame from OverworldBasic()/CB2.
+ * For each active sprite:
+ *   1. Call its callback function. This is the sprite's "brain" -
+ *      it controls movement, behavior, and state. Examples:
+ *      - SpriteCB_LinkPlayer: Updates link player position from network data
+ *      - SpriteCB_RemotePlayer: Updates multiplayer remote player
+ *      - SpriteCallbackDummy: Does nothing (static sprite)
+ *   2. If still in use after callback, advance its animation.
+ *      AnimateSprite() processes the current animation command list,
+ *      advancing frames based on delay counters.
+ *
+ * A callback can destroy the sprite (set inUse=FALSE), which is why
+ * we re-check inUse before calling AnimateSprite.
+ */
 void AnimateSprites(void)
 {
     u8 i;
@@ -318,6 +481,40 @@ void AnimateSprites(void)
     }
 }
 
+/*
+ * BuildOamBuffer - Convert software sprites into hardware OAM data.
+ *
+ * This is the sprite rendering pipeline. It reads all struct Sprite entries
+ * and produces the 128-entry OAM buffer that gets DMA-copied to hardware
+ * during VBlank.
+ *
+ * Pipeline:
+ * 1. UpdateOamCoords: Convert each sprite's world position (x, y) to
+ *    screen coordinates in oam.x and oam.y. Applies camera offset
+ *    (gSpriteCoordOffsetX/Y) for sprites that scroll with the map.
+ *
+ * 2. BuildSpritePriorities: Compute a sort key for each sprite.
+ *    High byte = OAM priority (0-3, from hardware priority field).
+ *    Low byte = subpriority (0-255, software-defined fine ordering).
+ *    Lower value = drawn on TOP (rendered last = appears in front).
+ *
+ * 3. SortSprites: Insertion sort by (priority, then Y coordinate).
+ *    Sprites with equal priority are sorted by Y position so that
+ *    sprites lower on screen (higher Y) overlap those above them.
+ *    This creates the "depth" illusion in the overworld.
+ *
+ * 4. AddSpritesToOamBuffer: Copy sorted sprite OAM data to gMain.oamBuffer.
+ *    Invisible sprites are skipped. Unused OAM slots are filled with
+ *    the dummy OAM data (Y=160, offscreen) to hide them.
+ *
+ * 5. CopyMatricesToOamBuffer: Write the 32 affine matrices into the
+ *    interleaved OAM positions (every 4th entry's affineParam field).
+ *
+ * gMain.oamLoadDisabled is set TRUE during buffer construction to prevent
+ * the VBlank handler from DMA-copying a half-built buffer to hardware.
+ * gShouldProcessSpriteCopyRequests signals that sprite tile copy requests
+ * can be processed during the next VBlank.
+ */
 void BuildOamBuffer(void)
 {
     u8 temp;
@@ -332,6 +529,32 @@ void BuildOamBuffer(void)
     gShouldProcessSpriteCopyRequests = TRUE;
 }
 
+/*
+ * UpdateOamCoords - Convert world coordinates to screen coordinates.
+ *
+ * Sprites store their position as world coordinates (sprite->x, sprite->y).
+ * The OAM hardware needs SCREEN coordinates (0,0 = top-left of display).
+ *
+ * The conversion:
+ *   screen_x = world_x + offset_x + center_to_corner_x + camera_x
+ *   screen_y = world_y + offset_y + center_to_corner_y + camera_y
+ *
+ * Components:
+ *   x, y:       Base world position (set by game logic)
+ *   x2, y2:     Secondary offset (used for bobbing, shaking, etc.)
+ *   centerToCornerVecX/Y: Converts center-origin to top-left-origin.
+ *     OAM coordinates are the sprite's TOP-LEFT corner, but the game
+ *     uses CENTER coordinates. This vector is negative half-dimensions
+ *     (e.g., for a 16x32 sprite: centerToCornerVecX=-8, vecY=-16).
+ *   gSpriteCoordOffsetX/Y: Camera scroll offset. Applied to sprites
+ *     that move with the map (NPCs, items) but NOT to UI sprites
+ *     (HP bars, text) which stay fixed on screen.
+ *     coordOffsetEnabled controls whether this is applied.
+ *
+ * The camera offset is computed each frame based on the player's position.
+ * When the player walks right, gSpriteCoordOffsetX decreases, making all
+ * map sprites shift left on screen while the player stays centered.
+ */
 void UpdateOamCoords(void)
 {
     u8 i;
@@ -458,6 +681,28 @@ void SortSprites(void)
     }
 }
 
+/*
+ * CopyMatricesToOamBuffer - Write affine matrices into the OAM buffer.
+ *
+ * GBA hardware quirk: affine matrix data is INTERLEAVED with OAM entries.
+ * The 32 matrices share space with the 128 OAM entries.
+ *
+ * Each OAM entry is 8 bytes. Bytes 6-7 hold either sprite attribute 3
+ * (for non-affine sprites) OR one affine parameter (for affine sprites).
+ *
+ * Matrix N uses the affineParam field of OAM entries 4N, 4N+1, 4N+2, 4N+3:
+ *   OAM[4N+0].affineParam = PA (horizontal scale)
+ *   OAM[4N+1].affineParam = PB (horizontal shear/rotation)
+ *   OAM[4N+2].affineParam = PC (vertical shear/rotation)
+ *   OAM[4N+3].affineParam = PD (vertical scale)
+ *
+ * For an identity matrix (no transformation): PA=PD=0x100, PB=PC=0.
+ * For 2x zoom: PA=PD=0x80. For 90° rotation: PA=PD=0, PB=0x100, PC=-0x100.
+ *
+ * This interleaved layout is a hardware design choice by Nintendo to
+ * save memory (no separate matrix memory needed). Software must write
+ * to the correct interleaved positions.
+ */
 void CopyMatricesToOamBuffer(void)
 {
     u8 i;
@@ -491,6 +736,26 @@ void AddSpritesToOamBuffer(void)
     }
 }
 
+/*
+ * CreateSprite - Allocate and initialize a new sprite.
+ *
+ * Finds the first free slot in gSprites[] and sets it up from the template.
+ * Returns the sprite index, or MAX_SPRITES (64) if no free slot.
+ *
+ * SpriteTemplate contains:
+ *   tileTag: Tag to look up pre-loaded tile data, or TAG_NONE for per-sprite tiles
+ *   paletteTag: Tag to look up the palette slot, or TAG_NONE for manual palette
+ *   oam: Default OAM attribute data (shape, size, priority)
+ *   anims: Animation command table
+ *   images: Tile data for per-sprite (non-sheet) tiles
+ *   affineAnims: Affine animation command table
+ *   callback: Per-frame update function
+ *
+ * The tag system: tile and palette data can be pre-loaded to VRAM with a
+ * "tag" (a 16-bit identifier). CreateSprite looks up the tag to find where
+ * in VRAM the tiles/palette were loaded. This avoids redundant VRAM loads
+ * when multiple sprites share the same graphics.
+ */
 u8 CreateSprite(const struct SpriteTemplate *template, s16 x, s16 y, u8 subpriority)
 {
     u8 i;
@@ -607,6 +872,18 @@ u8 CreateSpriteAndAnimate(const struct SpriteTemplate *template, s16 x, s16 y, u
     return MAX_SPRITES;
 }
 
+/*
+ * DestroySprite - Free a sprite slot and its allocated VRAM tiles.
+ *
+ * If the sprite was using per-sprite tile allocation (usingSheet=FALSE),
+ * its OBJ VRAM tiles are freed via the tile allocation bitmap.
+ * Sheet-mode sprites don't free tiles here because the sheet is
+ * shared with other sprites.
+ *
+ * ResetSprite() overwrites the struct with sDummySprite, which sets:
+ *   inUse=FALSE, position off-screen, callback=SpriteCallbackDummy.
+ * This effectively removes the sprite from all processing.
+ */
 void DestroySprite(struct Sprite *sprite)
 {
     if (sprite->inUse)
@@ -633,6 +910,23 @@ void ResetOamRange(u8 a, u8 b)
     }
 }
 
+/*
+ * LoadOam - Copy the software OAM buffer to hardware OAM.
+ *
+ * Called during VBlank from VBlankCB_Field (or equivalent).
+ * CpuCopy32 uses a BIOS call (SWI 0x0C) for fast 32-bit block copy.
+ *
+ * gMain.oamBuffer (1 KB in RAM) → OAM hardware (0x07000000, 1 KB).
+ * This is the ONLY time OAM hardware is written. All sprite position/
+ * attribute changes during the frame modify the RAM buffer only.
+ *
+ * OAM can only be safely written during VBlank or HBlank. Writing
+ * during active display causes sprite corruption (sprites may flicker,
+ * display garbage tiles, or appear at wrong positions).
+ *
+ * oamLoadDisabled prevents copying during BuildOamBuffer() to avoid
+ * the VBlank handler reading a half-built buffer.
+ */
 void LoadOam(void)
 {
     if (!gMain.oamLoadDisabled)
@@ -654,6 +948,18 @@ void ClearSpriteCopyRequests(void)
     }
 }
 
+/*
+ * ResetOamMatrices - Set all 32 affine matrices to identity (no transform).
+ *
+ * The identity matrix [0x100, 0, 0, 0x100] means:
+ *   PA = 0x100 (1.0 in 8.8 fixed-point) = no horizontal scaling
+ *   PB = 0 = no horizontal shear/rotation
+ *   PC = 0 = no vertical shear/rotation
+ *   PD = 0x100 (1.0) = no vertical scaling
+ *
+ * Affine parameters use 8.8 fixed-point: 0x100 = 1.0, 0x80 = 0.5, 0x200 = 2.0.
+ * Confusingly, LARGER values mean SMALLER sprites (it's an inverse scale).
+ */
 void ResetOamMatrices(void)
 {
     u8 i;
@@ -695,6 +1001,23 @@ void CalcCenterToCornerVec(struct Sprite *sprite, u8 shape, u8 size, u8 affineMo
     sprite->centerToCornerVecY = y;
 }
 
+/*
+ * AllocSpriteTiles - Allocate contiguous tile slots in OBJ VRAM.
+ *
+ * OBJ VRAM (32 KB) is divided into 1024 tile slots (32 bytes each in 4bpp).
+ * This function finds a contiguous block of 'tileCount' free slots.
+ * Uses a first-fit algorithm scanning gSpriteTileAllocBitmap.
+ *
+ * gReservedSpriteTileCount: tiles 0..N-1 are reserved (never allocated).
+ * Reserved tiles are typically used for fixed graphics that persist
+ * across screen changes (player sprite sheet, etc.)
+ *
+ * Special case: tileCount=0 frees ALL non-reserved tiles.
+ * This is called during ResetSpriteData() to wipe OBJ VRAM clean.
+ *
+ * Returns the starting tile index, or -1 if not enough contiguous space.
+ * The caller stores this in sprite->oam.tileNum.
+ */
 s16 AllocSpriteTiles(u16 tileCount)
 {
     u16 i;

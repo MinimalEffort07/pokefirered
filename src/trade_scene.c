@@ -1,3 +1,25 @@
+/**
+ * =TRADE SCENE ANIMATION=
+ *
+ * FILE OVERVIEW:
+ * This file implements the visual animation sequence that plays during
+ * a Pokemon trade — the iconic scene where two Poke Balls travel along
+ * a link cable between Game Boys. The sequence includes:
+ *   - Both trainers' Pokemon being recalled into balls
+ *   - The balls shrinking and entering a "cable" effect
+ *   - Ball sprites traveling across the screen through a tube/cable
+ *   - The balls arriving and releasing the traded Pokemon
+ *   - Evolution check (if the traded Pokemon evolves by trade)
+ *
+ * This is a purely cosmetic animation — the actual data exchange happens
+ * via the link system (link.c), and this file just makes it look cool.
+ *
+ * GBA CONTEXT:
+ * The trade animation uses elaborate background scrolling, sprite
+ * animations, and palette effects to create the illusion of balls
+ * traveling through a cable. Multiple BG layers scroll at different
+ * speeds to create a parallax depth effect in the cable tunnel scene.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

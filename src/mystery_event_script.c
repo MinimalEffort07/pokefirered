@@ -1,3 +1,22 @@
+/**
+ * @file mystery_event_script.c
+ * @brief Mystery Event Script Interpreter — Executing Received Event Scripts
+ *
+ * FILE OVERVIEW:
+ * This file implements a specialized script interpreter for Mystery Event scripts.
+ * Mystery Events were a Japan-only feature where players could receive small
+ * scripts via wireless or e-Reader that would modify their game (give items,
+ * add Pokemon, change event flags, etc.).
+ *
+ * The interpreter is separate from the main game script engine because Mystery
+ * Event scripts have their own command set focused on data manipulation (giving
+ * berries, adding battle tower trainers, checking version compatibility, etc.)
+ * rather than overworld interactions.
+ *
+ * Version and language compatibility checks ensure that received scripts are
+ * valid for the player's specific game cartridge (FireRed vs. LeafGreen,
+ * English vs. Japanese, etc.).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "berry.h"

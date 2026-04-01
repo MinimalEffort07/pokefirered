@@ -1,4 +1,18 @@
-#include <stdlib.h> // to declare abs
+/**
+ * @file pokemon_storage_system_misc.c
+ * @brief PC Box Storage Miscellaneous — Marking, Summary, and Release Subsystems
+ *
+ * FILE OVERVIEW:
+ * This file handles miscellaneous features of the Pokemon Storage System that
+ * don't fit neatly into the main task, graphics, data, or menu files. It includes:
+ *   - Pokemon marking UI (circle, triangle, square, heart symbols used to
+ *     organize Pokemon in boxes)
+ *   - Integration with the Pokemon Summary Screen from the box view
+ *   - The "Release Pokemon" confirmation and animation sequence
+ *   - Item management for held items in storage
+ *   - Various helper utilities for the storage system
+ */
+#include <stdlib.h> /* to declare abs */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

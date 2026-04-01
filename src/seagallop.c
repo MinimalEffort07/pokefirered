@@ -1,3 +1,20 @@
+/**
+ * =SEAGALLOP FERRY SCENE=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Seagallop Ferry travel animation — the
+ * cutscene that plays when the player travels between the Sevii Islands
+ * (and between Vermilion City and the Sevii Islands). The scene shows:
+ *   - A ferry sprite traveling across a water background
+ *   - Wake sprites (water trails) behind the ferry
+ *   - A text display showing the destination
+ *   - The direction of travel (left-to-right or right-to-left) depends
+ *     on which islands the player is traveling between
+ *
+ * The Sevii Islands are a post-game area unique to FireRed/LeafGreen,
+ * consisting of numbered islands (One through Seven) connected by the
+ * Seagallop Ferry service.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "scanline_effect.h"

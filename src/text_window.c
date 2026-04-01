@@ -1,3 +1,30 @@
+/**
+ * =TEXT WINDOW BORDER / FRAME GRAPHICS=
+ *
+ * FILE OVERVIEW:
+ * This file handles loading the decorative border graphics that surround
+ * text windows (message boxes, menus, dialog boxes) throughout the game.
+ * Pokemon FireRed has several different window frame styles:
+ *
+ *   - Standard Window: The default menu/dialog border
+ *   - Menu Message Window: Used for NPC dialog in the overworld
+ *   - Signpost Window: The distinctive signpost-style frame
+ *   - Help Message Window: Used for help system messages
+ *   - Quest Log Window: Special frame for quest log entries
+ *   - User-Selected Frames: The player can choose from multiple frame
+ *     styles in the Options menu (stored in optionsWindowFrameType)
+ *
+ * GBA CONTEXT:
+ * Each window border consists of 9 tiles arranged in a 3x3 pattern:
+ *   [0][1][2]   (top-left, top, top-right)
+ *   [3]   [5]   (left side, -, right side)
+ *   [6][7][8]   (bottom-left, bottom, bottom-right)
+ * The center (tile 4) is the window's text background, not drawn by
+ * these border functions. Tiles 1, 3, 5, 7 are repeated along the
+ * edges for windows of any size. DrawTextBorderOuter draws the border
+ * OUTSIDE the window bounds, while DrawTextBorderInner draws it using
+ * the window's own tile space.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "text_window.h"

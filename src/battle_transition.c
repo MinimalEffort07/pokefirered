@@ -1,3 +1,27 @@
+/**
+ * =BATTLE TRANSITION EFFECTS=
+ *
+ * FILE OVERVIEW:
+ * This file implements the visual transitions that play between the
+ * overworld and the battle screen. These are the dramatic wipe/spin/fade
+ * effects you see when encountering a wild Pokemon or starting a trainer
+ * battle. Different transitions are used for different situations:
+ *   - Wild encounters use simpler transitions
+ *   - Trainer battles use more dramatic transitions
+ *   - Gym Leaders and Elite Four have unique transitions
+ *   - Legendary Pokemon encounters have special effects
+ *
+ * GBA CONTEXT:
+ * These transitions are some of the most hardware-intensive effects in
+ * the game. They use multiple GBA features simultaneously:
+ *   - BG scroll registers: Manipulated per-scanline for warp effects
+ *   - Blend registers (BLDCNT/BLDALPHA): For fade-to-white/black effects
+ *   - Window registers (WININ/WINOUT): For circular reveal/shrink effects
+ *   - Mosaic register: For pixelation effects
+ *   - DMA transfers: For scanline-synchronized register updates
+ * The transitions capture the current overworld screen into a buffer,
+ * then manipulate it as the battle scene loads underneath.
+ */
 #include "global.h"
 #include "sprite.h"
 #include "task.h"

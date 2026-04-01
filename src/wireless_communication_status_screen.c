@@ -1,3 +1,14 @@
+/**
+ * @file wireless_communication_status_screen.c
+ * @brief Wireless Communication Status — Connection Quality Display Screen
+ *
+ * FILE OVERVIEW:
+ * This file implements the Wireless Communication Status screen, accessible from
+ * the options menu when the Wireless Adapter is connected. It displays real-time
+ * information about the wireless connection: signal strength, number of connected
+ * players, transfer activity, and link quality indicators. This is primarily a
+ * diagnostic/information screen for the player.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

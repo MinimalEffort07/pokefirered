@@ -1,3 +1,36 @@
+/*
+ * =Pokemon FireRed Title Screen=
+ *
+ * This file implements the title screen that displays after the Game Freak
+ * intro sequence. The title screen features:
+ *   - The game logo background and border graphics
+ *   - An animated Pokemon sprite (Charizard for FireRed, Venusaur for LeafGreen)
+ *   - Animated flame/leaf particle effects spawned around the Pokemon
+ *   - A flashing "PRESS START" text prompt
+ *   - A dramatic slash animation that reveals the Pokemon
+ *   - Window 0-based fade/reveal effects
+ *   - Music playback (the iconic title theme)
+ *   - Input handling to transition to the main menu
+ *
+ * The title screen operates as a state machine (TitleScreenScene) with phases:
+ *   INIT: Load all graphics, set up BG layers, initialize sprites
+ *   FLASHSPRITE: Briefly flash the Pokemon sprite white
+ *   FADEIN: Fade the screen in from black
+ *   RUN: Normal title screen loop (animate effects, wait for input)
+ *   RESTART: Restart the title screen after timeout
+ *   CRY: Play the Pokemon's cry sound before transitioning
+ *
+ * Special button combos are checked for:
+ *   - UP + SELECT + B: Enters the save data clear screen
+ *   - B + SELECT: Enters the Berry Fix program (for Ruby/Sapphire berry glitch)
+ *
+ * GBA CONTEXT:
+ * The title screen uses multiple BG layers, sprites for the Pokemon and
+ * particle effects, scanline effects for the window reveal animation, and
+ * hardware window blending for the slash/flash transitions. The fire/leaf
+ * particles are spawned as OBJ sprites with random positions and velocities,
+ * creating the animated background effect unique to each game version.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"
@@ -17,14 +50,15 @@
 #include "decompress.h"
 #include "constants/songs.h"
 
+/* Title screen state machine phases. */
 enum TitleScreenScene
 {
-    TITLESCREENSCENE_INIT = 0,
-    TITLESCREENSCENE_FLASHSPRITE,
-    TITLESCREENSCENE_FADEIN,
-    TITLESCREENSCENE_RUN,
-    TITLESCREENSCENE_RESTART,
-    TITLESCREENSCENE_CRY
+    TITLESCREENSCENE_INIT = 0,       /* Initial setup: load graphics, create sprites */
+    TITLESCREENSCENE_FLASHSPRITE,    /* Brief white flash on the Pokemon sprite */
+    TITLESCREENSCENE_FADEIN,         /* Fade screen in from black */
+    TITLESCREENSCENE_RUN,            /* Main loop: animate, check input, check timeout */
+    TITLESCREENSCENE_RESTART,        /* Timeout expired, restart title sequence */
+    TITLESCREENSCENE_CRY             /* Play Pokemon cry, then transition to main menu */
 };
 
 #if   defined(FIRERED)
@@ -339,6 +373,30 @@ static const u32 *const sUnused_Tilemaps[] = {
     sUnused_Tilemap6,
 };
 
+/**
+ * FUNCTION: CB2_InitTitleScreen
+ *
+ * PURPOSE: Initialize the title screen by loading all graphics, setting up
+ *          background layers, creating sprites, and starting the title music.
+ *
+ * HOW IT WORKS:
+ * Uses gMain.state as a multi-frame initialization sequence (spread across
+ * 3 frames to avoid exceeding the VBlank time budget):
+ *   State 0: Full GPU/subsystem reset, clear VRAM/OAM/PLTT, init BG templates.
+ *   State 1: Decompress and load all title screen graphics into VRAM:
+ *     - BG0: Game title logo (Pokemon FireRed/LeafGreen text)
+ *     - BG1: Box art Pokemon (Charizard or Venusaur)
+ *     - BG2: "Press Start" / copyright text
+ *     - BG3: Decorative border frame
+ *     Also loads sprite graphics for flame/leaf particles.
+ *   State 2: Wait for tile decompression to finish, then blend all palettes to
+ *     black (for fade-in), create the main title screen tasks, start music.
+ *
+ * GBA CONTEXT:
+ * DecompressAndCopyTileDataToVram handles LZ77-compressed tile data and tilemap
+ * data. The last parameter (0 = tiles, 1 = tilemap) specifies which type to load.
+ * Tile data goes into the BG character base, tilemap data into the screen base.
+ */
 void CB2_InitTitleScreen(void)
 {
     switch (gMain.state)
@@ -417,6 +475,20 @@ static void CB2_TitleScreenRun(void)
     UpdatePaletteFade();
 }
 
+/**
+ * FUNCTION: VBlankCB (Title Screen)
+ *
+ * PURPOSE: VBlank interrupt handler for the title screen. Performs the
+ *          standard per-frame DMA transfers and increments the timer.
+ *
+ * GBA CONTEXT:
+ * VBlank is the ~4.5ms gap between frames when the screen isn't being drawn.
+ * This is the ONLY safe time to write to VRAM, OAM, and palette RAM without
+ * causing visual glitches. LoadOam copies the sprite attribute buffer to OAM
+ * hardware, ProcessSpriteCopyRequests handles pending tile uploads, and
+ * TransferPlttBuffer copies palette changes. ScanlineEffect_InitHBlankDmaTransfer
+ * sets up per-scanline DMA for the window reveal effect.
+ */
 static void VBlankCB(void)
 {
     LoadOam();
@@ -424,6 +496,9 @@ static void VBlankCB(void)
     TransferPlttBuffer();
     ScanlineEffect_InitHBlankDmaTransfer();
 
+    /* Increment the title screen timer. After 2700 VBlanks (~45 seconds at
+     * 60fps), the timer task self-destructs, which signals the title screen
+     * to restart (loop back to the intro sequence). */
     if (sTitleScreenTimerTaskId != TASK_NONE)
         gTasks[sTitleScreenTimerTaskId].data[0]++;
 }

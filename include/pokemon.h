@@ -1,3 +1,32 @@
+/**
+ * @file pokemon.h
+ * @brief Pokemon Data Structures and Functions — The Core Pokemon Type System
+ *
+ * FILE OVERVIEW:
+ * This header defines the fundamental data structures that represent a Pokemon
+ * in the game, along with functions for creating, modifying, and querying Pokemon
+ * data. This is one of the most critical headers in the entire project.
+ *
+ * Key structures:
+ *   - Pokemon (100 bytes): Full Pokemon data including battle stats, used in the
+ *     player's party. Contains an encrypted BoxPokemon plus calculated stats.
+ *   - BoxPokemon (80 bytes): Compact Pokemon data used in PC box storage. The
+ *     internal data is encrypted and split into 4 substruct blocks that are
+ *     shuffled based on the Pokemon's personality value.
+ *   - PokemonSubstruct0-3: The four data blocks within BoxPokemon:
+ *     0 = Growth (species, item, experience, friendship)
+ *     1 = Attacks (moves, PP)
+ *     2 = EVs/Condition (effort values, contest stats)
+ *     3 = Misc (met location, origin, IVs, ribbons)
+ *
+ * GBA CONTEXT:
+ * Pokemon data is encrypted to prevent simple memory editing cheats. The
+ * encryption XORs data with a key derived from the Pokemon's personality value
+ * and original trainer ID. The 4 substructs are also shuffled (24 possible
+ * orderings) based on personality % 24. To read any field, the data must be
+ * decrypted and the correct substruct located — this is what GetMonData() and
+ * SetMonData() handle internally.
+ */
 #ifndef GUARD_POKEMON_H
 #define GUARD_POKEMON_H
 
@@ -5,6 +34,7 @@
 #include "sprite.h"
 #include "constants/pokemon.h"
 
+/* Growth data substruct — species, held item, experience, friendship */
 struct PokemonSubstruct0
 {
     u16 species;

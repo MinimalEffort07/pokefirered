@@ -1,3 +1,19 @@
+/**
+ * =FIELD EFFECT HELPER FUNCTIONS=
+ *
+ * FILE OVERVIEW:
+ * This file provides helper functions and sprite callbacks for field
+ * effects that relate to NPC/player movement on the overworld. These
+ * include:
+ *   - Shadow sprites (circles under NPCs/player for depth perception)
+ *   - Reflection sprites (mirror images in water/shiny floors)
+ *   - Tall grass overlay (grass appearing in front of characters)
+ *   - Water/sand footprint effects (tracks left while walking)
+ *   - Splash effects (stepping in puddles or shallow water)
+ *   - Dust cloud effects (running in sand/cave)
+ * These helpers work closely with the object event system to track
+ * character positions and synchronize visual effects with movement.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "event_object_movement.h"

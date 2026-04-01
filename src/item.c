@@ -1,3 +1,43 @@
+/*
+ * item.c - Item and Inventory Management System
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file manages the player's inventory (bag and PC storage). It provides
+ * functions to add, remove, check, sort, and query items.
+ *
+ * BAG POCKETS:
+ * The bag is divided into 5 pockets (each with different capacity):
+ *   1. Items       - General consumable items (Potions, Repels, etc.)
+ *   2. Key Items   - Story-critical items (Silph Scope, Bicycle, etc.)
+ *   3. Poke Balls  - All ball types (Poke Ball, Great Ball, Ultra Ball, etc.)
+ *   4. TM Case     - Technical/Hidden Machines (TM01-TM50, HM01-HM07)
+ *   5. Berry Pouch - Berries (Oran Berry, Sitrus Berry, etc.)
+ *
+ * ITEM ENCRYPTION:
+ * Item quantities in the bag are XOR-encrypted with gSaveBlock2Ptr->encryptionKey.
+ * This is an anti-cheat measure that makes it harder to use memory editors
+ * (like GameShark) to modify item counts, since the actual value in RAM
+ * is not the real quantity. PC item quantities use a dummy XOR of 0
+ * (effectively no encryption).
+ *
+ * ITEM STACKING:
+ * Each item can stack up to 999 in a single slot. Unlike RSE which checks
+ * across multiple stacks, FRLG assumes there's only one stack per item.
+ *
+ * AUTO-KEY-ITEMS:
+ * When first receiving a TM or Berry, the TM Case / Berry Pouch key item
+ * is automatically added to the Key Items pocket if not already present.
+ *
+ * ITEM DATA:
+ * The gItems[] array (included from data/items.h) contains all item
+ * definitions: name, price, description, hold effect, pocket, usage
+ * functions for field and battle, etc.
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "berry.h"
@@ -11,6 +51,7 @@
 #include "constants/items.h"
 #include "constants/maps.h"
 
+/* Array of bag pockets. Pointers are set up by SetBagPocketsPointers(). */
 EWRAM_DATA struct BagPocket gBagPockets[NUM_BAG_POCKETS] = {};
 
 void SortAndCompactBagPocket(struct BagPocket * pocket);
@@ -18,16 +59,36 @@ void SortAndCompactBagPocket(struct BagPocket * pocket);
 // Item descriptions and data
 #include "data/items.h"
 
+/**
+ * FUNCTION: GetBagItemQuantity
+ *
+ * PURPOSE: Decrypt and return the actual quantity of an item in the bag.
+ *
+ * HOW IT WORKS:
+ * The stored quantity is XOR'd with the encryption key. XOR is its own
+ * inverse: (value ^ key) ^ key = value. So decrypting is the same
+ * operation as encrypting. This prevents simple memory editing cheats.
+ */
 u16 GetBagItemQuantity(u16 * ptr)
 {
     return gSaveBlock2Ptr->encryptionKey ^ *ptr;
 }
 
+/**
+ * FUNCTION: SetBagItemQuantity
+ *
+ * PURPOSE: Encrypt and store an item quantity in the bag.
+ */
 void SetBagItemQuantity(u16 * ptr, u16 value)
 {
     *ptr = value ^ gSaveBlock2Ptr->encryptionKey;
 }
 
+/**
+ * PC item quantities use a dummy encryption key of 0, meaning they are
+ * effectively stored in plaintext. The XOR with 0 is a no-op but keeps
+ * the API consistent with bag items.
+ */
 u16 GetPcItemQuantity(u16 * ptr)
 {
     return 0 ^ *ptr;

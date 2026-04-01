@@ -1,15 +1,33 @@
+/**
+ * =TILEMAP UTILITY=
+ *
+ * FILE OVERVIEW:
+ * This file provides a tilemap management utility used primarily by the
+ * Pokemon Storage System (PC box system). It handles a specific pattern
+ * where multiple "states" of a UI element (like the Close Box button
+ * flashing between active and inactive) are stored in different parts of
+ * the same tilemap. The utility can:
+ *   - Set a viewing rectangle that shows only one state at a time
+ *   - Shift the tilemap source coordinates to reveal different states
+ *   - Copy the visible portion to the BG tilemap buffer for display
+ *
+ * For example, the "Close Box" button has two visual states (normal and
+ * highlighted). Both are stored in the same tilemap at different Y offsets.
+ * TilemapUtil_Move shifts the source rectangle up/down to show the
+ * desired state, creating a flashing effect without needing separate
+ * tilemap data.
+ *
+ * GBA CONTEXT:
+ * The GBA's BG system uses tilemaps — arrays of 16-bit entries where each
+ * entry specifies a tile index, palette, and flip flags. This utility
+ * copies rectangular regions from a source tilemap (in ROM/RAM) into the
+ * active BG tilemap buffer (in VRAM), effectively "stamping" portions of
+ * a larger tilemap onto the screen.
+ */
 #include "global.h"
 #include "bg.h"
 #include "tilemap_util.h"
 #include "malloc.h"
-
-//  Handles 3 particular tilemaps ("PKMN Data" text, party menu, close box
-//  button) used for Pokémon Storage System in a somewhat unusual way.
-//  For example, while the cursor is on the Close Box button it flashes between
-//  two states alternately. Both these states are their own part of the same
-//  tilemap that's always present. The utility shifts the tilemap up and down
-//  to show/hide the states, and limits the view with a rectangle that only
-//  reveals one at a time.
 
 struct TilemapUtil_RectData
 {

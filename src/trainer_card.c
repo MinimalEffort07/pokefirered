@@ -1,3 +1,18 @@
+/**
+ * @file trainer_card.c
+ * @brief Trainer Card Screen — Player's ID Card with Stats and Badges
+ *
+ * FILE OVERVIEW:
+ * This file implements the Trainer Card screen, which displays the player's
+ * identity and game progress. The card shows: the player's name, Trainer ID,
+ * money, Pokedex completion count, play time, Hall of Fame entries, and
+ * earned Gym Badges. The card has a front and back side that can be flipped
+ * with a 3D rotation animation effect.
+ *
+ * In link play, viewing another player's Trainer Card shows their info.
+ * The card also shows a small sprite of the player's character and uses
+ * the image processing system for visual effects on the player's portrait.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "scanline_effect.h"

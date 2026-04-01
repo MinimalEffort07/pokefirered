@@ -1,3 +1,26 @@
+/**
+ * =BATTLE ANIMATION SOUND TASKS=
+ *
+ * FILE OVERVIEW:
+ * This file implements sound-related tasks used during battle move
+ * animations. Unlike simple one-shot sound effects, these tasks create
+ * complex audio sequences by controlling panning (left/right speaker
+ * balance), pitch, and timing across multiple frames.
+ *
+ * Key sound effects implemented:
+ *   - FireBlast: Multi-step fire roaring sound with panning shifts
+ *   - Looping SE with adjustable panning: Sound moves across speakers
+ *   - Double cry: Plays a Pokemon cry twice in quick succession
+ *   - Cry with echo: Plays a cry followed by a delayed, quieter echo
+ *   - Panning adjustment: Smoothly slides sound from left to right
+ *
+ * GBA CONTEXT:
+ * The GBA's sound hardware supports stereo output. "Panning" controls
+ * the left/right balance. A panning value of -64 is fully left, 0 is
+ * center, and +63 is fully right. Battle animations use panning to
+ * create the illusion that sounds come from the attacker or target side
+ * of the screen.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

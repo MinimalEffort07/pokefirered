@@ -1,3 +1,33 @@
+/**
+ * =EVOLUTION SCENE=
+ *
+ * FILE OVERVIEW:
+ * This file implements the evolution animation sequence — the dramatic scene
+ * that plays when a Pokemon evolves into a new species. It handles:
+ *   - The pre-evolution sprite display and "What? [name] is evolving!" message
+ *   - The morphing animation where the sprite cycles between old and new forms
+ *   - Sparkle particle effects (spirals, arcs, circles, sprays)
+ *   - The animated background with color-cycling palette effects
+ *   - Evolution success/cancel handling (player can press B to stop)
+ *   - New move learning after evolution
+ *   - Special case: Nincada → Ninjask creates a bonus Shedinja in the party
+ *   - Trade evolution variant (same logic but within the trade UI)
+ *
+ * GBA CONTEXT:
+ * The evolution animation is one of the most visually complex scenes in the
+ * game. It uses several GBA hardware features:
+ *   - SPRITE AFFINE TRANSFORMS: The morphing effect uses sprite scaling
+ *   - PALETTE CYCLING: The background color smoothly transitions through
+ *     a gradient of colors by updating palette entries each frame
+ *   - HARDWARE MOSAIC: The REG_OFFSET_MOSAIC register is used for pixelation
+ *   - MULTIPLE BG LAYERS: BG3 scrolls horizontally for the moving background
+ *
+ * STATE MACHINE:
+ * The evolution uses a large state machine (Task_EvolutionScene) with ~26
+ * states that progress through the animation sequence. Each state handles
+ * one phase (fade in, show message, start music, run sparkles, etc.) and
+ * transitions to the next state by incrementing tState.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"
@@ -27,26 +57,41 @@
 #include "constants/pokemon.h"
 #include "constants/items.h"
 
+/* The evolution table maps each species to its possible evolutions.
+ * Each species can have up to EVOS_PER_MON evolution entries, each
+ * specifying a method (level-up, stone, trade, etc.) and target species. */
 extern struct Evolution gEvolutionTable[][EVOS_PER_MON];
 
+/**
+ * EvoInfo — persistent state for the evolution animation.
+ *
+ * This struct lives in EWRAM and tracks the sprite IDs for the pre- and
+ * post-evolution Pokemon, the task driving the animation, and a saved copy
+ * of the background palette (so it can be restored after the animation).
+ */
 struct EvoInfo
 {
-    u8 preEvoSpriteId;
-    u8 postEvoSpriteId;
-    u8 evoTaskId;
-    u8 delayTimer;
-    u16 savedPalette[48];
+    u8 preEvoSpriteId;      /* Sprite ID of the pre-evolution Pokemon sprite */
+    u8 postEvoSpriteId;     /* Sprite ID of the post-evolution Pokemon sprite */
+    u8 evoTaskId;           /* Task ID running the evolution state machine */
+    u8 delayTimer;          /* General-purpose delay counter for animation timing */
+    u16 savedPalette[48];   /* Backup of 3 background palettes (3 * 16 colors) */
 };
 
-// EWRAM vars
-static EWRAM_DATA struct EvoInfo *sEvoStructPtr = NULL;
-static EWRAM_DATA u16 *sBgAnimPal = NULL;
+/* EWRAM variables — allocated in the GBA's 256KB external work RAM. */
+static EWRAM_DATA struct EvoInfo *sEvoStructPtr = NULL;  /* Main evolution state */
+static EWRAM_DATA u16 *sBgAnimPal = NULL;                /* Working palette for BG animation */
 
-// IWRAM common
+/* IWRAM common — stored in the faster 32KB internal work RAM.
+ * This callback determines where to go after the evolution scene ends
+ * (back to the overworld, back to battle, back to the trade screen, etc.). */
 COMMON_DATA void (*gCB2_AfterEvolution)(void) = NULL;
 
-#define sEvoCursorPos           gBattleCommunication[1] // when learning a new move
-#define sEvoGraphicsTaskId      gBattleCommunication[2]
+/* Aliases into gBattleCommunication[] for evolution-specific state.
+ * The battle communication array is reused here since the evolution scene
+ * borrows the battle UI infrastructure. */
+#define sEvoCursorPos           gBattleCommunication[1] /* Cursor position in move-learning menu */
+#define sEvoGraphicsTaskId      gBattleCommunication[2] /* Task ID for sparkle/effects graphics */
 
 // this file's functions
 static void Task_EvolutionScene(u8 taskId);
@@ -80,12 +125,21 @@ static const u8 sText_UnusedArrows[][10] = {
     _(" \n ")
 };
 
-// The below table is used by Task_UpdateBgPalette to control the speed at which the bg color updates.
-// The first two values are indexes into sBgAnim_PalIndexes (indirectly, via sBgAnimPal), and are
-// the start and end of the range of colors in sBgAnim_PalIndexes it will move through incrementally
-// before starting over. It will repeat this cycle x number of times, where x = the 3rd value,
-// delaying each increment by y, where y = the 4th value.
-// Once it has cycled x number of times, it will move to the next array in this table.
+/**
+ * Background animation palette control table.
+ *
+ * Each row defines one phase of the background color cycling animation:
+ *   [0] = start index into sBgAnim_PalIndexes (which row to begin at)
+ *   [1] = end index (which row to cycle up to before restarting)
+ *   [2] = number of times to repeat this cycle
+ *   [3] = delay (frames) between each palette index increment
+ *
+ * The animation progresses through these phases sequentially:
+ *   Phase 0: Slow fade from black to blue (rows 0-12, 1 cycle, 6 frame delay)
+ *   Phase 1: Fast blue pulsing (rows 13-36, 5 cycles, 2 frame delay)
+ *   Phase 2: Quick blue pulse (rows 13-24, 1 cycle, 2 frame delay)
+ *   Phase 3: Slow fade from blue to black (rows 37-49, 1 cycle, 6 frame delay)
+ */
 static const u8 sBgAnim_PaletteControl[][4] =
 {
     {  0, 12, 1, 6 },
@@ -197,6 +251,18 @@ static void Task_BeginEvolutionScene(u8 taskId)
     }
 }
 
+/**
+ * FUNCTION: BeginEvolutionScene
+ *
+ * PURPOSE: Entry point for starting an evolution from the overworld (e.g.,
+ * after gaining a level). Creates a transition task that fades to black,
+ * then hands off to EvolutionScene for the full animation.
+ *
+ * @param mon — pointer to the Pokemon that is evolving
+ * @param postEvoSpecies — the species it will evolve into
+ * @param canStopEvo — TRUE if the player can press B to cancel (FALSE for trade evolutions)
+ * @param partyId — index of the Pokemon in the player's party (0-5)
+ */
 void BeginEvolutionScene(struct Pokemon* mon, u16 postEvoSpecies, bool8 canStopEvo, u8 partyId)
 {
     u8 taskId = CreateTask(Task_BeginEvolutionScene, 0);
@@ -207,6 +273,34 @@ void BeginEvolutionScene(struct Pokemon* mon, u16 postEvoSpecies, bool8 canStopE
     SetMainCallback2(CB2_BeginEvolutionScene);
 }
 
+/**
+ * FUNCTION: EvolutionScene
+ *
+ * PURPOSE: Sets up the full evolution scene — clears the screen, loads both
+ * the pre-evolution and post-evolution Pokemon sprites, initializes the
+ * battle-style background, and starts the evolution state machine.
+ *
+ * HOW IT WORKS:
+ * 1. Clears ALL of VRAM (Video RAM, 96KB at 0x06000000) to start with a blank screen
+ * 2. Resets all window registers (no masking effects active)
+ * 3. Decompresses and creates sprites for both the old and new Pokemon forms
+ * 4. Loads each sprite's palette into separate OBJ palette slots
+ *    (slot 1 for pre-evo, slot 2 for post-evo) so they can be shown independently
+ * 5. Both sprites start invisible — the state machine reveals them in sequence
+ * 6. Saves the current BG palette so it can be restored after the animation
+ * 7. Starts playing no music (m4aMPlayAllStop) for dramatic silence
+ *
+ * GBA CONTEXT:
+ * VRAM is the 96KB of memory at 0x06000000 used for all graphics data on the
+ * GBA (tile data, tilemaps, sprite graphics). CpuFill32 fills it with zeros,
+ * which clears all visible graphics. The OBJ palette slots (OBJ_PLTT_ID) are
+ * in palette RAM at 0x05000200 — each slot holds 16 colors for sprites.
+ *
+ * @param mon — the evolving Pokemon
+ * @param postEvoSpecies — target species
+ * @param canStopEvo — whether B button can cancel
+ * @param partyId — party slot index
+ */
 void EvolutionScene(struct Pokemon* mon, u16 postEvoSpecies, bool8 canStopEvo, u8 partyId)
 {
     u8 name[20];
@@ -217,6 +311,8 @@ void EvolutionScene(struct Pokemon* mon, u16 postEvoSpecies, bool8 canStopEvo, u
 
     SetHBlankCallback(NULL);
     SetVBlankCallback(NULL);
+    /* Clear all 96KB of VRAM — erases all tile data, tilemaps, and sprite
+     * graphics from the previous screen. */
     CpuFill32(0, (void *)(VRAM), VRAM_SIZE);
 
     SetGpuReg(REG_OFFSET_MOSAIC, 0);
@@ -547,9 +643,30 @@ static void CB2_TradeEvolutionSceneUpdate(void)
     RunTasks();
 }
 
+/**
+ * FUNCTION: CreateShedinja
+ *
+ * PURPOSE: Handles the unique Nincada → Ninjask evolution by creating a
+ * bonus Shedinja in the player's party if there is room.
+ *
+ * GAME LOGIC:
+ * When Nincada evolves into Ninjask, if the player has an empty party slot
+ * (fewer than 6 Pokemon), a Shedinja magically appears in the party. Shedinja
+ * is a copy of the original Nincada but with its species changed, stats
+ * recalculated, and all ribbons/held items/markings cleared. This is one of
+ * the most unusual evolution mechanics in the entire Pokemon series.
+ *
+ * The function also handles a special case for Japanese-language games where
+ * Shedinja gets its Japanese name set explicitly.
+ *
+ * @param preEvoSpecies — the species before evolution (should be Nincada)
+ * @param mon — pointer to the Pokemon that just evolved into Ninjask
+ */
 static void CreateShedinja(u16 preEvoSpecies, struct Pokemon* mon)
 {
     u32 data = 0;
+    /* Only create Shedinja if the pre-evo was Nincada (via Ninjask method)
+     * AND there's room in the party. */
     if (gEvolutionTable[preEvoSpecies][0].method == EVO_LEVEL_NINJASK && gPlayerPartyCount < PARTY_SIZE)
     {
         s32 i;
@@ -584,7 +701,27 @@ static void CreateShedinja(u16 preEvoSpecies, struct Pokemon* mon)
     }
 }
 
-// States for the main switch in Task_EvolutionScene
+/**
+ * States for the evolution scene state machine (Task_EvolutionScene).
+ *
+ * The evolution animation progresses through these states in order:
+ *   1. FADE_IN → INTRO_MSG: Fade from black, show "What? X is evolving!"
+ *   2. INTRO_MON_ANIM → INTRO_SOUND: Animate pre-evo sprite, play cry
+ *   3. START_MUSIC: Begin the evolution music track
+ *   4. START_BG_AND_SPARKLE_SPIRAL: Show the animated background and
+ *      sparkle effects spiraling around the Pokemon
+ *   5. CYCLE_MON_SPRITE: The core morphing effect — rapidly alternates
+ *      between pre-evo and post-evo sprites
+ *   6. SPARKLE_CIRCLE → SPARKLE_SPRAY: More sparkle effects
+ *   7. RESTORE_SCREEN → EVO_MON_ANIM: Show the new Pokemon
+ *   8. SET_MON_EVOLVED: Actually modify the Pokemon's data to the new species
+ *   9. TRY_LEARN_MOVE: Check for and handle new moves learned at this level
+ *   10. END: Fade out and return to the previous screen
+ *
+ *   CANCEL states handle the player pressing B to stop evolution.
+ *   REPLACE_MOVE states handle the sub-dialog for learning moves when the
+ *   Pokemon already knows 4 moves.
+ */
 enum {
     EVOSTATE_FADE_IN,
     EVOSTATE_INTRO_MSG,

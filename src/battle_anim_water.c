@@ -1,3 +1,10 @@
+/**
+ * =BATTLE ANIMATION: WATER-TYPE MOVES=
+ *
+ * Visual effects for Water-type move animations (Water Gun stream,
+ * Surf tidal wave, Hydro Pump high-pressure jet, Bubble floating bubbles,
+ * Rain Dance falling rain, Waterfall cascading water, Dive splash, etc.).
+ */
 #include "global.h"
 #include "battle_anim.h"
 #include "decompress.h"

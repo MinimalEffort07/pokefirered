@@ -1,3 +1,26 @@
+/**
+ * =8-BIT (256-COLOR) WINDOW SYSTEM=
+ *
+ * FILE OVERVIEW:
+ * This file provides an alternative window system that uses 8-bit (256-color)
+ * graphics instead of the standard 4-bit (16-color) mode. This is used for
+ * screens that need more colors per tile, such as Pokemon summary screens
+ * or other graphically rich displays.
+ *
+ * GBA CONTEXT:
+ * The GBA supports two tile color modes:
+ *   4bpp (4 bits per pixel): Each pixel uses 4 bits, selecting from a
+ *     palette of 16 colors. Tiles are 32 bytes each (8x8 pixels * 4 bits).
+ *   8bpp (8 bits per pixel): Each pixel uses 8 bits, selecting from a
+ *     palette of 256 colors. Tiles are 64 bytes each (8x8 pixels * 8 bits).
+ *
+ * The 8bpp mode uses twice the VRAM per tile but provides much richer
+ * color variety. The constant 0x40 (64) used throughout this file is
+ * the size of a single 8bpp tile in bytes.
+ *
+ * This file parallels the standard window functions in window.c but
+ * uses 8bpp tile sizes (0x40 bytes/tile vs 0x20 bytes/tile for 4bpp).
+ */
 #include "global.h"
 #include "gflib.h"
 
@@ -10,6 +33,21 @@ static void nullsub_9(void)
 {
 }
 
+/**
+ * FUNCTION: AddWindow8Bit
+ *
+ * PURPOSE: Allocates and initializes an 8bpp window, including its tilemap
+ * buffer and tile data buffer.
+ *
+ * HOW IT WORKS:
+ * 1. Finds an unused window slot (bg == 0xFF means unused)
+ * 2. If the BG layer doesn't have a tilemap buffer yet, allocates one
+ * 3. Allocates tile data: width * height tiles * 0x40 bytes per 8bpp tile
+ * 4. If any allocation fails, cleans up and returns 0xFF (failure)
+ *
+ * @param template — window dimensions and position
+ * RETURNS: Window ID (0-31) on success, 0xFF on failure
+ */
 u16 AddWindow8Bit(const struct WindowTemplate *template)
 {
     u16 windowId;

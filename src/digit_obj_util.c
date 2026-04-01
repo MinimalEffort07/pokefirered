@@ -1,3 +1,25 @@
+/**
+ * =DIGIT OBJECT UTILITY=
+ *
+ * FILE OVERVIEW:
+ * This file provides a system for displaying numbers using hardware sprites
+ * (OBJ) instead of text windows. Each digit is rendered as a separate sprite
+ * from a digit tile sheet, allowing numbers to be displayed on top of other
+ * graphics without using the BG text system.
+ *
+ * This is used in contexts where numbers need to overlay complex backgrounds,
+ * such as minigame scores, timers, or other HUD elements that can't use the
+ * normal window-based text rendering.
+ *
+ * GBA CONTEXT:
+ * The GBA's sprites (OBJs) are always drawn on top of backgrounds, making
+ * them ideal for overlay numbers. Each "digit printer" allocates a set of
+ * OAM (Object Attribute Memory) entries — one per digit position. The
+ * digit graphics (0-9 and minus sign) are stored as a tile sheet, and
+ * each sprite's tile offset is changed to show the correct digit. This
+ * avoids the overhead of the text rendering system for simple numeric
+ * displays.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

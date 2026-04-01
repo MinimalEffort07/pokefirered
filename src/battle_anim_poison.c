@@ -1,3 +1,9 @@
+/**
+ * =BATTLE ANIMATION: POISON-TYPE MOVES=
+ *
+ * Visual effects for Poison-type move animations (Sludge Bomb flying sludge,
+ * Poison Sting needle, Toxic bubbles, Acid spray, Poison Gas clouds, etc.).
+ */
 #include "global.h"
 #include "battle_anim.h"
 #include "trig.h"

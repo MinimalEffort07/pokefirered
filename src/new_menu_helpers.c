@@ -1,3 +1,13 @@
+/**
+ * =NEW MENU HELPER FUNCTIONS=
+ *
+ * Higher-level menu helper functions added in FireRed/LeafGreen that build
+ * on the base menu system from Ruby/Sapphire. These provide convenience
+ * wrappers for common menu operations: drawing standard window frames,
+ * printing formatted text in windows, managing dialog boxes with speaker
+ * names, and handling the "context-aware" NPC text color system (where
+ * text color changes based on the NPC's gender).
+ */
 #include "global.h"
 #include "gflib.h"
 #include "help_message.h"

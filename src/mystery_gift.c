@@ -1,3 +1,22 @@
+/**
+ * @file mystery_gift.c
+ * @brief Mystery Gift Data Management — Saving, Loading, and Validating Gift Data
+ *
+ * FILE OVERVIEW:
+ * This file manages the persistent storage of Mystery Gift data (Wonder Cards,
+ * Wonder News, stamps, and associated metadata) in the save file. It handles:
+ *
+ *   - Validating Wonder Card and Wonder News data integrity via CRC16 checksums
+ *   - Saving/loading gift data to/from the save block
+ *   - Tracking which gifts have been received (to prevent duplicates)
+ *   - Managing card "stamps" (a collectible feature on Wonder Cards)
+ *   - Comparing incoming gifts against already-saved gifts
+ *   - Building link game data packets for server compatibility checks
+ *   - Enabling/disabling Mystery Gift functionality
+ *
+ * All persistent data uses CRC16 checksums to detect corruption. The
+ * CALC_CRC macro is a convenience wrapper for CalcCRC16WithTable.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "constants/songs.h"
@@ -16,6 +35,7 @@
 #include "mystery_gift.h"
 #include "strings.h"
 
+/* Convenience macro: compute CRC16 checksum of a data structure */
 #define CALC_CRC(data) CalcCRC16WithTable((void *)&(data), sizeof(data))
 
 static bool32 ValidateWonderNews(const struct WonderNews * src);

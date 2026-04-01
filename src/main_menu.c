@@ -1,3 +1,33 @@
+/*
+ * =Pokemon FireRed Main Menu=
+ *
+ * This file implements the main menu screen that appears after the title
+ * screen. The menu offers up to three options depending on save state:
+ *   - NEW GAME: Always available. Starts the Oak Speech intro sequence.
+ *   - CONTINUE: Shown when a valid save file exists. Displays player name,
+ *               play time, Pokedex count, and badge count.
+ *   - MYSTERY GIFT: Shown when the player has unlocked this feature. Requires
+ *                   a Wireless Adapter to be connected.
+ *
+ * VISUAL DESIGN:
+ * The selected menu option is highlighted using the GBA's Window 0 (WIN0)
+ * hardware feature combined with a screen-darkening blend effect. The area
+ * inside WIN0 is displayed normally while everything outside is dimmed,
+ * creating a spotlight effect on the current selection. WIN0 is repositioned
+ * each time the cursor moves to highlight the selected menu item.
+ *
+ * GBA CONTEXT - WINDOW BLENDING:
+ * The GBA has two hardware windows (WIN0, WIN1) that define rectangular regions
+ * on screen. Each region can independently control which background layers and
+ * objects are visible. Combined with the Blend registers (BLDCNT, BLDY), you
+ * can create effects like darkening/brightening specific screen regions.
+ * Here, BLDCNT is set to darken all layers, and WIN0 marks the highlighted
+ * area as exempt from darkening (via WININ/WINOUT register configuration).
+ *
+ * The menu also includes a DEBUG_GAMEPLAY mode that skips the Oak Speech and
+ * immediately starts a new game with randomized player/rival names, a random
+ * avatar sprite, and a level-100 Squirtle.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "scanline_effect.h"
@@ -26,11 +56,12 @@
 #include "constants/vars.h"
 #include "constants/species.h"
 
+/* The three possible menu configurations, determined by save file status. */
 enum MainMenuType
 {
-    MAIN_MENU_NEWGAME = 0,
-    MAIN_MENU_CONTINUE,
-    MAIN_MENU_MYSTERYGIFT
+    MAIN_MENU_NEWGAME = 0,    /* No save file: only "New Game" is shown */
+    MAIN_MENU_CONTINUE,       /* Save file exists: "Continue" + "New Game" */
+    MAIN_MENU_MYSTERYGIFT     /* Mystery Gift unlocked: all three options */
 };
 
 enum MainMenuWindow
@@ -43,12 +74,14 @@ enum MainMenuWindow
     MAIN_MENU_WINDOW_COUNT
 };
 
-#define tMenuType  data[0]
-#define tCursorPos data[1]
+/* Task data field aliases. Tasks have a data[] array for storing state;
+ * these macros give meaningful names to each slot used by menu tasks. */
+#define tMenuType  data[0]   /* Which MainMenuType is active */
+#define tCursorPos data[1]   /* Currently highlighted option (0, 1, or 2) */
 
-#define tUnused8         data[8]
-#define tMGErrorMsgState data[9]
-#define tMGErrorType     data[10]
+#define tUnused8         data[8]   /* Stores the 'a0' parameter, not used */
+#define tMGErrorMsgState data[9]   /* State machine for Mystery Gift error display */
+#define tMGErrorType     data[10]  /* Type of Mystery Gift error (1=wireless not connected) */
 
 static bool32 MainMenuGpuInit(u8 a0);
 static void Task_SetWin0BldRegsAndCheckSaveFile(u8 taskId);
@@ -171,6 +204,27 @@ static void CB2_InitMainMenu_2(void)
     MainMenuGpuInit(1);
 }
 
+/**
+ * FUNCTION: MainMenuGpuInit
+ *
+ * PURPOSE: Initialize all GPU hardware and create the main menu task.
+ *          This is a full GPU reset that prepares for the menu screen.
+ *
+ * GBA CONTEXT:
+ * This function follows the standard GBA screen transition pattern:
+ * 1. Disable VBlank callback to prevent glitches during setup
+ * 2. Clear DISPCNT to turn off all display
+ * 3. Reset all BG control and scroll registers to zero
+ * 4. Clear VRAM, OAM, and palette RAM using DMA fills
+ * 5. Reset all subsystems (tasks, sprites, palettes, fade)
+ * 6. Set up the BG layer configuration and window system
+ * 7. Create the main task and set the new callbacks
+ * 8. Enable display with the appropriate layers
+ *
+ * DmaFill16/DmaFill32 use DMA channel 3 to rapidly fill memory regions.
+ * PLTT+2 is used (skipping the first 2 bytes) to avoid overwriting the
+ * backdrop color during the fill, then the palette fade takes over.
+ */
 static bool32 MainMenuGpuInit(u8 a0)
 {
     u8 taskId;
@@ -226,6 +280,25 @@ static bool32 MainMenuGpuInit(u8 a0)
  * the player cursor position.
  */
 
+/**
+ * FUNCTION: Task_SetWin0BldRegsAndCheckSaveFile
+ *
+ * PURPOSE: Configure the WIN0 spotlight and screen-darkening blend, then
+ *          check the save file status to determine which menu options to show.
+ *
+ * GBA CONTEXT:
+ * WININ (0x0001): Inside WIN0, only BG0 is enabled (the menu text layer).
+ * WINOUT (0x0021): Outside WIN0, BG0 + blend effects are active (dimmed).
+ * BLDCNT: Set to darken all target layers (BG0-3, OBJ, backdrop).
+ * BLDY (7): The darkening intensity (0=none, 16=fully black). 7 = subtle dim.
+ *
+ * Save file status handling:
+ *   SAVE_STATUS_OK: Normal save exists, show Continue (+ Mystery Gift if unlocked)
+ *   SAVE_STATUS_INVALID: Save was corrupted/deleted, show error then New Game only
+ *   SAVE_STATUS_ERROR: Save has errors, show warning then Continue
+ *   SAVE_STATUS_EMPTY: No save file, show New Game only
+ *   SAVE_STATUS_NO_FLASH: Flash memory chip not detected (hardware error)
+ */
 static void Task_SetWin0BldRegsAndCheckSaveFile(u8 taskId)
 {
     if (!gPaletteFade.active)
@@ -337,6 +410,25 @@ static void Task_WaitFadeAndPrintMainMenuText(u8 taskId)
     }
 }
 
+/**
+ * FUNCTION: Task_PrintMainMenuText
+ *
+ * PURPOSE: Print all menu option text and player stats based on the menu type.
+ *          This draws "Continue", "New Game", "Mystery Gift" labels and the
+ *          Continue screen's player stats (name, time, dex count, badges).
+ *
+ * HOW IT WORKS:
+ * Sets a gender-based accent color (blue for male, pink for female) in
+ * palette slot 15, index 1. Then, based on tMenuType, draws the appropriate
+ * windows: just "New Game" for new saves, "Continue" + "New Game" for existing
+ * saves, or all three for Mystery Gift-enabled saves.
+ *
+ * GBA CONTEXT:
+ * Each menu option is drawn in its own window (MAIN_MENU_WINDOW_*). This
+ * allows each option to be independently positioned, filled, and framed.
+ * MainMenu_DrawWindow draws a decorative border around each window using
+ * the user's selected window frame style from the Options menu.
+ */
 static void Task_PrintMainMenuText(u8 taskId)
 {
     u16 pal;
@@ -423,6 +515,26 @@ static void Task_HandleMenuInput(u8 taskId)
     }
 }
 
+/**
+ * FUNCTION: Task_ExecuteMainMenuSelection
+ *
+ * PURPOSE: Execute the action for the selected menu option after the fade-out
+ *          animation completes. This is where the game actually transitions
+ *          to New Game, Continue, or Mystery Gift.
+ *
+ * GAME LOGIC:
+ * Maps the (menuType, cursorPos) pair to a menuAction:
+ *   - MAIN_MENU_NEWGAME: Starts Oak Speech (or debug quick-start if DEBUG_GAMEPLAY)
+ *   - MAIN_MENU_CONTINUE: Loads save and attempts Quest Log playback
+ *   - MAIN_MENU_MYSTERYGIFT: Opens the Mystery Gift receive screen
+ *
+ * For Mystery Gift, checks for a Wireless Adapter first. If not connected,
+ * displays an error and returns to the title screen instead.
+ *
+ * The DEBUG_GAMEPLAY block provides a rapid-start path for development: it
+ * sets up a player with random names, a random avatar sprite, skips Pallet
+ * Town intro events, and gives a level 100 Squirtle.
+ */
 static void Task_ExecuteMainMenuSelection(u8 taskId)
 {
     s32 menuAction;
@@ -579,6 +691,21 @@ static void Task_ReturnToTileScreen(u8 taskId)
     }
 }
 
+/**
+ * FUNCTION: MoveWindowByMenuTypeAndCursorPos
+ *
+ * PURPOSE: Reposition the WIN0 highlight rectangle to spotlight the currently
+ *          selected menu option. This creates the "selected item is brighter"
+ *          visual effect that makes the current choice obvious to the player.
+ *
+ * GBA CONTEXT:
+ * WIN0H sets the horizontal range (left=18, right=222 pixels, roughly centered).
+ * WIN0V sets the vertical range, which varies by cursor position:
+ *   Cursor 0 (Continue): rows 0-96 (taller because it shows player stats)
+ *   Cursor 1 (New Game): rows 96-128
+ *   Cursor 2 (Mystery Gift): rows 128-160
+ * The +2/-2 pixel insets keep a small gap between the highlight and the frame.
+ */
 static void MoveWindowByMenuTypeAndCursorPos(u8 menuType, u8 cursorPos)
 {
     u16 win0vTop, win0vBot;

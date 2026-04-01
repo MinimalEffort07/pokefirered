@@ -1,3 +1,22 @@
+/**
+ * @file pokemon_storage_system_data.c
+ * @brief PC Box Storage Data — Pokemon Move/Copy Operations and Box State
+ *
+ * FILE OVERVIEW:
+ * This file handles the data-level operations for the Pokemon Storage System
+ * (Bill's PC): moving Pokemon between boxes and party, handling held items
+ * and mail during transfers, compacting empty slots, and managing the "multi
+ * select" (move multiple Pokemon at once) feature.
+ *
+ * Key operations:
+ *   - Depositing party Pokemon into boxes
+ *   - Withdrawing box Pokemon into the party
+ *   - Moving Pokemon between box positions
+ *   - Releasing (deleting) Pokemon permanently
+ *   - Item and mail handling during deposits/withdrawals
+ *   - Box and party slot compaction after removals
+ *   - Multi-selection grab/place operations
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"

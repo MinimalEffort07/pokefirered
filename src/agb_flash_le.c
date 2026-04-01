@@ -1,3 +1,10 @@
+/**
+ * =AGB FLASH LE (SANYO/SHARP) DRIVER=
+ *
+ * Flash driver for LE-type (Sanyo/Sharp) flash chips. Contains timing
+ * constants and chip-specific erase/program functions for this flash
+ * chip variant. Different GBA cartridges may use different flash chips.
+ */
 #include "gba/gba.h"
 #include "gba/flash_internal.h"
 

@@ -1,3 +1,18 @@
+/**
+ * @file berry_crush.c
+ * @brief Berry Crush Minigame — Multiplayer Berry Powder Generation
+ *
+ * FILE OVERVIEW:
+ * Berry Crush is a wireless multiplayer minigame where 2-5 players work together
+ * to crush berries into Berry Powder using the GBA Wireless Adapter. Players
+ * rapidly press the A button in sync to drive a crushing mechanism. The powder
+ * generated depends on the berry type and how well the group is synchronized.
+ *
+ * This file implements the entire minigame: the lobby/waiting screen, berry
+ * selection, the crushing gameplay with timing indicators, score tallying,
+ * result display, and the wireless communication protocol for synchronizing
+ * button presses and game state across all connected players.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

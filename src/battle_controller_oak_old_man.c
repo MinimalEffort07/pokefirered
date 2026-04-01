@@ -1,3 +1,18 @@
+/**
+ * =OAK/OLD MAN BATTLE CONTROLLER=
+ *
+ * FILE OVERVIEW:
+ * This file implements the battle controller for two tutorial-style battles:
+ *   1. PROFESSOR OAK'S TUTORIAL: At the very start of the game, Oak
+ *      demonstrates how to catch a Pokemon
+ *   2. OLD MAN'S TUTORIAL: In Viridian City, an old man shows the player
+ *      how to catch a wild Weedle
+ *
+ * Both tutorials use scripted/automated actions rather than player input.
+ * The controller auto-selects moves and throws Poke Balls at predetermined
+ * moments to walk the player through the catch process. The text messages
+ * displayed are instructional rather than the normal battle messages.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"

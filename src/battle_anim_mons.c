@@ -1,3 +1,16 @@
+/**
+ * =BATTLE ANIMATION: MON SPRITE MANAGEMENT=
+ *
+ * FILE OVERVIEW:
+ * This file handles Pokemon sprite manipulation during battle animations.
+ * It provides functions for positioning, transforming, and managing the
+ * battler sprites themselves (not the move effect particles). Key features:
+ *   - Getting battler sprite coordinates for animation targeting
+ *   - Loading and managing substitute doll sprites
+ *   - Sprite palette blending and color effects
+ *   - Sprite visibility toggling during animations
+ *   - Affine transform (scaling/rotation) helpers for sprites
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"

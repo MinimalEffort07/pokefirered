@@ -1,11 +1,41 @@
+/**
+ * @file sprite.h
+ * @brief Sprite System Header — OAM Sprite Management Structures and Functions
+ *
+ * FILE OVERVIEW:
+ * This header defines the sprite system that manages all hardware sprites (OAM
+ * objects) in the game. The GBA supports up to 128 hardware sprites, but this
+ * engine manages a software layer of up to MAX_SPRITES (64) game-level sprites,
+ * each with rich features beyond what raw OAM provides.
+ *
+ * Key structures:
+ *   - Sprite: A game-level sprite with position, animation state, callbacks,
+ *     affine transformation, and user data fields
+ *   - SpriteTemplate: A blueprint for creating sprites (graphics, animations,
+ *     callbacks, affine settings)
+ *   - SpriteSheet/SpritePalette: Graphics and color data loaded into VRAM/PLTT
+ *   - SpriteAnim/SpriteFrameImage: Animation frame sequences
+ *   - Subsprite: Allows one logical sprite to be composed of multiple OAM entries
+ *
+ * GBA CONTEXT:
+ * The GBA's OAM (Object Attribute Memory) at 0x07000000 holds 128 sprite entries,
+ * each 8 bytes. Sprites can be 8x8 to 64x64 pixels, use 16 or 256 colors, and
+ * support hardware rotation/scaling via affine matrices (32 available). The
+ * sprite system abstracts all of this — game code creates sprites from templates
+ * and the system handles OAM allocation, tile management, animation, and affine
+ * matrix assignment automatically.
+ *
+ * TAG_NONE (0xFFFF) is a sentinel meaning "no tag" — used when sprite graphics
+ * are managed manually rather than through the tag-based resource system.
+ */
 #ifndef GUARD_SPRITE_H
 #define GUARD_SPRITE_H
 
 #include "global.h"
 
-#define MAX_SPRITES 64
-#define SPRITE_NONE 0xFF
-#define TAG_NONE 0xFFFF
+#define MAX_SPRITES 64     /* Maximum game-level sprites (fewer than the 128 hardware OAM slots) */
+#define SPRITE_NONE 0xFF   /* Sentinel value meaning "no sprite allocated" */
+#define TAG_NONE 0xFFFF    /* Sentinel meaning "no resource tag assigned" */
 
 // Given to SetSpriteMatrixAnchor to skip anchoring one of the coords.
 #define NO_ANCHOR 0x800

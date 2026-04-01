@@ -1,3 +1,24 @@
+/**
+ * @file field_specials.c
+ * @brief Field Special Functions — Script-Callable Overworld Utilities
+ *
+ * FILE OVERVIEW:
+ * This file contains a large collection of miscellaneous script-callable
+ * functions used by event scripts throughout the game. These are "special"
+ * functions invoked from scripts via the "special" command to perform actions
+ * that are too complex for the scripting language itself.
+ *
+ * Functions include:
+ *   - NPC dialogue helpers (checking conditions, setting up dynamic text)
+ *   - Mini-event implementations (slot machines, game corner prizes, quiz NPCs)
+ *   - Map/location utilities (checking current map, setting warp destinations)
+ *   - Pokemon-related specials (checking party, teaching moves, egg hatching)
+ *   - Sevii Islands event logic
+ *   - Miscellaneous game state queries and modifications
+ *
+ * Most functions read/write gSpecialVar_Result to communicate results back to
+ * the calling event script.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "quest_log.h"

@@ -1,3 +1,12 @@
+/**
+ * =MAIL VIEWING SCREEN=
+ *
+ * This file implements the Mail reading interface — the screen that
+ * appears when viewing a mail item attached to a Pokemon. Each mail type
+ * has a unique decorative background design (Orange Mail, Harbor Mail,
+ * etc.) and displays the sender's written message along with the
+ * sender's name and the species of the Pokemon holding it.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "scanline_effect.h"

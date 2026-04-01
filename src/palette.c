@@ -1,3 +1,63 @@
+/*
+ * palette.c - Palette Management and Fade Effects
+ *
+ * ============================================================================
+ * THE GBA PALETTE SYSTEM
+ * ============================================================================
+ *
+ * The GBA stores ALL display colors in Palette RAM (0x05000000, 1 KB).
+ * There are 512 color entries total (each 16 bits, BGR555 format):
+ *
+ *   BG Palettes  (0x05000000): 256 entries for background tiles
+ *   OBJ Palettes (0x05000200): 256 entries for sprites
+ *
+ * In 4bpp mode (most common), these are organized as 16 sub-palettes
+ * of 16 colors each. Each tile/sprite specifies which sub-palette it uses.
+ * Entry 0 of each sub-palette is TRANSPARENT (not drawn).
+ *
+ * ============================================================================
+ * DUAL PALETTE BUFFER SYSTEM
+ * ============================================================================
+ *
+ * This file manages TWO palette buffers in EWRAM:
+ *
+ *   gPlttBufferUnfaded[512]: The "original" colors as loaded from ROM.
+ *     This is the GROUND TRUTH. Fading effects read from here.
+ *
+ *   gPlttBufferFaded[512]:   The "display" colors after effects are applied.
+ *     This is what gets copied to hardware palette RAM during VBlank.
+ *
+ * WHY TWO BUFFERS?
+ *   Screen fades (e.g., fade to black when entering a battle) need to
+ *   progressively modify ALL colors toward a target. Without the unfaded
+ *   buffer, after fading to black, we'd have no way to fade BACK to the
+ *   original colors (they'd all be 0x0000).
+ *
+ * FLOW:
+ *   1. LoadPalette() writes colors to BOTH buffers (unfaded = faded)
+ *   2. BeginNormalPaletteFade() starts a fade animation
+ *   3. UpdatePaletteFade() is called each frame, blending colors in
+ *      gPlttBufferFaded toward the target color based on the fade progress
+ *   4. TransferPlttBuffer() DMA-copies gPlttBufferFaded to hardware palette RAM
+ *
+ * ============================================================================
+ * FADE MODES
+ * ============================================================================
+ *
+ * NORMAL_FADE:    Software fade. Each frame, blend each selected palette
+ *                 entry from unfaded toward blendColor by deltaY.
+ *                 Controlled by gPaletteFade.y (current blend level 0-16).
+ *
+ * FAST_FADE:      Software fade that skips to completion quickly.
+ *                 Used for instant screen transitions.
+ *
+ * HARDWARE_FADE:  Uses the GBA's hardware blend registers (REG_BLDCNT,
+ *                 REG_BLDALPHA, REG_BLDY) instead of software blending.
+ *                 More limited but uses zero CPU time for the blend itself.
+ *
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "util.h"
@@ -6,9 +66,9 @@
 
 enum
 {
-    NORMAL_FADE,
-    FAST_FADE,
-    HARDWARE_FADE,
+    NORMAL_FADE,    /* Software per-color blending */
+    FAST_FADE,      /* Software fast fade */
+    HARDWARE_FADE,  /* GPU-assisted blend via REG_BLDCNT/BLDY */
 };
 
 // These are structs for some unused palette system.
@@ -78,6 +138,20 @@ static const u8 sRoundedDownGrayscaleMap[] =
     31, 31
 };
 
+/**
+ * FUNCTION: LoadCompressedPalette
+ *
+ * PURPOSE: Decompress LZ77-compressed palette data and load it into both palette buffers.
+ *
+ * HOW IT WORKS:
+ * 1. Decompresses the palette from ROM into gPaletteDecompressionBuffer (EWRAM).
+ * 2. Copies the decompressed colors to BOTH gPlttBufferUnfaded and gPlttBufferFaded
+ *    at the specified offset.
+ *
+ * @param src    — LZ77-compressed palette data in ROM
+ * @param offset — Starting palette index (0-511) to load into
+ * @param size   — Number of BYTES to copy (each color is 2 bytes)
+ */
 void LoadCompressedPalette(const u32 *src, u16 offset, u16 size)
 {
     LZDecompressWram(src, gPaletteDecompressionBuffer);
@@ -85,18 +159,66 @@ void LoadCompressedPalette(const u32 *src, u16 offset, u16 size)
     CpuCopy16(gPaletteDecompressionBuffer, &gPlttBufferFaded[offset], size);
 }
 
+/**
+ * FUNCTION: LoadPalette
+ *
+ * PURPOSE: Load uncompressed palette data into both palette buffers.
+ *
+ * HOW IT WORKS:
+ * Copies raw palette data to both buffers using CpuCopy16 (BIOS call).
+ * Used for palettes that are already decompressed or stored uncompressed in ROM.
+ *
+ * @param src    — Pointer to palette color data (array of u16 BGR555 values)
+ * @param offset — Starting palette index (0-511)
+ * @param size   — Number of bytes to copy
+ */
 void LoadPalette(const void *src, u16 offset, u16 size)
 {
     CpuCopy16(src, &gPlttBufferUnfaded[offset], size);
     CpuCopy16(src, &gPlttBufferFaded[offset], size);
 }
 
+/**
+ * FUNCTION: FillPalette
+ *
+ * PURPOSE: Fill a range of palette entries with a single color.
+ *
+ * HOW IT WORKS:
+ * Uses CpuFill16 to write the same color value to every entry in the
+ * specified range, in both buffers. Used to clear palettes or set
+ * uniform colors (e.g., all black for fade-out).
+ *
+ * @param value  — BGR555 color to fill with (e.g., RGB_BLACK = 0x0000)
+ * @param offset — Starting palette index
+ * @param size   — Number of bytes to fill
+ */
 void FillPalette(u16 value, u16 offset, u16 size)
 {
     CpuFill16(value, &gPlttBufferUnfaded[offset], size);
     CpuFill16(value, &gPlttBufferFaded[offset], size);
 }
 
+/**
+ * FUNCTION: TransferPlttBuffer
+ *
+ * PURPOSE: Copy the faded palette buffer to hardware Palette RAM.
+ *
+ * HOW IT WORKS:
+ * Uses DMA channel 3 to copy all 1024 bytes of gPlttBufferFaded to
+ * hardware Palette RAM (0x05000000). This makes the current fade state
+ * visible on screen.
+ *
+ * Called from the VBlank callback (during the vertical blank period when
+ * it's safe to write to Palette RAM).
+ *
+ * If a hardware fade is active, also updates the blend registers
+ * (REG_BLDCNT, REG_BLDALPHA, REG_BLDY) to match the current fade state.
+ *
+ * GBA CONTEXT:
+ * Palette RAM should only be written during VBlank. Writing mid-frame
+ * can cause "palette tearing" where part of the screen uses old colors
+ * and part uses new colors.
+ */
 void TransferPlttBuffer(void)
 {
     if (!gPaletteFade.bufferTransferDisabled)
@@ -110,6 +232,19 @@ void TransferPlttBuffer(void)
     }
 }
 
+/**
+ * FUNCTION: UpdatePaletteFade
+ *
+ * PURPOSE: Advance the palette fade animation by one frame.
+ *
+ * HOW IT WORKS:
+ * Called once per frame. Delegates to the appropriate fade handler
+ * based on the current mode (NORMAL_FADE, FAST_FADE, or HARDWARE_FADE).
+ * Sets sPlttBufferTransferPending if the palette was modified, which
+ * signals TransferPlttBuffer to copy to hardware.
+ *
+ * RETURNS: Fade status - PALETTE_FADE_STATUS_LOADING (still fading) or 0 (done)
+ */
 u8 UpdatePaletteFade(void)
 {
     u8 result;
@@ -148,6 +283,35 @@ void ReadPlttIntoBuffers(void)
     }
 }
 
+/**
+ * FUNCTION: BeginNormalPaletteFade
+ *
+ * PURPOSE: Start a software palette fade animation.
+ *
+ * HOW IT WORKS:
+ * Configures the fade parameters and triggers the first update immediately.
+ * On subsequent frames, UpdatePaletteFade() will advance the fade.
+ *
+ * The fade interpolates each selected palette entry's RGB channels from
+ * their unfaded values toward blendColor. The blend level 'y' starts
+ * at startY and moves toward targetY, changing by deltaY each frame.
+ *
+ * GAME LOGIC:
+ * This is how screen transitions work:
+ *   Fade to black: BeginNormalPaletteFade(0xFFFFFFFF, 0, 0, 16, RGB_BLACK)
+ *   Fade from black: BeginNormalPaletteFade(0xFFFFFFFF, 0, 16, 0, RGB_BLACK)
+ *   Fade to white: BeginNormalPaletteFade(0xFFFFFFFF, 0, 0, 16, RGB_WHITE)
+ *
+ * @param selectedPalettes — Bitmask of which palettes to fade (bit N = palette N).
+ *                           0xFFFFFFFF = all 32 palettes (16 BG + 16 OBJ).
+ * @param delay  — Frames to wait between blend steps (0 = every frame).
+ *                 Negative delay increases deltaY speed instead.
+ * @param startY — Starting blend coefficient (0 = no blend, 16 = fully blended)
+ * @param targetY — Target blend coefficient
+ * @param blendColor — BGR555 color to blend toward
+ *
+ * RETURNS: TRUE if the fade was started, FALSE if a fade is already active
+ */
 bool8 BeginNormalPaletteFade(u32 selectedPalettes, s8 delay, u8 startY, u8 targetY, u16 blendColor)
 {
     u8 temp;

@@ -1,3 +1,27 @@
+/**
+ * =SPECIAL FIELD ANIMATIONS (ESCALATORS AND TELEPORTERS)=
+ *
+ * FILE OVERVIEW:
+ * This file implements animated map tile effects for escalators and
+ * Silph Co. teleporter pads. These animations work by cycling through
+ * different metatile IDs over time, creating the illusion of movement.
+ *
+ * ESCALATORS: The Pokemon Center 2F escalator has 3 animation stages.
+ * Each frame, the escalator metatiles are swapped to the next stage,
+ * creating a smooth scrolling effect. This requires modifying the actual
+ * map data (not just a visual overlay) because metatiles are the GBA's
+ * basic map rendering unit.
+ *
+ * TELEPORTERS: Silph Co. teleporter pads have animated housing and cable
+ * effects, also implemented through metatile cycling.
+ *
+ * GBA CONTEXT:
+ * Metatile animation is done by writing new metatile IDs directly into
+ * the map grid buffer, then calling DrawWholeMapView to re-render the
+ * affected area. This is different from BG tile animation (which swaps
+ * tile graphics in VRAM) — here we're changing which metatiles are
+ * referenced in the map data itself.
+ */
 #include "global.h"
 #include "event_data.h"
 #include "task.h"

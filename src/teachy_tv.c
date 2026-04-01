@@ -1,3 +1,17 @@
+/**
+ * @file teachy_tv.c
+ * @brief Teachy TV — Tutorial Key Item with Gameplay Instruction Videos
+ *
+ * FILE OVERVIEW:
+ * The Teachy TV is a Key Item in FireRed/LeafGreen that plays tutorial videos
+ * teaching game mechanics. It covers topics like catching Pokemon, using items
+ * in battle, type matchups, and status conditions. Each tutorial shows an
+ * animated demonstration with narrated text explaining the concept.
+ *
+ * The system manages a topic selection menu, the playback of scripted battle
+ * demonstrations (using a special "Pokedude" battle controller), and the
+ * text commentary that accompanies each tutorial sequence.
+ */
 #include "task.h"
 #include "gflib.h"
 #include "menu_helpers.h"

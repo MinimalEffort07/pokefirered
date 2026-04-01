@@ -1,3 +1,29 @@
+/**
+ * @file option_menu.c
+ * @brief Options Menu Screen — Player Settings Configuration
+ *
+ * FILE OVERVIEW:
+ * This file implements the OPTIONS screen accessible from the Start Menu.
+ * The player can adjust the following settings:
+ *
+ * - TEXT SPEED: How fast text appears in dialogue boxes (SLOW / MID / FAST)
+ * - BATTLE SCENE: Whether battle move animations play (ON / OFF)
+ * - BATTLE STYLE: Whether the player gets a chance to switch Pokemon before
+ *   the opponent sends out a new one (SHIFT / SET)
+ * - SOUND: Audio output mode (MONO / STEREO)
+ * - BUTTON MODE: Key configuration for help system (NORMAL / LR / L=A)
+ * - FRAME TYPE: Visual style of the text window border (types 1-20)
+ * - CANCEL: Exit the options menu and save changes
+ *
+ * All settings are stored in gSaveBlock2Ptr (the player's save data) so they
+ * persist between play sessions.
+ *
+ * GBA CONTEXT — SOUND MODES:
+ * The GBA has a single speaker (mono output), but can output stereo through
+ * the headphone jack. The MONO/STEREO option tells the M4A sound engine
+ * (MPlayFunc_Pan in m4a_internal.h) whether to apply stereo panning or
+ * mix everything to the center channel.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "scanline_effect.h"

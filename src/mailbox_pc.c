@@ -1,3 +1,15 @@
+/**
+ * =MAILBOX PC=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Mailbox feature of the Player's PC, which
+ * allows reading and managing mail items. Mail is a special item type
+ * that can hold a short text message and be attached to a Pokemon for
+ * trading. The Mailbox PC lets the player:
+ *   - Read saved mail messages
+ *   - Move mail to/from the bag
+ *   - Give mail to a Pokemon to hold
+ */
 #include "global.h"
 #include "gflib.h"
 #include "menu.h"

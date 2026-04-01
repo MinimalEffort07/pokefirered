@@ -1,3 +1,14 @@
+/**
+ * @file credits.c
+ * @brief Credits Sequence — End-Game Staff Roll and Pokemon Showcase
+ *
+ * FILE OVERVIEW:
+ * This file implements the end-game credits sequence that plays after the player
+ * defeats the Champion and enters the Hall of Fame. It displays scrolling staff
+ * credits (developers, artists, producers, etc.) interleaved with scenes showing
+ * the player's Pokemon and key game moments. The credits include background
+ * animations, palette cycling effects, and music synchronization.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "credits.h"

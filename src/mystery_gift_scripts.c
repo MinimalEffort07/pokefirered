@@ -1,3 +1,27 @@
+/**
+ * @file mystery_gift_scripts.c
+ * @brief Mystery Gift Communication Scripts — Client/Server Command Sequences
+ *
+ * FILE OVERVIEW:
+ * This file defines the scripted command sequences that drive Mystery Gift
+ * communication between two GBA systems (a "server" distributing gifts and
+ * a "client" receiving them). These are not game event scripts — they are
+ * structured command arrays that the Mystery Gift state machine interprets
+ * to orchestrate the multi-step wireless exchange.
+ *
+ * The protocol handles:
+ *   - Wonder Card distribution (special event cards with rewards)
+ *   - Wonder News distribution (news bulletins with berry rewards)
+ *   - Error handling (communication errors, duplicate cards, cancellation)
+ *   - Card replacement prompts (asking the player to toss an old card)
+ *
+ * ARCHITECTURE:
+ * Each script is an array of command structs (MysteryGiftClientCmd or
+ * MysteryGiftServerCmd). Commands include sending/receiving data over the
+ * link, loading saved data, checking conditions, branching to other scripts,
+ * and returning with a result message. The client and server scripts work
+ * in tandem — the server tells the client which script to run next.
+ */
 #include "global.h"
 #include "mystery_gift_server.h"
 #include "mystery_gift_client.h"
@@ -5,7 +29,7 @@
 
 extern const struct MysteryGiftServerCmd gServerScript_ClientCanceledCard[];
 
-// Unreferenced
+/* Unreferenced text — may have been used in a stamp-collecting Mystery Gift variant */
 static const u8 sText_CollectedAllStamps[] = _("You have collected all STAMPs!\nWant to input a CARD as a prize?");
 
 //==================

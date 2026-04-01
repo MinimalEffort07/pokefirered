@@ -1,3 +1,18 @@
+/**
+ * =ITEM MENU (BAG SCREEN)=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Bag screen — the main item management interface
+ * where players view, use, give, and toss items. The bag is organized
+ * into pockets (Items, Key Items, Poke Balls, etc.), each shown as a
+ * separate tab. Features include:
+ *   - Pocket switching with left/right buttons
+ *   - Scrollable item list with icons and quantities
+ *   - Context menu (Use, Give, Toss, Register)
+ *   - Item sorting
+ *   - Integration with field use (using items on Pokemon/overworld)
+ *   - Battle bag mode (selecting items to use in battle)
+ */
 #include "global.h"
 #include "gflib.h"
 #include "bag.h"

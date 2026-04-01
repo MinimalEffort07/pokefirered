@@ -1,8 +1,27 @@
+/**
+ * =RENEWABLE HIDDEN ITEMS=
+ *
+ * FILE OVERVIEW:
+ * This file implements the renewable hidden item system — a mechanic
+ * where certain hidden items in specific locations respawn over time
+ * after being collected. This is unique to FireRed/LeafGreen.
+ *
+ * Each renewable location has three tiers of items with different
+ * drop rates:
+ *   - Rare items:     10% chance (valuable items like nuggets, rare candies)
+ *   - Uncommon items: 30% chance (medium-value items)
+ *   - Common items:   60% chance (basic items like potions)
+ *
+ * When the player enters a qualifying map, the system randomly decides
+ * which hidden items from each group should be active, creating variety
+ * in what the player finds each time they revisit an area.
+ */
 #include "global.h"
 #include "event_data.h"
 #include "random.h"
 #include "constants/maps.h"
 
+/* Maximum number of renewable hidden items per location group. */
 #define MAX_HIDDEN_ITEMS_PER_GROUP 8
 
 struct RenewableHiddenItemData

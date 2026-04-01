@@ -1,3 +1,11 @@
+/**
+ * =POKEMON SPECIAL ANIMATIONS=
+ *
+ * This file implements special fullscreen animations for Pokemon-related
+ * events outside of battle: learning TM/HM moves, item usage effects on
+ * Pokemon, and other similar cutscene-like animations that involve
+ * displaying a Pokemon sprite with visual effects.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "data.h"

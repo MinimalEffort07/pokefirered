@@ -1,3 +1,47 @@
+/*
+ * =Pokemon FireRed Player Avatar Controller=
+ *
+ * This file handles all player character movement and interaction with the
+ * game world. It translates D-pad input into avatar movement, handles
+ * collision detection, and manages the various movement modes:
+ *
+ *   - NORMAL WALKING: Standard on-foot movement at walking speed
+ *   - RUNNING (with Running Shoes): Faster movement when B is held
+ *   - BIKING: Mach Bike or Acro Bike movement with their unique physics
+ *   - SURFING: Water movement on a Pokemon's back
+ *   - UNDERWATER: Diving movement (unused in FireRed but code exists)
+ *
+ * MOVEMENT ARCHITECTURE:
+ * Player movement is processed in three stages each frame:
+ *   1. INPUT TRANSLATION: D-pad direction is read and converted to a
+ *      direction constant (DIR_NORTH/SOUTH/EAST/WEST).
+ *   2. FORCED MOVEMENT CHECK: The tile the player stands on is checked for
+ *      forced movement behaviors (ice sliding, spin tiles, water currents,
+ *      etc.) These override normal input.
+ *   3. COLLISION & MOVEMENT: The destination tile is checked for collisions
+ *      (walls, NPCs, boulders, ledges). If clear, movement begins. If
+ *      blocked, the player just faces the direction. Special cases like
+ *      ledge jumping, boulder pushing (Strength), and surfing transitions
+ *      are handled here.
+ *
+ * FORCED MOVEMENT:
+ * Certain metatile behaviors cause the player to move automatically:
+ *   - Ice tiles: Slide until hitting a wall or non-ice tile
+ *   - Spin tiles: Force the player to spin in a direction
+ *   - Water currents: Push the player in a cardinal direction
+ *   - Walk tiles: Force walking in a specific direction (conveyor belts)
+ *   - Mat jump/spin: Secret Base decoration effects
+ *
+ * AVATAR TRANSITIONS:
+ * The player avatar can transition between visual states (normal sprite,
+ * bike sprite, surfing sprite, etc.) The transition system handles the
+ * sprite swap and any associated visual effects.
+ *
+ * BOULDER PUSHING (STRENGTH):
+ * When the player has used Strength and walks into a boulder, a special
+ * task is created that moves both the player and boulder simultaneously.
+ * The boulder checks for collision at its destination before moving.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "bike.h"
@@ -27,9 +71,14 @@
 #include "constants/moves.h"
 #include "constants/trainer_types.h"
 
+/* Pointer to the player's ObjectEvent, cached for quick access. */
 static EWRAM_DATA struct ObjectEvent * sPlayerObjectPtr = NULL;
+/* Saved facing direction before teleport, restored after teleport animation. */
 static EWRAM_DATA u8 sTeleportSavedFacingDirection = DIR_NONE;
+/* The master array of all object events (NPCs, player, items) on the current map.
+ * OBJECT_EVENTS_COUNT is typically 16, limiting the number of characters on screen. */
 EWRAM_DATA struct ObjectEvent gObjectEvents[OBJECT_EVENTS_COUNT] = {};
+/* The player avatar state structure, tracking movement mode, flags, and IDs. */
 EWRAM_DATA struct PlayerAvatar gPlayerAvatar = {};
 
 static u8 ObjectEventCB2_NoMovement2(struct ObjectEvent * object, struct Sprite *sprite);
@@ -133,6 +182,29 @@ static u8 ObjectEventCB2_NoMovement2(struct ObjectEvent * object, struct Sprite 
     return 0;
 }
 
+/**
+ * FUNCTION: player_step
+ *
+ * PURPOSE: The main per-frame player movement handler. Called from the overworld
+ *          loop each frame when no script is running. Translates input direction
+ *          into actual avatar movement.
+ *
+ * HOW IT WORKS:
+ * 1. Show/hide warp arrow sprites based on player position.
+ * 2. Check if movement is prevented (preventStep flag) or if a spin tile is
+ *    forcing continued spinning (TryUpdatePlayerSpinDirection).
+ * 3. Check if a special animation is playing that shouldn't be interrupted.
+ * 4. Clear any residual NPC flags on the player object.
+ * 5. Process avatar transitions (e.g., normal -> bike -> surf).
+ * 6. Check for forced movement from the current metatile (ice, current, etc.)
+ * 7. If no forced movement, process the actual D-pad input for movement.
+ * 8. Allow forced movement to continue if player is moving in the same direction.
+ *
+ * PARAMETERS:
+ * @param direction - The direction from D-pad input (DIR_NONE if no input)
+ * @param newKeys   - Buttons newly pressed this frame
+ * @param heldKeys  - Buttons held down this frame
+ */
 void player_step(u8 direction, u16 newKeys, u16 heldKeys)
 {
     struct ObjectEvent *playerObjEvent = &gObjectEvents[gPlayerAvatar.objectEventId];
@@ -221,6 +293,12 @@ static bool8 TryUpdatePlayerSpinDirection(void)
     return FALSE;
 }
 
+/* Forced movement lookup table. Maps metatile behavior check functions to
+ * their corresponding movement action functions. When the player stands on
+ * a tile, each check function is called in order until one returns TRUE,
+ * then the corresponding apply function is called to initiate the forced
+ * movement. The table terminates with a NULL check (always matches) that
+ * calls ForcedMovement_None (which does nothing -- normal movement). */
 static const struct {
     bool8 (*check)(u8 metatileBehavior);
     bool8 (*apply)(void);

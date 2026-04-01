@@ -1,3 +1,27 @@
+/**
+ * @file AgbRfu_LinkManager.c
+ * @brief RFU Link Manager — High-Level Wireless Adapter Connection Management
+ *
+ * FILE OVERVIEW:
+ * This file implements the Link Manager (LMAN) layer for the GBA Wireless Adapter
+ * (RFU — Radio Frequency Unit). It sits between the low-level RFU library (librfu)
+ * and the game's networking code, providing a state-machine-driven connection
+ * management system.
+ *
+ * The Link Manager handles:
+ *   - Parent/Child role negotiation (parent = host, child = joining player)
+ *   - Connection establishment and handshaking
+ *   - Link recovery after communication errors
+ *   - Fast search protocol (FSP) for quick device discovery
+ *   - Disconnection handling and cleanup
+ *   - Periodic status polling and timeout management
+ *
+ * GBA CONTEXT:
+ * The GBA Wireless Adapter supports up to 4 simultaneous connections. One GBA
+ * acts as the "parent" (master) and up to 3 others connect as "children" (slaves).
+ * The LMAN state machine manages the complex multi-step process of discovering
+ * nearby adapters, establishing connections, and maintaining link quality.
+ */
 #include "global.h"
 #include "librfu.h"
 #include "AgbRfu_LinkManager.h"

@@ -1,11 +1,33 @@
+/**
+ * =S.S. ANNE DEPARTURE CUTSCENE=
+ *
+ * FILE OVERVIEW:
+ * This file implements the S.S. Anne departure cutscene that plays after
+ * the player receives HM01 (Cut) from the Captain. The ship slowly sails
+ * away from Vermilion City port with:
+ *   - The ship sprite scrolling left off-screen
+ *   - A wake sprite (water trail) behind the ship that grows wider
+ *   - Smoke puff sprites rising from the ship's smokestack
+ *   - Ship horn sound effects at the start and end
+ *
+ * GBA CONTEXT:
+ * The ship is an Object Event (NPC sprite) on the map. Rather than using
+ * map scrolling, the departure is animated by directly modifying the
+ * ship sprite's x2 offset (the secondary position offset used for
+ * animations). The wake and smoke are standalone sprites with their own
+ * sprite sheets loaded just for this cutscene and freed afterward.
+ *
+ * The speed of the ship increases over time: data[2] increments each
+ * frame, and the pixel offset is data[2] / 5, giving a gradual
+ * acceleration effect. After the ship goes offscreen (x < -120), the
+ * cutscene plays a final horn blast and cleans up.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "task.h"
 #include "event_object_movement.h"
 #include "script.h"
 #include "constants/songs.h"
-
-// Tasks governing the ship's departure after you've gotten HM01 CUT
 
 #define SPRITE_TAG_WAKE  4000
 #define SPRITE_TAG_SMOKE 4001

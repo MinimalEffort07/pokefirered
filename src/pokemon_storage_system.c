@@ -1,29 +1,88 @@
+/**
+ * @file pokemon_storage_system.c
+ * @brief PC Box Storage — Core Data Access Functions (Bill's PC)
+ *
+ * FILE OVERVIEW:
+ * This file provides the foundational data access layer for the Pokemon Storage
+ * System (known in-game as "Someone's PC" or "Bill's PC"). The storage system
+ * lets players store up to 420 Pokemon across 14 boxes (30 per box), separate
+ * from their 6-Pokemon party.
+ *
+ * These are pure data manipulation functions — they read/write Pokemon data in
+ * the storage boxes but do NOT handle any graphics or UI. The UI is handled by
+ * the pokemon_storage_system_tasks/graphics/menu files.
+ *
+ * All functions include bounds checking: box IDs must be < TOTAL_BOXES_COUNT
+ * and positions must be < IN_BOX_COUNT. Out-of-bounds requests return 0/NULL
+ * or are silently ignored, preventing crashes from bad data.
+ *
+ * GAME LOGIC:
+ * The storage data lives in gPokemonStoragePtr (a pointer to a PokemonStorage
+ * struct in the save block). Each box slot holds a BoxPokemon struct — a compact
+ * version of the full Pokemon struct that omits battle-only data (current HP,
+ * status conditions, stats). When withdrawing a Pokemon, BoxMonToMon() expands
+ * a BoxPokemon into a full Pokemon by recalculating stats.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "pokemon_storage_system_internal.h"
 
+/**
+ * FUNCTION: BackupPokemonStorage
+ *
+ * PURPOSE: Creates a full backup copy of the entire Pokemon storage system.
+ *          Used during save operations to protect against data corruption.
+ */
 void BackupPokemonStorage(struct PokemonStorage * dest)
 {
     *dest = *gPokemonStoragePtr;
 }
 
+/**
+ * FUNCTION: RestorePokemonStorage
+ *
+ * PURPOSE: Restores Pokemon storage from a backup copy.
+ */
 void RestorePokemonStorage(struct PokemonStorage * src)
 {
     *gPokemonStoragePtr = *src;
 }
 
-// Functions here are general utility functions.
+/**
+ * FUNCTION: StorageGetCurrentBox
+ *
+ * PURPOSE: Returns the index of the currently selected/active box.
+ *          The current box is what opens by default when the player accesses the PC.
+ */
+/* Functions here are general utility functions. */
 u8 StorageGetCurrentBox(void)
 {
     return gPokemonStoragePtr->currentBox;
 }
 
+/**
+ * FUNCTION: SetCurrentBox
+ *
+ * PURPOSE: Sets which box opens by default when the player accesses the PC.
+ */
 void SetCurrentBox(u8 boxId)
 {
     if (boxId < TOTAL_BOXES_COUNT)
         gPokemonStoragePtr->currentBox = boxId;
 }
 
+/**
+ * FUNCTION: GetBoxMonDataAt
+ *
+ * PURPOSE: Retrieves a specific data field from a Pokemon in a given box and position.
+ *
+ * PARAMETERS:
+ * @param boxId       — Box index (0 to TOTAL_BOXES_COUNT-1)
+ * @param boxPosition — Slot within the box (0 to IN_BOX_COUNT-1)
+ * @param request     — Which data field to get (MON_DATA_SPECIES, MON_DATA_LEVEL, etc.)
+ *
+ * RETURNS: The requested data value, or 0 if box/position is out of bounds.
+ */
 u32 GetBoxMonDataAt(u8 boxId, u8 boxPosition, s32 request)
 {
     if (boxId < TOTAL_BOXES_COUNT && boxPosition < IN_BOX_COUNT)
@@ -137,11 +196,25 @@ void SetBoxWallpaper(u8 boxId, u8 wallpaperId)
         gPokemonStoragePtr->boxWallpapers[boxId] = wallpaperId;
 }
 
+/**
+ * FUNCTION: SeekToNextMonInBox
+ *
+ * PURPOSE: Searches for the next non-empty slot in a box, starting from curIndex.
+ *          Supports forward/backward searching and optional egg filtering.
+ *
+ * PARAMETERS:
+ * @param boxMons  — Array of BoxPokemon to search through
+ * @param curIndex — Starting position (exclusive — search begins at curIndex +/- 1)
+ * @param maxIndex — Maximum valid index to search up to
+ * @param flags    — Bit 0: 1 = include eggs, 0 = skip eggs
+ *                   Bit 1: 1 = search backwards, 0 = search forwards
+ *
+ * RETURNS: Index of the next occupied slot, or -1 if none found.
+ */
 s16 SeekToNextMonInBox(struct BoxPokemon * boxMons, s8 curIndex, u8 maxIndex, u8 flags)
 {
-    // flags:
-    // bit 0: Allow eggs
-    // bit 1: Search backwards
+    /* flags bit 0: Allow eggs in results
+     * flags bit 1: Search direction (0 = forward, 1 = backward) */
     s16 i;
     s16 adder;
     if (flags == 0 || flags == 1)

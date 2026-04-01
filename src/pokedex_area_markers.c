@@ -1,3 +1,30 @@
+/**
+ * @file pokedex_area_markers.c
+ * @brief Pokedex Area Map Markers — Red Ellipse Overlays Showing Pokemon Habitats
+ *
+ * FILE OVERVIEW:
+ * This file manages the red elliptical markers that appear on the Pokedex's area
+ * map to show where a specific Pokemon species can be found in the wild. Each
+ * marker is placed at a specific map section's coordinates on the region map.
+ *
+ * The markers are implemented as subsprites of varying sizes (circular for single
+ * cities, horizontal/vertical strips for routes) combined into a single OAM sprite.
+ * Each DEX_AREA constant maps to a specific shape, x-position, and y-position in
+ * the sAreaMarkers table.
+ *
+ * GBA CONTEXT:
+ * The GBA's OAM (Object Attribute Memory) supports subsprites — multiple small
+ * sprite shapes composed together under a single sprite ID. This is used here
+ * because there could be many area markers on screen simultaneously, and
+ * individual OAM sprite slots are limited to 128. By grouping all markers as
+ * subsprites of one parent sprite, only one OAM slot is consumed regardless of
+ * how many areas the Pokemon appears in.
+ *
+ * The blending registers (BLDCNT, BLDALPHA) create a semi-transparent overlay
+ * effect so the red markers don't completely obscure the map underneath. The
+ * Object Window (OBJWIN) feature makes the markers act as a window that reveals
+ * a blended version of the background layers beneath them.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "decompress.h"

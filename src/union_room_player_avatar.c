@@ -1,3 +1,15 @@
+/**
+ * @file union_room_player_avatar.c
+ * @brief Union Room Player Avatars — Placing and Managing Wireless Player Sprites
+ *
+ * FILE OVERVIEW:
+ * This file manages the player avatar sprites that appear in the Union Room
+ * (the wireless multiplayer hub). When multiple players connect wirelessly,
+ * each player's character appears in the room as a walking NPC sprite. This
+ * file handles placing these sprites at specific positions, updating their
+ * appearance based on the remote player's gender and trainer class, and
+ * removing them when players disconnect.
+ */
 #include "global.h"
 #include "event_data.h"
 #include "event_object_movement.h"

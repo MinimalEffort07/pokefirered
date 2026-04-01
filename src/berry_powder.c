@@ -1,3 +1,19 @@
+/**
+ * =BERRY POWDER SYSTEM=
+ *
+ * FILE OVERVIEW:
+ * This file manages Berry Powder — a currency earned from the Berry Crush
+ * minigame that can be spent at special vendors. It provides functions to
+ * get, give, take, and display the player's Berry Powder amount.
+ *
+ * SAVE DATA ENCRYPTION:
+ * Berry Powder is stored encrypted in the save file using XOR encryption
+ * with gSaveBlock2Ptr->encryptionKey. This is an anti-cheat measure that
+ * makes it harder to edit save files with a hex editor. Every read must
+ * decrypt (XOR with key), and every write must encrypt (XOR with key).
+ * Since XOR is its own inverse (A ^ K ^ K = A), the same key is used
+ * for both encryption and decryption.
+ */
 #include "global.h"
 #include "event_data.h"
 #include "load_save.h"
@@ -10,20 +26,39 @@
 #include "text.h"
 #include "text_window.h"
 
-#define MAX_BERRY_POWDER 99999
+#define MAX_BERRY_POWDER 99999  /* Maximum powder the player can hold */
 
 static EWRAM_DATA u8 sBerryPowderVendorWindowId = 0;
 
+/**
+ * FUNCTION: DecryptBerryPowder
+ *
+ * PURPOSE: Reads the encrypted Berry Powder value and returns the actual amount.
+ * XOR with the encryption key reverses the encryption applied during storage.
+ */
 u32 DecryptBerryPowder(u32 *powder)
 {
     return *powder ^ gSaveBlock2Ptr->encryptionKey;
 }
 
+/**
+ * FUNCTION: SetBerryPowder
+ *
+ * PURPOSE: Stores a Berry Powder amount by encrypting it with XOR.
+ * The encrypted value is what gets saved to flash memory.
+ */
 void SetBerryPowder(u32 *powder, u32 amount)
 {
     *powder = amount ^ gSaveBlock2Ptr->encryptionKey;
 }
 
+/**
+ * FUNCTION: ApplyNewEncryptionKeyToBerryPowder
+ *
+ * PURPOSE: Re-encrypts the Berry Powder when the save encryption key changes.
+ * This happens during save operations to keep the encrypted data consistent.
+ * Without this, loading the save with a new key would produce garbage values.
+ */
 void ApplyNewEncryptionKeyToBerryPowder(u32 encryptionKey)
 {
     ApplyNewEncryptionKeyToWord(&gSaveBlock2Ptr->berryCrush.berryPowderAmount, encryptionKey);
@@ -45,6 +80,13 @@ bool8 Script_HasEnoughBerryPowder(void)
         return TRUE;
 }
 
+/**
+ * FUNCTION: GiveBerryPowder
+ *
+ * PURPOSE: Adds Berry Powder to the player's total, capping at MAX_BERRY_POWDER.
+ *
+ * RETURNS: TRUE if the full amount was added, FALSE if capped at maximum
+ */
 bool8 GiveBerryPowder(u32 amountToAdd)
 {
     u32 *powder = &gSaveBlock2Ptr->berryCrush.berryPowderAmount;

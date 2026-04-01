@@ -1,3 +1,42 @@
+/*
+ * battle_bg.c - Battle Background and Terrain Graphics
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file loads and configures the battle background graphics based on
+ * the terrain where the battle takes place. The GBA battle screen uses
+ * 4 background layers:
+ *
+ *   BG0: Battle textbox (message window at bottom)
+ *   BG1: Battle interface elements (healthboxes, menus)
+ *   BG2: Battle terrain/floor (the ground the Pokemon stand on)
+ *   BG3: Battle backdrop (sky, cave walls, building interior, etc.)
+ *
+ * TERRAIN TYPES:
+ * Each terrain type (grass, cave, water, building, etc.) has its own
+ * tileset and tilemap stored in ROM as compressed data. This file
+ * provides functions to:
+ * - InitBattleBgsVideo: Configure all 4 BG layers' control registers
+ * - LoadBattleTextboxAndBackground: Load the textbox graphics
+ * - DrawBattleEntryBackground: Load terrain-specific backdrop
+ * - Get trainer-class-specific or map-specific battle backgrounds
+ *
+ * The backgrounds are compressed with LZ77 in ROM and decompressed into
+ * VRAM during battle setup (happens during the loading screen before
+ * the battle transition plays).
+ *
+ * GBA CONTEXT:
+ * Each BG layer has a control register (BGxCNT) that specifies:
+ * - Character base: Where in VRAM the tile pixel data lives (in 16KB blocks)
+ * - Screen base: Where in VRAM the tilemap data lives (in 2KB blocks)
+ * - Priority: Draw order (0 = front, 3 = back)
+ * - Color mode: 4bpp (16 colors) or 8bpp (256 colors)
+ * - Screen size: 256x256, 512x256, 256x512, or 512x512 pixels
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

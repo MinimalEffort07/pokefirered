@@ -1,3 +1,54 @@
+/*
+ * script.c - Event Script Engine
+ *
+ * ============================================================================
+ * OVERVIEW
+ * ============================================================================
+ *
+ * This file implements the GBA Pokemon game's scripting engine. Event scripts
+ * control virtually all in-game events: NPC dialogue, item pickups, trainer
+ * battles, cutscenes, map warps, and story progression.
+ *
+ * ARCHITECTURE:
+ * Scripts are bytecode programs stored in ROM. Each byte is a command opcode,
+ * followed by parameters (1/2/4 bytes depending on the command). The engine
+ * reads opcodes one at a time, looks up the handler function in gScriptCmdTable[],
+ * and calls it. Handlers return TRUE to yield (wait for user input, animation,
+ * etc.) or FALSE to continue to the next command immediately.
+ *
+ * SCRIPT CONTEXTS:
+ * There are two script contexts:
+ *   1. sGlobalScriptContext: The primary context. Runs one command per frame,
+ *      yielding back to the main game loop between commands. Used for NPC
+ *      dialogue, trainer encounters, and most scripted events.
+ *   2. sImmediateScriptContext: Runs to completion in a single frame (blocking).
+ *      Used for map header scripts (on-load, on-transition, etc.) that must
+ *      finish before the map is displayed.
+ *
+ * CALL STACK:
+ * Scripts support subroutine calls (ScriptCall/ScriptReturn) with a 20-level
+ * stack. The "call" command pushes the return address, and "return" pops it.
+ * This allows reusable script snippets.
+ *
+ * NATIVE CALLBACKS:
+ * Scripts can switch to "native mode" where a C function runs instead of
+ * bytecode. When the C function returns TRUE, execution switches back to
+ * bytecode mode. This is used for complex operations like menu systems.
+ *
+ * RAM SCRIPTS:
+ * Special scripts that are stored in save RAM rather than ROM. Used by the
+ * Mystery Gift system to inject custom event scripts into the game.
+ *
+ * MAP SCRIPTS:
+ * Each map header can define several script types:
+ *   ON_LOAD: Runs when map tiles are loaded (set metatiles, etc.)
+ *   ON_TRANSITION: Runs during map transition (set weather, music, etc.)
+ *   ON_RESUME: Runs when returning to this map
+ *   ON_FRAME_TABLE: Conditional scripts checked every frame (trigger events)
+ *   ON_WARP_INTO_MAP_TABLE: Conditional scripts checked on warp arrival
+ * ============================================================================
+ */
+
 #include "global.h"
 #include "script.h"
 #include "event_data.h"
@@ -9,14 +60,27 @@
 extern void ResetContextNpcTextColor(void); // field_specials
 extern u16 CalcCRC16WithTable(u8 *data, int length); // util
 
+/* Magic number that marks a valid RAM script in save data */
 #define RAM_SCRIPT_MAGIC 51
 
+/*
+ * Script execution modes:
+ * STOPPED: Script is inactive, not running
+ * BYTECODE: Reading and executing bytecode opcodes from scriptPtr
+ * NATIVE: Calling a C function pointer (nativePtr) each frame
+ */
 enum {
     SCRIPT_MODE_STOPPED,
     SCRIPT_MODE_BYTECODE,
     SCRIPT_MODE_NATIVE,
 };
 
+/*
+ * Global script context states:
+ * RUNNING: Script is actively executing (runs one command per frame tick)
+ * WAITING: Script paused, waiting for something (menu, animation, etc.)
+ * SHUTDOWN: Script has finished or hasn't been started
+ */
 enum {
     CONTEXT_RUNNING,
     CONTEXT_WAITING,
@@ -42,6 +106,15 @@ extern ScrCmdFunc gScriptCmdTable[];
 extern ScrCmdFunc gScriptCmdTableEnd[];
 extern void *gNullScriptPtr;
 
+/**
+ * FUNCTION: InitScriptContext
+ *
+ * PURPOSE: Reset a script context to its initial empty state.
+ *
+ * @param ctx — The script context to initialize
+ * @param cmdTable — Pointer to the command function table (gScriptCmdTable)
+ * @param cmdTableEnd — Pointer past the end of the table (for bounds checking)
+ */
 void InitScriptContext(struct ScriptContext *ctx, void *cmdTable, void *cmdTableEnd)
 {
     s32 i;
@@ -79,6 +152,26 @@ void StopScript(struct ScriptContext *ctx)
     ctx->scriptPtr = NULL;
 }
 
+/**
+ * FUNCTION: RunScriptCommand
+ *
+ * PURPOSE: Execute the next script command(s) in the given context.
+ *
+ * HOW IT WORKS:
+ * In NATIVE mode: calls the C function. If it returns TRUE, switches to
+ * BYTECODE mode (the native callback has finished its work).
+ *
+ * In BYTECODE mode: reads one opcode byte from scriptPtr, looks it up in
+ * cmdTable, and calls the handler. If the handler returns TRUE, this
+ * function yields (returns TRUE to caller). If the handler returns FALSE,
+ * it continues to the next command immediately (tight loop). This allows
+ * commands like "set variable" to execute without consuming a frame.
+ *
+ * Safety: if scriptPtr is NULL, the script stops. If it equals gNullScriptPtr
+ * (a special poison value), the game HALTS -- this catches dangling pointers.
+ *
+ * @return TRUE if there's more script to run, FALSE if done
+ */
 bool8 RunScriptCommand(struct ScriptContext *ctx)
 {
     // FRLG disabled this check, where-as it is present
@@ -178,6 +271,17 @@ void ScriptReturn(struct ScriptContext *ctx)
     ctx->scriptPtr = ScriptPop(ctx);
 }
 
+/**
+ * FUNCTION: ScriptReadHalfword
+ *
+ * PURPOSE: Read a 16-bit value from the script bytecode stream.
+ *
+ * HOW IT WORKS:
+ * GBA uses little-endian byte order, and the ARM7TDMI can handle unaligned
+ * 8-bit reads but not unaligned 16-bit reads. So we read two bytes separately
+ * and combine them: low byte first, high byte second (little-endian).
+ * Advances scriptPtr by 2 bytes.
+ */
 u16 ScriptReadHalfword(struct ScriptContext *ctx)
 {
     u16 value = *(ctx->scriptPtr++);

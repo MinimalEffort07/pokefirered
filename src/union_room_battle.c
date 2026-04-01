@@ -1,3 +1,27 @@
+/**
+ * @file union_room_battle.c
+ * @brief Union Room Battle Setup — Wireless 2-Pokemon Link Battle Initialization
+ *
+ * FILE OVERVIEW:
+ * This file handles the setup and coordination for battles initiated in the
+ * wireless Union Room. In the Union Room, two players can battle using 2 Pokemon
+ * each (selected from their party before entering).
+ *
+ * The flow is:
+ *   1. Both players' GBAs show a "waiting" message
+ *   2. Each sends an accept/decline signal (decline if the player picked invalid
+ *      Pokemon, indicated by negative indices that cancel out)
+ *   3. If both accept, the selected Pokemon are copied into the party slots and
+ *      the battle begins
+ *   4. If either declines, a "refused" or "was refused" message is shown
+ *
+ * GBA CONTEXT:
+ * This uses the GBA's link block transfer system (SendBlock/GetBlockReceivedStatus)
+ * for the handshake. Both players send a 32-byte block where byte 0 contains
+ * ACTIVITY_ACCEPT or ACTIVITY_DECLINE flags. GetBlockReceivedStatus() returns
+ * a bitmask — bit 0 for player 0's data, bit 1 for player 1's data, so a
+ * return value of 3 (binary 11) means both players' data has been received.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"
@@ -11,9 +35,10 @@
 #include "union_room.h"
 #include "constants/union_room.h"
 
+/* Working memory for the Union Room battle setup screen */
 struct UnionRoomBattleWork
 {
-    s16 textState;
+    s16 textState; /* Tracks text printing state machine progress */
 };
 
 static EWRAM_DATA struct UnionRoomBattleWork * sWork = NULL;

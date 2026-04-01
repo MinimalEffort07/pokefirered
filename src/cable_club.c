@@ -1,3 +1,21 @@
+/**
+ * =CABLE CLUB (LINK ROOM)=
+ *
+ * FILE OVERVIEW:
+ * This file implements the Cable Club — the upstairs area of Pokemon
+ * Centers where players can connect with others for:
+ *   - Link Battles (1v1 or 2v2 via link cable or wireless)
+ *   - Pokemon Trading (direct trades between players)
+ *   - Record mixing (sharing Secret Bases, battle records)
+ *   - Berry Crush minigame
+ *   - Pokemon Jump minigame
+ *   - Union Room activities
+ *
+ * The file handles the link connection setup, synchronization between
+ * consoles, and transitioning to the appropriate multiplayer activity.
+ * It manages the complex handshake process where both players must
+ * agree on an activity before it begins.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle.h"

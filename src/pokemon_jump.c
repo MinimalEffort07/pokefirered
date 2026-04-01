@@ -1,3 +1,19 @@
+/**
+ * @file pokemon_jump.c
+ * @brief Pokemon Jump Minigame — Wireless Multiplayer Jump Rope Game
+ *
+ * FILE OVERVIEW:
+ * Pokemon Jump is a wireless multiplayer minigame where 2-5 players' Pokemon
+ * jump rope together. A vine sweeps across the bottom of the screen and players
+ * must press A to jump over it at the right time. The vine speeds up as the
+ * game progresses. Missing a jump causes the Pokemon to trip and costs the group
+ * points. The game ends after a set number of rounds or too many misses.
+ *
+ * This file implements the complete minigame: the lobby, vine animation,
+ * jump timing detection, score tracking, multiplayer synchronization, and
+ * the results screen showing each player's performance. Each player's Pokemon
+ * species determines their jump sprite animation.
+ */
 #include "global.h"
 #include "gflib.h"
 #include "battle_anim.h"
