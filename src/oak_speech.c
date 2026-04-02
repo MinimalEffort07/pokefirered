@@ -366,7 +366,6 @@ static const u8 sCharName_LittleGirl[] = _("LITTLE GIRL");
 static const u8 sCharName_Youngster[] = _("YOUNGSTER");
 static const u8 sCharName_Boy[] = _("BOY");
 static const u8 sCharName_BugCatcher[] = _("BUG CATCHER");
-static const u8 sCharName_SittingBoy[] = _("SITTING BOY");
 static const u8 sCharName_Lass[] = _("LASS");
 static const u8 sCharName_Woman1[] = _("WOMAN");
 static const u8 sCharName_BattleGirl[] = _("BATTLE GIRL");
@@ -379,7 +378,6 @@ static const u8 sCharName_BaldingMan[] = _("BALDING MAN");
 static const u8 sCharName_Woman3[] = _("GAL");
 static const u8 sCharName_OldMan1[] = _("OLD MAN");
 static const u8 sCharName_OldMan2[] = _("OLD MAN 2");
-static const u8 sCharName_OldManLying[] = _("LAZY OLD MAN");
 static const u8 sCharName_OldWoman[] = _("OLD WOMAN");
 static const u8 sCharName_TuberMWater[] = _("TUBER M");
 static const u8 sCharName_TuberF[] = _("TUBER F");
@@ -437,8 +435,7 @@ static const u8 sCharName_Mom[] = _("MOM");
 static const u8 sCharName_Celio[] = _("CELIO");
 static const u8 sCharName_TVHost[] = _("TV HOST");
 static const u8 sCharName_GymGuy[] = _("GYM GUY");
-static const u8 sCharName_Seagallop[] = _("SEAGALLOP");
-static const u8 sCharName_Snorlax[] = _("SNORLAX");
+static const u8 sCharName_Pikachu[] = _("PIKACHU");
 static const u8 sCharName_Spearow[] = _("SPEAROW");
 static const u8 sCharName_Cubone[] = _("CUBONE");
 static const u8 sCharName_Poliwrath[] = _("POLIWRATH");
@@ -449,7 +446,6 @@ static const u8 sCharName_Pidgey[] = _("PIDGEY");
 static const u8 sCharName_Chansey[] = _("CHANSEY");
 static const u8 sCharName_Omanyte[] = _("OMANYTE");
 static const u8 sCharName_Kangaskhan[] = _("KANGASKHAN");
-static const u8 sCharName_Pikachu[] = _("PIKACHU");
 static const u8 sCharName_Psyduck[] = _("PSYDUCK");
 static const u8 sCharName_NidoranF[] = _("NIDORAN F");
 static const u8 sCharName_NidoranM[] = _("NIDORAN M");
@@ -465,22 +461,7 @@ static const u8 sCharName_Doduo[] = _("DODUO");
 static const u8 sCharName_Fearow[] = _("FEAROW");
 static const u8 sCharName_Machoke[] = _("MACHOKE");
 static const u8 sCharName_Lapras[] = _("LAPRAS");
-static const u8 sCharName_Zapdos[] = _("ZAPDOS");
-static const u8 sCharName_Moltres[] = _("MOLTRES");
-static const u8 sCharName_Articuno[] = _("ARTICUNO");
-static const u8 sCharName_Mewtwo[] = _("MEWTWO");
-static const u8 sCharName_Mew[] = _("MEW");
-static const u8 sCharName_Entei[] = _("ENTEI");
-static const u8 sCharName_Suicune[] = _("SUICUNE");
-static const u8 sCharName_Raikou[] = _("RAIKOU");
-static const u8 sCharName_Lugia[] = _("LUGIA");
-static const u8 sCharName_HoOh[] = _("HO-OH");
-static const u8 sCharName_Celebi[] = _("CELEBI");
 static const u8 sCharName_Kabuto[] = _("KABUTO");
-static const u8 sCharName_DeoxysD[] = _("DEOXYS D");
-static const u8 sCharName_DeoxysA[] = _("DEOXYS A");
-static const u8 sCharName_DeoxysN[] = _("DEOXYS N");
-static const u8 sCharName_SSAnne[] = _("SS ANNE");
 
 static const struct ListMenuItem sCharacterListItems[] = {
     {sCharName_Red,           OBJ_EVENT_GFX_RED_NORMAL},
@@ -492,7 +473,6 @@ static const struct ListMenuItem sCharacterListItems[] = {
     {sCharName_Youngster,     OBJ_EVENT_GFX_YOUNGSTER},
     {sCharName_Boy,           OBJ_EVENT_GFX_BOY},
     {sCharName_BugCatcher,    OBJ_EVENT_GFX_BUG_CATCHER},
-    {sCharName_SittingBoy,    OBJ_EVENT_GFX_SITTING_BOY},
     {sCharName_Lass,          OBJ_EVENT_GFX_LASS},
     {sCharName_Woman1,        OBJ_EVENT_GFX_WOMAN_1},
     {sCharName_BattleGirl,    OBJ_EVENT_GFX_BATTLE_GIRL},
@@ -505,7 +485,6 @@ static const struct ListMenuItem sCharacterListItems[] = {
     {sCharName_Woman3,        OBJ_EVENT_GFX_WOMAN_3},
     {sCharName_OldMan1,       OBJ_EVENT_GFX_OLD_MAN_1},
     {sCharName_OldMan2,       OBJ_EVENT_GFX_OLD_MAN_2},
-    {sCharName_OldManLying,   OBJ_EVENT_GFX_OLD_MAN_LYING_DOWN},
     {sCharName_OldWoman,      OBJ_EVENT_GFX_OLD_WOMAN},
     {sCharName_TuberMWater,   OBJ_EVENT_GFX_TUBER_M_WATER},
     {sCharName_TuberF,        OBJ_EVENT_GFX_TUBER_F},
@@ -563,8 +542,7 @@ static const struct ListMenuItem sCharacterListItems[] = {
     {sCharName_Celio,         OBJ_EVENT_GFX_CELIO},
     {sCharName_TVHost,        OBJ_EVENT_GFX_TEACHY_TV_HOST},
     {sCharName_GymGuy,        OBJ_EVENT_GFX_GYM_GUY},
-    {sCharName_Seagallop,     OBJ_EVENT_GFX_SEAGALLOP},
-    {sCharName_Snorlax,       OBJ_EVENT_GFX_SNORLAX},
+    {sCharName_Pikachu,       OBJ_EVENT_GFX_PIKACHU},
     {sCharName_Spearow,       OBJ_EVENT_GFX_SPEAROW},
     {sCharName_Cubone,        OBJ_EVENT_GFX_CUBONE},
     {sCharName_Poliwrath,     OBJ_EVENT_GFX_POLIWRATH},
@@ -575,7 +553,6 @@ static const struct ListMenuItem sCharacterListItems[] = {
     {sCharName_Chansey,       OBJ_EVENT_GFX_CHANSEY},
     {sCharName_Omanyte,       OBJ_EVENT_GFX_OMANYTE},
     {sCharName_Kangaskhan,    OBJ_EVENT_GFX_KANGASKHAN},
-    {sCharName_Pikachu,       OBJ_EVENT_GFX_PIKACHU},
     {sCharName_Psyduck,       OBJ_EVENT_GFX_PSYDUCK},
     {sCharName_NidoranF,      OBJ_EVENT_GFX_NIDORAN_F},
     {sCharName_NidoranM,      OBJ_EVENT_GFX_NIDORAN_M},
@@ -591,22 +568,7 @@ static const struct ListMenuItem sCharacterListItems[] = {
     {sCharName_Fearow,        OBJ_EVENT_GFX_FEAROW},
     {sCharName_Machoke,       OBJ_EVENT_GFX_MACHOKE},
     {sCharName_Lapras,        OBJ_EVENT_GFX_LAPRAS},
-    {sCharName_Zapdos,        OBJ_EVENT_GFX_ZAPDOS},
-    {sCharName_Moltres,       OBJ_EVENT_GFX_MOLTRES},
-    {sCharName_Articuno,      OBJ_EVENT_GFX_ARTICUNO},
-    {sCharName_Mewtwo,        OBJ_EVENT_GFX_MEWTWO},
-    {sCharName_Mew,           OBJ_EVENT_GFX_MEW},
-    {sCharName_Entei,         OBJ_EVENT_GFX_ENTEI},
-    {sCharName_Suicune,       OBJ_EVENT_GFX_SUICUNE},
-    {sCharName_Raikou,        OBJ_EVENT_GFX_RAIKOU},
-    {sCharName_Lugia,         OBJ_EVENT_GFX_LUGIA},
-    {sCharName_HoOh,          OBJ_EVENT_GFX_HO_OH},
-    {sCharName_Celebi,        OBJ_EVENT_GFX_CELEBI},
     {sCharName_Kabuto,        OBJ_EVENT_GFX_KABUTO},
-    {sCharName_DeoxysD,       OBJ_EVENT_GFX_DEOXYS_D},
-    {sCharName_DeoxysA,       OBJ_EVENT_GFX_DEOXYS_A},
-    {sCharName_DeoxysN,       OBJ_EVENT_GFX_DEOXYS_N},
-    {sCharName_SSAnne,        OBJ_EVENT_GFX_SS_ANNE},
 };
 
 static const struct WindowTemplate sCharacterListWindowTemplate = {
