@@ -24,18 +24,19 @@
 #ifndef GUARD_GFLIB_H
 #define GUARD_GFLIB_H
 
-#include "global.h"
+#include "global.h" // IWYU pragma: keep
 
-#include "bg.h"          /* Background layer control */
-#include "palette.h"     /* Color palette management */
-#include "gpu_regs.h"    /* Display register helpers */
-#include "dma3.h"        /* DMA transfer queue */
-#include "malloc.h"      /* Heap allocation */
-#include "sound.h"       /* Music and SFX */
-#include "text.h"        /* Text rendering */
-#include "sprite.h"      /* OAM sprite system */
-#include "window.h"      /* Text windows */
-#include "blit.h"        /* Pixel buffer operations */
-#include "string_util.h" /* String utilities */
+
+#include "bg.h"          /* Background layer control */ // IWYU pragma: keep
+#include "palette.h"     /* Color palette management */ // IWYU pragma: keep
+#include "gpu_regs.h"    /* Display register helpers */ // IWYU pragma: keep
+#include "dma3.h"        /* DMA transfer queue */ // IWYU pragma: keep
+#include "malloc.h"      /* Heap allocation */ // IWYU pragma: keep
+#include "sound.h"       /* Music and SFX */ // IWYU pragma: keep
+#include "text.h"        /* Text rendering */ // IWYU pragma: keep
+#include "sprite.h"      /* OAM sprite system */ // IWYU pragma: keep
+#include "window.h"      /* Text windows */ // IWYU pragma: keep
+#include "blit.h"        /* Pixel buffer operations */ // IWYU pragma: keep
+#include "string_util.h" /* String utilities */ // IWYU pragma: keep
 
 #endif //GUARD_GFLIB_H

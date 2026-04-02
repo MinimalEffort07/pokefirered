@@ -19,13 +19,13 @@
 #ifndef GUARD_GBA_GBA_H
 #define GUARD_GBA_GBA_H
 
-#include <string.h>
-#include "defines.h"
-#include "io_reg.h"
-#include "types.h"
-#include "multiboot.h"
-#include "syscall.h"
-#include "macro.h"
-#include "isagbprint.h"
+#include <string.h> // IWYU pragma: keep
+#include "defines.h" // IWYU pragma: keep
+#include "io_reg.h" // IWYU pragma: keep
+#include "types.h" // IWYU pragma: keep
+#include "multiboot.h" // IWYU pragma: keep
+#include "syscall.h" // IWYU pragma: keep
+#include "macro.h" // IWYU pragma: keep
+#include "isagbprint.h" // IWYU pragma: keep
 
 #endif // GUARD_GBA_GBA_H

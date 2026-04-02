@@ -399,9 +399,6 @@ PalletTown_EventScript_FatMan::
 	msgbox PalletTown_Text_WarpToMtMoon, MSGBOX_YESNO
 	compare VAR_RESULT, YES
 	goto_if_eq PalletTown_EventScript_FatManWarp
-	msgbox PalletTown_Text_StartMultiplayer, MSGBOX_YESNO
-	compare VAR_RESULT, YES
-	goto_if_eq PalletTown_EventScript_FatManMultiplayer
 	release
 	end
 
@@ -409,12 +406,6 @@ PalletTown_EventScript_FatManWarp::
 	release
 	warp MAP_ROUTE4, 19, 4
 	waitstate
-	end
-
-PalletTown_EventScript_FatManMultiplayer::
-	special Special_StartMultiplayer
-	msgbox PalletTown_Text_MultiplayerStarted, MSGBOX_DEFAULT
-	release
 	end
 
 PalletTown_EventScript_OaksLabSign::

@@ -47,6 +47,7 @@
 #include "safari_zone.h"
 #include "start_menu.h"
 #include "menu.h"
+#include "list_menu.h"
 #include "load_save.h"
 #include "strings.h"
 #include "menu_helpers.h"
@@ -67,6 +68,7 @@
 #include "option_menu.h"
 #include "save_menu_util.h"
 #include "help_system.h"
+#include "multiplayer.h"
 #include "constants/songs.h"
 #include "constants/field_weather.h"
 
@@ -81,6 +83,7 @@ enum StartMenuOption
     STARTMENU_EXIT,
     STARTMENU_RETIRE,
     STARTMENU_PLAYER2,
+    STARTMENU_MULTIPLAYER,
     MAX_STARTMENU_ITEMS
 };
 
@@ -92,12 +95,23 @@ enum SaveCBReturn
     SAVECB_RETURN_ERROR
 };
 
+/*
+ * Maximum items visible at once in the start menu. When more items exist
+ * (e.g. 8 with POKEDEX + POKEMON + LINK), the list scrolls. Capped at 7
+ * to avoid the bottom item being obscured by the help text window.
+ */
+#define STARTMENU_MAX_SHOWED 7
+
 static EWRAM_DATA bool8 (*sStartMenuCallback)(void) = NULL;
-static EWRAM_DATA u8 sStartMenuCursorPos = 0;
 static EWRAM_DATA u8 sNumStartMenuItems = 0;
 static EWRAM_DATA u8 sStartMenuOrder[MAX_STARTMENU_ITEMS] = {};
 static EWRAM_DATA s8 sDrawStartMenuState[2] = {};
 static EWRAM_DATA u8 sSafariZoneStatsWindowId = 0;
+static EWRAM_DATA struct ListMenuItem sStartMenuListItems[MAX_STARTMENU_ITEMS] = {};
+static EWRAM_DATA u8 sListTaskId = 0;
+static EWRAM_DATA u16 sListCursorPos = 0;
+static EWRAM_DATA u16 sListScrollOffset = 0;
+static EWRAM_DATA u8 sExpandedPlayerName[16] = {};
 static ALIGNED(4) EWRAM_DATA u8 sSaveStatsWindowId = 0;
 
 static u8 (*sSaveDialogCB)(void);
@@ -108,9 +122,10 @@ static void SetUpStartMenu_Link(void);
 static void SetUpStartMenu_UnionRoom(void);
 static void SetUpStartMenu_SafariZone(void);
 static void SetUpStartMenu_NormalField(void);
+static void BuildStartMenuListItems(void);
+static void StartMenuCursorMoveFunc(s32 itemIndex, bool8 onInit, struct ListMenu *list);
 static bool8 StartCB_HandleInput(void);
 static void StartMenu_FadeScreenIfLeavingOverworld(void);
-static bool8 StartMenuPokedexSanityCheck(void);
 static bool8 StartMenuPokedexCallback(void);
 static bool8 StartMenuPokemonCallback(void);
 static bool8 StartMenuBagCallback(void);
@@ -120,6 +135,7 @@ static bool8 StartMenuOptionCallback(void);
 static bool8 StartMenuExitCallback(void);
 static bool8 StartMenuSafariZoneRetireCallback(void);
 static bool8 StartMenuLinkPlayerCallback(void);
+static bool8 StartMenuMultiplayerCallback(void);
 static bool8 StartCB_Save1(void);
 static bool8 StartCB_Save2(void);
 static void StartMenu_PrepareForSave(void);
@@ -154,7 +170,8 @@ static const struct MenuAction sStartMenuActionTable[] = {
     [STARTMENU_OPTION]  = { gText_MenuOption,  {.u8_void = StartMenuOptionCallback} },
     [STARTMENU_EXIT]    = { gText_MenuExit,    {.u8_void = StartMenuExitCallback} },
     [STARTMENU_RETIRE]  = { gText_MenuRetire,  {.u8_void = StartMenuSafariZoneRetireCallback} },
-    [STARTMENU_PLAYER2] = { gText_MenuPlayer,  {.u8_void = StartMenuLinkPlayerCallback} }
+    [STARTMENU_PLAYER2]     = { gText_MenuPlayer,      {.u8_void = StartMenuLinkPlayerCallback} },
+    [STARTMENU_MULTIPLAYER] = { gText_MenuMultiplayer, {.u8_void = StartMenuMultiplayerCallback} }
 };
 
 static const struct WindowTemplate sSafariZoneStatsWindowTemplate = {
@@ -176,7 +193,8 @@ static const u8 *const sStartMenuDescPointers[] = {
     gStartMenuDesc_Option,
     gStartMenuDesc_Exit,
     gStartMenuDesc_Retire,
-    gStartMenuDesc_Player
+    gStartMenuDesc_Player,
+    gStartMenuDesc_Multiplayer
 };
 
 static const struct BgTemplate sBGTemplates_AfterLinkSaveMessage[] = {
@@ -235,6 +253,7 @@ static void SetUpStartMenu(void)
         SetUpStartMenu_SafariZone();
     else
         SetUpStartMenu_NormalField();
+    BuildStartMenuListItems();
 }
 
 static void AppendToStartMenuItems(u8 newEntry)
@@ -251,6 +270,7 @@ static void SetUpStartMenu_NormalField(void)
     AppendToStartMenuItems(STARTMENU_BAG);
     AppendToStartMenuItems(STARTMENU_PLAYER);
     AppendToStartMenuItems(STARTMENU_SAVE);
+    AppendToStartMenuItems(STARTMENU_MULTIPLAYER);
     AppendToStartMenuItems(STARTMENU_OPTION);
     AppendToStartMenuItems(STARTMENU_EXIT);
 }
@@ -284,6 +304,49 @@ static void SetUpStartMenu_UnionRoom(void)
     AppendToStartMenuItems(STARTMENU_EXIT);
 }
 
+/*
+ * Builds the ListMenuItem array from the dynamic sStartMenuOrder.
+ * For the PLAYER item, the {PLAYER} placeholder must be expanded
+ * into a static buffer because the list menu's text renderer does
+ * not process placeholder bytes -- it prints labels as-is.
+ */
+static void BuildStartMenuListItems(void)
+{
+    u8 i;
+    for (i = 0; i < sNumStartMenuItems; i++)
+    {
+        u8 menuId = sStartMenuOrder[i];
+        if (menuId == STARTMENU_PLAYER || menuId == STARTMENU_PLAYER2)
+        {
+            StringExpandPlaceholders(sExpandedPlayerName, sStartMenuActionTable[menuId].text);
+            sStartMenuListItems[i].label = sExpandedPlayerName;
+        }
+        else
+        {
+            sStartMenuListItems[i].label = sStartMenuActionTable[menuId].text;
+        }
+        sStartMenuListItems[i].index = menuId;
+    }
+}
+
+/*
+ * Called by the list menu system whenever the cursor moves or on init.
+ * Plays the selection sound effect and updates the help text description
+ * at the bottom of the screen (if help mode is enabled in options).
+ */
+static void StartMenuCursorMoveFunc(s32 itemIndex, bool8 onInit, struct ListMenu *list)
+{
+    if (!onInit)
+        PlaySE(SE_SELECT);
+    if (!MenuHelpers_IsLinkActive() && InUnionRoom() != TRUE && gSaveBlock2Ptr->optionsButtonMode == OPTIONS_BUTTON_MODE_HELP)
+    {
+        if (onInit)
+            DrawHelpMessageWindowWithText(sStartMenuDescPointers[itemIndex]);
+        else
+            PrintTextOnHelpMessageWindow(sStartMenuDescPointers[itemIndex], 2);
+    }
+}
+
 static void DrawSafariZoneStatsWindow(void)
 {
     sSafariZoneStatsWindowId = AddWindow(&sSafariZoneStatsWindowTemplate);
@@ -307,33 +370,10 @@ static void DestroySafariZoneStatsWindow(void)
     }
 }
 
-static s8 PrintStartMenuItems(s8 *cursor_p, u8 nitems)
-{
-    s16 i = *cursor_p;
-    do
-    {
-        if (sStartMenuOrder[i] == STARTMENU_PLAYER || sStartMenuOrder[i] == STARTMENU_PLAYER2)
-        {
-            Menu_PrintFormatIntlPlayerName(GetStartMenuWindowId(), sStartMenuActionTable[sStartMenuOrder[i]].text, 8, i * 15);
-        }
-        else
-        {
-            StringExpandPlaceholders(gStringVar4, sStartMenuActionTable[sStartMenuOrder[i]].text);
-            AddTextPrinterParameterized(GetStartMenuWindowId(), FONT_NORMAL, gStringVar4, 8, i * 15, 0xFF, NULL);
-        }
-        i++;
-        if (i >= sNumStartMenuItems)
-        {
-            *cursor_p = i;
-            return TRUE;
-        }
-    } while (--nitems);
-    *cursor_p = i;
-    return FALSE;
-}
-
 static s8 DoDrawStartMenu(void)
 {
+    u8 maxShowed;
+
     switch (sDrawStartMenuState[0])
     {
     case 0:
@@ -344,8 +384,16 @@ static s8 DoDrawStartMenu(void)
         sDrawStartMenuState[0]++;
         break;
     case 2:
+        /*
+         * Cap window height at STARTMENU_MAX_SHOWED so the bottom item
+         * is not obscured by the help text window. If fewer items exist,
+         * the window shrinks to fit.
+         */
+        maxShowed = sNumStartMenuItems;
+        if (maxShowed > STARTMENU_MAX_SHOWED)
+            maxShowed = STARTMENU_MAX_SHOWED;
         LoadStdWindowFrameGfx();
-        DrawStdWindowFrame(CreateStartMenuWindow(sNumStartMenuItems), FALSE);
+        DrawStdWindowFrame(CreateStartMenuWindow(maxShowed), FALSE);
         sDrawStartMenuState[0]++;
         break;
     case 3:
@@ -354,17 +402,42 @@ static s8 DoDrawStartMenu(void)
         sDrawStartMenuState[0]++;
         break;
     case 4:
-        if (PrintStartMenuItems(&sDrawStartMenuState[1], 2) == TRUE)
-            sDrawStartMenuState[0]++;
-        break;
-    case 5:
-        sStartMenuCursorPos = Menu_InitCursor(GetStartMenuWindowId(), FONT_NORMAL, 0, 0, 15, sNumStartMenuItems, sStartMenuCursorPos);
-        if (!MenuHelpers_IsLinkActive() && InUnionRoom() != TRUE && gSaveBlock2Ptr->optionsButtonMode == OPTIONS_BUTTON_MODE_HELP)
-        {
-            DrawHelpMessageWindowWithText(sStartMenuDescPointers[sStartMenuOrder[sStartMenuCursorPos]]);
-        }
-        CopyWindowToVram(GetStartMenuWindowId(), COPYWIN_MAP);
+    {
+        /*
+         * Use the list menu system instead of manual item printing +
+         * cursor. ListMenuInit handles filling the window, printing
+         * visible items, drawing the cursor, and calling our
+         * StartMenuCursorMoveFunc for the initial help text.
+         */
+        struct ListMenuTemplate template;
+
+        maxShowed = sNumStartMenuItems;
+        if (maxShowed > STARTMENU_MAX_SHOWED)
+            maxShowed = STARTMENU_MAX_SHOWED;
+
+        template.items = sStartMenuListItems;
+        template.moveCursorFunc = StartMenuCursorMoveFunc;
+        template.itemPrintFunc = NULL;
+        template.totalItems = sNumStartMenuItems;
+        template.maxShowed = maxShowed;
+        template.windowId = GetStartMenuWindowId();
+        template.header_X = 0;
+        template.item_X = 8;
+        template.cursor_X = 0;
+        template.upText_Y = 1;
+        template.cursorPal = 2;
+        template.fillValue = 1;
+        template.cursorShadowPal = 3;
+        template.lettersSpacing = 0;
+        template.itemVerticalPadding = 0;
+        template.scrollMultiple = LIST_NO_MULTIPLE_SCROLL;
+        template.fontId = FONT_NORMAL;
+        template.cursorKind = 0;
+
+        sListTaskId = ListMenuInit(&template, sListCursorPos, sListScrollOffset);
+        CopyWindowToVram(GetStartMenuWindowId(), COPYWIN_FULL);
         return TRUE;
+    }
     }
     return FALSE;
 }
@@ -437,42 +510,51 @@ void ShowStartMenu(void)
     LockPlayerFieldControls();
 }
 
+/*
+ * Handles all start menu input using the list menu system.
+ * ListMenu_ProcessInput handles DPAD scrolling and A/B buttons.
+ * START button is checked separately since the list menu doesn't handle it.
+ */
 static bool8 StartCB_HandleInput(void)
 {
-    if (JOY_NEW(DPAD_UP))
+    s32 input = ListMenu_ProcessInput(sListTaskId);
+
+    if (input == LIST_NOTHING_CHOSEN)
     {
-        PlaySE(SE_SELECT);
-        sStartMenuCursorPos = Menu_MoveCursor(-1);
-        if (!MenuHelpers_IsLinkActive() && InUnionRoom() != TRUE && gSaveBlock2Ptr->optionsButtonMode == OPTIONS_BUTTON_MODE_HELP)
+        /* START button closes the menu (list menu doesn't handle it) */
+        if (JOY_NEW(START_BUTTON))
         {
-            PrintTextOnHelpMessageWindow(sStartMenuDescPointers[sStartMenuOrder[sStartMenuCursorPos]], 2);
+            DestroyListMenuTask(sListTaskId, NULL, NULL);
+            DestroySafariZoneStatsWindow();
+            DestroyHelpMessageWindow_();
+            CloseStartMenu();
+            return TRUE;
         }
-    }
-    if (JOY_NEW(DPAD_DOWN))
-    {
-        PlaySE(SE_SELECT);
-        sStartMenuCursorPos = Menu_MoveCursor(+1);
-        if (!MenuHelpers_IsLinkActive() && InUnionRoom() != TRUE && gSaveBlock2Ptr->optionsButtonMode == OPTIONS_BUTTON_MODE_HELP)
-        {
-            PrintTextOnHelpMessageWindow(sStartMenuDescPointers[sStartMenuOrder[sStartMenuCursorPos]], 2);
-        }
-    }
-    if (JOY_NEW(A_BUTTON))
-    {
-        PlaySE(SE_SELECT);
-        if (!StartMenuPokedexSanityCheck())
-            return FALSE;
-        sStartMenuCallback = sStartMenuActionTable[sStartMenuOrder[sStartMenuCursorPos]].func.u8_void;
-        StartMenu_FadeScreenIfLeavingOverworld();
         return FALSE;
     }
-    if (JOY_NEW(B_BUTTON | START_BUTTON))
+
+    if (input == LIST_CANCEL)
     {
+        /* B button pressed */
+        DestroyListMenuTask(sListTaskId, NULL, NULL);
         DestroySafariZoneStatsWindow();
         DestroyHelpMessageWindow_();
         CloseStartMenu();
         return TRUE;
     }
+
+    /* A button pressed -- input is the selected item's enum value */
+    PlaySE(SE_SELECT);
+
+    /* Pokedex sanity check: don't open if no entries */
+    if (sStartMenuActionTable[input].func.u8_void == StartMenuPokedexCallback
+        && GetNationalPokedexCount(0) == 0)
+        return FALSE;
+
+    /* Save cursor position so it can be restored when returning */
+    DestroyListMenuTask(sListTaskId, &sListCursorPos, &sListScrollOffset);
+    sStartMenuCallback = sStartMenuActionTable[input].func.u8_void;
+    StartMenu_FadeScreenIfLeavingOverworld();
     return FALSE;
 }
 
@@ -480,18 +562,12 @@ static void StartMenu_FadeScreenIfLeavingOverworld(void)
 {
     if (sStartMenuCallback != StartMenuSaveCallback
      && sStartMenuCallback != StartMenuExitCallback
-     && sStartMenuCallback != StartMenuSafariZoneRetireCallback)
+     && sStartMenuCallback != StartMenuSafariZoneRetireCallback
+     && sStartMenuCallback != StartMenuMultiplayerCallback)
     {
         StopPokemonLeagueLightingEffectTask();
         FadeScreen(FADE_TO_BLACK, 0);
     }
-}
-
-static bool8 StartMenuPokedexSanityCheck(void)
-{
-    if (sStartMenuActionTable[sStartMenuOrder[sStartMenuCursorPos]].func.u8_void == StartMenuPokedexCallback && GetNationalPokedexCount(0) == 0)
-        return FALSE;
-    return TRUE;
 }
 
 static bool8 StartMenuPokedexCallback(void)
@@ -595,6 +671,34 @@ static bool8 StartMenuLinkPlayerCallback(void)
         return TRUE;
     }
     return FALSE;
+}
+
+/*
+ * StartMenuMultiplayerCallback - Toggles multiplayer mode from the start menu.
+ *
+ * If multiplayer is not active, initializes the GBA Serial I/O hardware in
+ * 4-player mode (SIO Multi-Player) and begins broadcasting/receiving player
+ * state at 115200 bps. A confirmation message is shown via event script.
+ *
+ * If multiplayer is already active, shuts it down: despawns all remote player
+ * sprites and disables serial transfers.
+ */
+static bool8 StartMenuMultiplayerCallback(void)
+{
+    DestroySafariZoneStatsWindow();
+    DestroyHelpMessageWindow_();
+    CloseStartMenu();
+    if (gMultiplayerEnabled)
+    {
+        ShutdownMultiplayer();
+        ScriptContext_SetupScript(EventScript_MultiplayerStopped);
+    }
+    else
+    {
+        InitMultiplayer();
+        ScriptContext_SetupScript(EventScript_MultiplayerStarted);
+    }
+    return TRUE;
 }
 
 static bool8 StartCB_Save1(void)

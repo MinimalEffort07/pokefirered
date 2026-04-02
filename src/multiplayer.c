@@ -91,16 +91,20 @@
  */
 
 #include "global.h"
-#include "gflib.h"
+#include "gflib.h" // IWYU pragma: keep
 #include "multiplayer.h"
-#include "task.h"
+#include "task.h" // IWYU pragma: keep
 #include "main.h"
 #include "event_object_movement.h"
 #include "field_player_avatar.h"
 #include "fieldmap.h"
-#include "overworld.h"
+#include "overworld.h" // IWYU pragma: keep
+#include "new_menu_helpers.h"
+#include "menu.h"
+#include "string_util.h"
 #include "constants/event_objects.h"
-#include "constants/event_object_movement.h"
+#include "constants/event_object_movement.h" // IWYU pragma: keep
+#include "constants/songs.h"
 
 /*
  * SIO Multi-Player mode register bit definitions.
@@ -116,11 +120,18 @@
 
 /*
  * Packet type identification bits (top 2 bits of the 16-bit packet).
- * These let the receiver know what kind of data this packet contains.
+ * 4-frame cycle: map (00), position (01), appearance (10), name (11).
+ *
+ *   00xxxxxxxxxxxxxx = map info (mapNum + mapGroup)
+ *   01xxxxxxxxxxxxxx = position (y + x)
+ *   10xxxxxxxxxxxxxx = appearance (graphicsId + direction + flags)
+ *   11xxxxxxxxxxxxxx = name byte (byte index + character value)
  */
-#define PKT_TYPE_MASK  0x8000  /* Bit 15: distinguishes appearance packets */
-#define PKT_TYPE_POS   0x0000  /* Bit 15 = 0: map info or position packet */
-#define PKT_TYPE_DIR   0x8000  /* Bit 15 = 1: appearance/direction packet */
+#define PKT_TYPE_MAP   0x0000  /* Bits 15-14 = 00: map packet */
+#define PKT_TYPE_POS   0x4000  /* Bits 15-14 = 01: position packet */
+#define PKT_TYPE_DIR   0x8000  /* Bits 15-14 = 10: appearance packet */
+#define PKT_TYPE_NAME  0xC000  /* Bits 15-14 = 11: name byte packet */
+#define PKT_TYPE_MASK  0xC000  /* Top 2 bits identify packet type */
 
 /*
  * sRemotePlayers: State tracking for each remote (non-local) player.
@@ -136,6 +147,7 @@ static EWRAM_DATA struct RemotePlayer sRemotePlayers[MP_MAX_REMOTE] = {0};
 EWRAM_DATA bool8 gMultiplayerEnabled = FALSE;
 static EWRAM_DATA u8 sLocalId = 0;
 static EWRAM_DATA u8 sFrame = 0;
+static EWRAM_DATA u8 sNameIdx = 0;  /* Current byte index for name packet rotation (0-7) */
 static EWRAM_DATA u16 sRecvBuffer[MP_MAX_PLAYERS] = {0};
 static EWRAM_DATA bool8 sTransferDone = FALSE;
 
@@ -149,6 +161,26 @@ static EWRAM_DATA bool8 sTransferDone = FALSE;
  */
 // Magic tag stored in sprite->data[7] to identify our remote player sprites
 #define MP_SPRITE_TAG 0x4D50  // "MP"
+
+/*
+ * Notification popup: tracks which remote players we've already shown
+ * a "joined" notification for. Reset on disconnect so a reconnecting
+ * player triggers a new notification.
+ */
+static EWRAM_DATA bool8 sPlayerNotified[MP_MAX_REMOTE] = {0};
+
+/* Buffer for building notification text like "Player 2 joined!" */
+static EWRAM_DATA u8 sNotifyTextBuf[24] = {0};
+
+/* Notification hold time in frames (120 = 2 seconds at 60fps) */
+#define NOTIFY_HOLD_FRAMES 120
+
+static const u8 sText_Joined[] = _(" joined!");
+static const u8 sText_Left[] = _(" left!");
+static const u8 sText_FallbackPlayer[] = _("Player ");
+
+static void Task_MPNotify(u8 taskId);
+static void ShowMPNotification(u8 remoteIdx, bool8 joined);
 
 static void SpriteCB_RemotePlayer(struct Sprite *sprite);
 
@@ -583,6 +615,7 @@ void InitMultiplayer(void)
     u8 i;
     gMultiplayerEnabled = TRUE;
     sFrame = 0;
+    sNameIdx = 0;
     sTransferDone = FALSE;
     /* Initialize receive buffer to 0xFFFF (the "no data" sentinel) */
     for (i = 0; i < MP_MAX_PLAYERS; i++)
@@ -612,19 +645,169 @@ void Special_StartMultiplayer(void)
 /**
  * FUNCTION: ShutdownMultiplayer
  *
- * PURPOSE: Shut down the multiplayer system and remove all remote sprites.
+ * PURPOSE: Shut down the multiplayer system, signal disconnect to other
+ *          GBAs, and clean up all local state.
  *
  * HOW IT WORKS:
- * Despawns all remote player sprites and disables the multiplayer flag.
- * The SIO hardware is not explicitly reset since other systems may still
- * need it.
+ * 1. Writes 0 to REG_SIOMLT_SEND so that if the master on another GBA
+ *    initiates one more serial transfer, the other GBAs read 0 from our
+ *    slot and trigger their sentinel check (recv == 0), immediately
+ *    despawning our sprite on their screen.
+ *
+ * 2. Despawns all remote player sprites and clears their tracking state.
+ *
+ * 3. Disables the serial interrupt and clears the serial callback to
+ *    prevent the ISR from writing stale data to sRecvBuffer after we
+ *    stop processing it. Same pattern as link.c's DisableSerial().
+ *
+ * 4. Sets gMultiplayerEnabled to FALSE so UpdateMultiplayerState() stops.
+ *
+ * TIMING NOTE:
+ * The 0 written to REG_SIOMLT_SEND only helps if this GBA is a slave
+ * and the master on another GBA initiates another transfer. If THIS GBA
+ * is the master, transfers stop immediately (no more SIO_START_BIT), so
+ * slaves rely on the timeout in UpdateMultiplayerState() instead.
  */
 void ShutdownMultiplayer(void)
 {
     u8 i;
+
+    /*
+     * Signal disconnect FIRST. If the SIO hardware is still active and
+     * another transfer occurs, other GBAs read 0 from our slot, which
+     * triggers their sentinel check for immediate sprite despawn.
+     */
+    REG_SIOMLT_SEND = 0;
+
     for (i = 0; i < MP_MAX_REMOTE; i++)
+    {
         DespawnRemoteSprite(i);
+        memset(&sRemotePlayers[i], 0, sizeof(struct RemotePlayer));
+    }
+
+    /*
+     * Disable serial interrupt and clear callback so MP_SerialCallback
+     * stops writing to sRecvBuffer after we've stopped processing it.
+     */
+    DisableInterrupts(INTR_FLAG_SERIAL);
+    SetSerialCallback(NULL);
+
+    for (i = 0; i < MP_MAX_REMOTE; i++)
+        sPlayerNotified[i] = FALSE;
+
     gMultiplayerEnabled = FALSE;
+}
+
+/*
+ * ShowMPNotification - Shows a brief "Player N joined!" or "Player N left!" popup.
+ *
+ * Builds the notification string from the remote player index, creates a
+ * bordered window at the top-left using the same frame style as the start
+ * menu (DrawStdWindowFrame), plays a chime, and auto-dismisses after 2 sec.
+ *
+ * If a notification is already showing, the new one is dropped. Notifications
+ * are brief enough (~2 sec) that this rarely matters in practice.
+ *
+ * @param remoteIdx  Index into sRemotePlayers (0 to MP_MAX_REMOTE-1)
+ * @param joined     TRUE for "joined!", FALSE for "left!"
+ */
+static void ShowMPNotification(u8 remoteIdx, bool8 joined)
+{
+    u8 *ptr;
+    u8 sioSlot;
+
+    if (FindTaskIdByFunc(Task_MPNotify) != TASK_NONE)
+        return;
+
+    /*
+     * Use the remote player's name if we've received it via name packets.
+     * Otherwise, fall back to "Player N" using the SIO slot number.
+     */
+    if (sRemotePlayers[remoteIdx].nameReceived)
+    {
+        ptr = StringCopy(sNotifyTextBuf, sRemotePlayers[remoteIdx].name);
+    }
+    else
+    {
+        sioSlot = (remoteIdx < sLocalId) ? remoteIdx : remoteIdx + 1;
+        ptr = StringCopy(sNotifyTextBuf, sText_FallbackPlayer);
+        ptr = ConvertIntToDecimalStringN(ptr, sioSlot + 1, STR_CONV_MODE_LEFT_ALIGN, 1);
+    }
+    StringCopy(ptr, joined ? sText_Joined : sText_Left);
+
+    CreateTask(Task_MPNotify, 90);
+    PlaySE(SE_DING_DONG);
+}
+
+/*
+ * Task_MPNotify - State machine for the multiplayer notification popup.
+ *
+ * Uses DrawStdWindowFrame for the border (same frame as the start menu
+ * and other standard game windows). LoadStdWindowFrameGfx ensures the
+ * frame tile graphics and palette are loaded before drawing.
+ *
+ * State 0: Create window, draw frame, print text.
+ * State 1: Wait for DMA.
+ * State 2: Hold for NOTIFY_HOLD_FRAMES.
+ * State 3: Clear window and frame.
+ * State 4: Wait for DMA, remove window, destroy task.
+ */
+static void Task_MPNotify(u8 taskId)
+{
+    struct Task *task = &gTasks[taskId];
+
+    switch (task->data[0])
+    {
+    case 0:
+    {
+        struct WindowTemplate tmpl;
+        tmpl.bg = 0;
+        tmpl.tilemapLeft = 1;
+        tmpl.tilemapTop = 1;
+        tmpl.width = 15;
+        tmpl.height = 2;
+        tmpl.paletteNum = 15;
+        tmpl.baseBlock = 0x050;
+
+        task->data[2] = AddWindow(&tmpl);
+
+        /*
+         * Draw the standard window frame (same border as the start menu).
+         * The frame tile graphics and palette are already loaded during
+         * overworld initialization (InitOverworldBgs → LoadStdWindowFrameGfx),
+         * so we do NOT call LoadStdWindowFrameGfx() here — calling it would
+         * trigger DMA transfers that can interfere with other windows
+         * (e.g., the event script msgbox) if they're drawing simultaneously.
+         */
+        DrawStdWindowFrame(task->data[2], FALSE);
+        FillWindowPixelBuffer(task->data[2], PIXEL_FILL(1));
+        AddTextPrinterParameterized(task->data[2], FONT_NORMAL, sNotifyTextBuf, 4, 1, 0xFF, NULL);
+        CopyWindowToVram(task->data[2], COPYWIN_FULL);
+        task->data[0] = 1;
+        break;
+    }
+    case 1:
+        if (!IsDma3ManagerBusyWithBgCopy())
+            task->data[0] = 2;
+        break;
+    case 2:
+        task->data[1]++;
+        if (task->data[1] > NOTIFY_HOLD_FRAMES)
+            task->data[0] = 3;
+        break;
+    case 3:
+        ClearStdWindowAndFrame(task->data[2], FALSE);
+        CopyWindowToVram(task->data[2], COPYWIN_MAP);
+        task->data[0] = 4;
+        break;
+    case 4:
+        if (!IsDma3ManagerBusyWithBgCopy())
+        {
+            RemoveWindow(task->data[2]);
+            DestroyTask(taskId);
+        }
+        break;
+    }
 }
 
 /**
@@ -739,31 +922,47 @@ void UpdateMultiplayerState(void)
             /* 0xFFFF or 0 means no player connected at this position */
             if (recv == 0xFFFF || recv == 0)
             {
+                if (sPlayerNotified[remoteIdx])
+                    ShowMPNotification(remoteIdx, FALSE);
                 rp->flags &= ~MP_FLAG_ACTIVE;
                 DespawnRemoteSprite(remoteIdx);
+                sPlayerNotified[remoteIdx] = FALSE;
                 continue;
             }
 
-            /* Decode the packet based on its type bits */
-            if (recv & PKT_TYPE_MASK)
+            /*
+             * Valid data received -- reset disconnect timeout counter.
+             * Reset on ANY packet type (map, position, or appearance)
+             * because all three indicate the player is still transmitting.
+             */
+            rp->timeoutCounter = 0;
+
+            /*
+             * Decode packet based on top 2 bits (4-frame cycle):
+             *   00 = map, 01 = position, 10 = appearance, 11 = name byte
+             */
+            switch (recv & PKT_TYPE_MASK)
+            {
+            case PKT_TYPE_MAP:
+                /* Map packet: bits 13-7 = mapNum (7), bits 6-0 = mapGroup (6) */
+                rp->mapNum = (recv >> 7) & 0x7F;
+                rp->mapGroup = recv & 0x3F;
+                break;
+            case PKT_TYPE_POS:
+                /* Position packet: bits 13-7 = y (7), bits 6-0 = x (7) */
+                rp->y = (recv >> 7) & 0x7F;
+                rp->x = recv & 0x7F;
+                break;
+            case PKT_TYPE_DIR:
             {
                 /*
-                 * Type 2 (bit 15 = 1): Appearance packet
-                 * Bits 14-8: graphicsId (7 bits)
-                 * Bits 7-4:  direction (4 bits)
-                 * Bit 1:     in battle flag
-                 * Bit 0:     active flag
+                 * Appearance packet: bits 13-8 = graphicsId (6),
+                 * bits 7-4 = direction (4), bits 1-0 = flags (2)
                  */
-                // Type 2 (bit15=1): gfxId(7)+dir(4)+inBattle(1)+active(1)
-                rp->graphicsId = (recv >> 8) & 0x7F;
+                rp->graphicsId = (recv >> 8) & 0x3F;
                 rp->direction = (recv >> 4) & 0xF;
-                rp->flags = recv & 0x3;  // bits 0-1: active + inBattle
+                rp->flags = recv & 0x3;
 
-                /*
-                 * Appearance packet completes the 3-frame cycle.
-                 * Now we have all the data needed to create/update the sprite.
-                 */
-                // Full cycle received - update sprite visibility
                 if (rp->flags & MP_FLAG_ACTIVE)
                 {
                     if (IsRemotePlayerOnSameMap(remoteIdx))
@@ -776,89 +975,120 @@ void UpdateMultiplayerState(void)
                 }
                 else
                     DespawnRemoteSprite(remoteIdx);
+                break;
             }
-            else if (recv & (1 << 14))
+            case PKT_TYPE_NAME:
             {
                 /*
-                 * Type 1 (bits 15-14 = 01): Position packet
-                 * Bits 13-7: y coordinate (7 bits)
-                 * Bits 6-0:  x coordinate (7 bits)
+                 * Name byte packet: bits 13-11 = byte index (0-7),
+                 * bits 7-0 = character value in game encoding.
+                 * The sender rotates through all 8 bytes (7 chars + EOS)
+                 * continuously, so late joiners eventually get the full name.
                  */
-                // Type 1 (bits15-14=01): position - y(7)+x(7)
-                rp->y = (recv >> 7) & 0x7F;
-                rp->x = recv & 0x7F;
+                u8 nameIdx = (recv >> 11) & 0x7;
+                u8 ch = recv & 0xFF;
+
+                if (nameIdx < PLAYER_NAME_LENGTH + 1)
+                    rp->name[nameIdx] = ch;
+                if (ch == EOS || nameIdx == PLAYER_NAME_LENGTH)
+                {
+                    rp->nameReceived = TRUE;
+                    /* Show "joined" notification once name is complete */
+                    if ((rp->flags & MP_FLAG_ACTIVE) && !sPlayerNotified[remoteIdx])
+                    {
+                        sPlayerNotified[remoteIdx] = TRUE;
+                        ShowMPNotification(remoteIdx, TRUE);
+                    }
+                }
+                break;
             }
-            else
+            }
+        }
+    }
+
+    /*
+     * DISCONNECT TIMEOUT CHECK
+     *
+     * Increment timeout counter for every active remote player each frame.
+     * This runs OUTSIDE the sTransferDone block because when the master
+     * disconnects, slaves stop receiving transfers entirely (sTransferDone
+     * is never set TRUE), so code inside that block never runs. The counter
+     * still increments here, eventually triggering cleanup.
+     *
+     * The counter is reset to 0 inside the sTransferDone block whenever
+     * valid data is received, so it only reaches the threshold when no
+     * data arrives at all (master disconnect, cable unplug, power off).
+     */
+    for (i = 0; i < MP_MAX_REMOTE; i++)
+    {
+        if (sRemotePlayers[i].flags & MP_FLAG_ACTIVE)
+        {
+            sRemotePlayers[i].timeoutCounter++;
+            if (sRemotePlayers[i].timeoutCounter >= MP_DISCONNECT_TIMEOUT)
             {
-                /*
-                 * Type 0 (bits 15-14 = 00): Map packet
-                 * Bits 13-7: map number (7 bits)
-                 * Bits 6-0:  map group (6 bits)
-                 */
-                // Type 0 (bits15-14=00): map - mapNum(7)+mapGroup(6)
-                rp->mapNum = (recv >> 7) & 0x7F;
-                rp->mapGroup = recv & 0x3F;
+                if (sPlayerNotified[i])
+                    ShowMPNotification(i, FALSE);
+                sRemotePlayers[i].flags &= ~MP_FLAG_ACTIVE;
+                DespawnRemoteSprite(i);
+                memset(&sRemotePlayers[i], 0, sizeof(struct RemotePlayer));
+                sPlayerNotified[i] = FALSE;
             }
         }
     }
 
     /* Smooth interpolation: update all spawned remote sprites every frame */
-    // Update all spawned remote sprites every frame (for smooth movement)
     for (i = 0; i < MP_MAX_REMOTE; i++)
         if (sRemotePlayers[i].spriteSpawned)
             UpdateRemoteSprite(i);
 
     /*
      * SEND LOCAL PLAYER STATE
-     * Pack the local player's data into a 16-bit value based on which frame
-     * of the 3-frame cycle we're on:
-     *   Frame 0: Map info
-     *   Frame 1: Position
-     *   Frame 2: Appearance
+     * 4-frame cycle: map (00), position (01), appearance (10), name (11).
+     * Name bytes rotate through indices 0-7 (7 chars + EOS), so a full
+     * name takes 8 rotations × 4 frames = 32 frames (~0.53 sec) to transmit.
+     * The name keeps resending so late joiners eventually receive it.
      */
-    // Send our data
-    // Even frame (bit15=0): bits14-9=mapGroup(6), bits8-6=x(3 high), bits5-0=mapNum_low(6)
-    // Odd frame  (bit15=1): bits14-11=x_low4+y_high1, bits10-4=y(7), bits3-1=dir(3), bit0=active
-    //
-    // Simpler packing:
-    //   Even: bit15=0, bits14-8=mapNum(7), bits7-6=mapGroup(2 low), bits5-0=x(6)
-    //   Odd:  bit15=1, bits14-8=y(7), bits7-4=gfxId_low(4), bits3-1=dir(3), bit0=active
-    //
-    // This gives: mapNum 0-127, mapGroup low 2 bits, x 0-63, y 0-127, gfxId 0-15, dir 0-7
-    // For full mapGroup+mapNum we use a 3-frame cycle instead.
-    //
-    // Actually let's just use 3 frame types:
-    //   Frame%3==0: bit15=0,bit14=0: mapGroup(6)+mapNum(7) = 13 bits
-    //   Frame%3==1: bit15=0,bit14=1: x(7)+y(7) = 14 bits
-    //   Frame%3==2: bit15=1:         gfxId(7)+dir(3)+active(1) = 11 bits
-
-    switch (sFrame % 3)
+    switch (sFrame % 4)
     {
     case 0:
         /* Map packet: bits15-14=00, mapNum in bits 13-7, mapGroup in bits 6-0 */
-        // Map info: bits15-14=00, bits13-7=mapNum(7), bits6-0=mapGroup(7... only need 6)
-        sendVal = ((gSaveBlock1Ptr->location.mapNum & 0x7F) << 7)
+        sendVal = PKT_TYPE_MAP
+                | ((gSaveBlock1Ptr->location.mapNum & 0x7F) << 7)
                 | (gSaveBlock1Ptr->location.mapGroup & 0x3F);
         break;
     case 1:
         /* Position packet: bits15-14=01, Y in bits 13-7, X in bits 6-0 */
-        // Position: bits15-14=01, bits13-7=y(7), bits6-0=x(7)
-        sendVal = (1 << 14)
+        sendVal = PKT_TYPE_POS
                 | ((gSaveBlock1Ptr->pos.y & 0x7F) << 7)
                 | (gSaveBlock1Ptr->pos.x & 0x7F);
         break;
     case 2:
-    default:
-        /* Appearance packet: bit15=1, graphicsId, direction, flags */
-        // Appearance: bit15=1, bits14-8=gfxId(7), bits7-4=dir(4), bit1=inBattle, bit0=active
+        /* Appearance packet: bits15-14=10, gfxId(6), dir(4), flags(2) */
         {
             u8 flags = MP_FLAG_ACTIVE;
             if (gMain.inBattle)
                 flags |= MP_FLAG_IN_BATTLE;
             sendVal = PKT_TYPE_DIR
-                    | ((gSaveBlock2Ptr->playerAvatarGfxId & 0x7F) << 8)
+                    | ((gSaveBlock2Ptr->playerAvatarGfxId & 0x3F) << 8)
                     | ((GetPlayerFacingDirection() & 0xF) << 4)
                     | flags;
+        }
+        break;
+    case 3:
+    default:
+        /*
+         * Name byte packet: bits15-14=11, bits13-11=byte index (0-7),
+         * bits7-0=character byte from local player's name.
+         * sNameIdx rotates 0→7→0→... so the full name is resent continuously.
+         */
+        {
+            u8 ch = gSaveBlock2Ptr->playerName[sNameIdx];
+            sendVal = PKT_TYPE_NAME
+                    | ((sNameIdx & 0x7) << 11)
+                    | (ch & 0xFF);
+            sNameIdx++;
+            if (sNameIdx >= PLAYER_NAME_LENGTH + 1)
+                sNameIdx = 0;
         }
         break;
     }
