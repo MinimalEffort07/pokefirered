@@ -395,7 +395,8 @@ PalletTown_Movement_SignLadyMoveOutOfWayLeft::
 PalletTown_EventScript_FatMan::
 	lock
     setflag FLAG_SYS_POKEDEX_GET
-    givemon SPECIES_SQUIRTLE, 100
+    givemon SPECIES_LAPRAS, 100
+    givemon SPECIES_PIKACHU, 100
 	msgbox PalletTown_Text_WarpToMtMoon, MSGBOX_YESNO
 	compare VAR_RESULT, YES
 	goto_if_eq PalletTown_EventScript_FatManWarp

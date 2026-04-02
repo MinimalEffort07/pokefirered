@@ -323,6 +323,8 @@ extern const u8 gText_Enter[];
 extern const u8 gText_NoEntry[];
 extern const u8 gText_Store[];
 extern const u8 gText_Trade4[];
+extern const u8 gText_Walk[];
+extern const u8 gText_ReturnMon[];
 extern const u8 gText_NotPkmnOtherTrainerWants[];
 extern const u8 gText_ThatIsntAnEgg[];
 extern const u8 gText_OtherTrainerCantAcceptPkmn[];
