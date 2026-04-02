@@ -90,6 +90,7 @@
 #include "fieldmap.h"
 #include "metatile_behavior.h"
 #include "overworld.h"
+#include "pokemon_follower.h"
 #include "quest_log.h"
 #include "random.h"
 #include "script.h"
@@ -1945,6 +1946,9 @@ void RemoveObjectEventsOutsideView(void)
             if (gLinkPlayerObjectEvents[j].active && i == gLinkPlayerObjectEvents[j].objEventId)
                 isActiveLinkPlayer = TRUE;
         }
+        /* Also exempt the follower pokemon from view culling */
+        if (IsFollowerActive() && i == GetFollowerObjEventId())
+            isActiveLinkPlayer = TRUE;
         if (!isActiveLinkPlayer)
         {
             struct ObjectEvent *objectEvent = &gObjectEvents[i];

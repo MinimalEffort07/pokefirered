@@ -75,6 +75,7 @@
 #include "new_menu_helpers.h"
 #include "overworld.h"
 #include "play_time.h"
+#include "pokemon_follower.h"
 #include "quest_log.h"
 #include "quest_log_objects.h"
 #include "random.h"
@@ -831,6 +832,7 @@ static void LoadMapFromWarp(bool32 unused)
     bool8 isOutdoors;
 
     DespawnRemotePlayerSprites();
+    DespawnFollowerSprite();
     LoadCurrentMapData();
     LoadObjEventTemplatesFromHeader();
     isOutdoors = IsMapTypeOutdoors(gMapHeader.mapType);
@@ -1528,6 +1530,7 @@ void CB1_Overworld(void)
         else
             DoCB1_Overworld(gMain.newKeys, gMain.heldKeys);
         UpdateMultiplayerState();
+        UpdateFollowerPokemon();
     }
 }
 
@@ -2300,6 +2303,7 @@ static void InitObjectEventsLocal(void)
     ResetInitialPlayerAvatarState();
     TrySpawnObjectEvents(0, 0);
     SpawnRemotePlayerSprites();
+    SpawnFollowerSprite();
     TryRunOnWarpIntoMapScript();
 }
 
@@ -2307,6 +2311,7 @@ static void ReloadObjectsAndRunReturnToFieldMapScript(void)
 {
     SpawnObjectEventsOnReturnToField(0, 0);
     SpawnRemotePlayerSprites();
+    SpawnFollowerSprite();
     RunOnReturnToFieldMapScript();
 }
 
