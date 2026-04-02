@@ -4130,7 +4130,7 @@ static bool8 SetUpFieldMove_Surf(void)
     
     GetXYCoordsOneStepInFrontOfPlayer(&x, &y);
     if (MetatileBehavior_IsFastWater(MapGridGetMetatileBehaviorAt(x, y)) != TRUE
-     && PartyHasMonWithSurf() == TRUE
+     && (PartyHasMonWithSurf() == TRUE || CheckBagHasItem(ITEM_HM03, 1) == TRUE)
      && IsPlayerFacingSurfableFishableWater() == TRUE)
     {
         gFieldCallback2 = FieldCallback_PrepareFadeInFromMenu;
@@ -6404,5 +6404,41 @@ static void Task_PartyMenuWaitForFade(u8 taskId)
         DestroyTask(taskId);
         UnlockPlayerFieldControls();
         ScriptContext_Enable();
+    }
+}
+
+/*
+ * TrySetUpFieldMoveFromQuickSelect
+ *
+ * Called by the quick-select menu to validate and set up a field move
+ * without going through the party menu.  Each SetUpFieldMove_X function
+ * checks environmental conditions (tree nearby, water ahead, etc.) and,
+ * on success, sets gPostMenuFieldCallback to the appropriate callback.
+ *
+ * This wrapper lives in party_menu.c because SetUpFieldMove_Fly,
+ * SetUpFieldMove_Surf, and SetUpFieldMove_Waterfall are static here.
+ *
+ * Returns TRUE if the field move conditions are met and callbacks are set up.
+ */
+bool8 TrySetUpFieldMoveFromQuickSelect(u8 fieldMoveId)
+{
+    switch (fieldMoveId)
+    {
+    case FIELD_MOVE_FLASH:
+        return SetUpFieldMove_Flash();
+    case FIELD_MOVE_CUT:
+        return SetUpFieldMove_Cut();
+    case FIELD_MOVE_FLY:
+        return SetUpFieldMove_Fly();
+    case FIELD_MOVE_STRENGTH:
+        return SetUpFieldMove_Strength();
+    case FIELD_MOVE_SURF:
+        return SetUpFieldMove_Surf();
+    case FIELD_MOVE_ROCK_SMASH:
+        return SetUpFieldMove_RockSmash();
+    case FIELD_MOVE_WATERFALL:
+        return SetUpFieldMove_Waterfall();
+    default:
+        return FALSE;
     }
 }

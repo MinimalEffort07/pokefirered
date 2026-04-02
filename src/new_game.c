@@ -373,8 +373,8 @@ void NewGameInitData(void)
     /* Clear roaming Pokemon data (e.g., the legendary beasts) */
     ClearRoamerData();
 
-    /* Clear bag and registered item */
-    gSaveBlock1Ptr->registeredItem = 0;  /* No item registered to SELECT button */
+    /* Clear bag and registered items */
+    memset(gSaveBlock1Ptr->registeredItems, 0, sizeof(gSaveBlock1Ptr->registeredItems));
     ClearBag();
 
     /* Put a Potion on the player's PC (the classic starting gift) */

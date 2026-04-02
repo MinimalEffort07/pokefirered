@@ -49,6 +49,7 @@
 #include "constants/items.h"
 #include "constants/songs.h"
 #include "constants/quest_log.h"
+#include "quick_select_menu.h"
 
 #define FREE_IF_SET(ptr) ({ if (ptr) Free(ptr); })
 
@@ -74,7 +75,7 @@ struct BagSlots
     struct ItemSlot bagPocket_PokeBalls[BAG_POKEBALLS_COUNT];
     u16 itemsAbove[NUM_BAG_POCKETS_NO_CASES];
     u16 cursorPos[NUM_BAG_POCKETS_NO_CASES];
-    u16 registeredItem;
+    u16 registeredItems[REGISTERED_ITEMS_MAX];
     u16 pocket;
 };
 
@@ -730,7 +731,7 @@ static void BagListMenuItemPrintFunc(u8 windowId, u32 itemId, u8 y)
             StringExpandPlaceholders(gStringVar4, gText_TimesStrVar1);
             BagPrintTextOnWindow(windowId, FONT_SMALL, gStringVar4, 0x6e, y, 0, 0, 0xFF, 1);
         }
-        else if (gSaveBlock1Ptr->registeredItem != ITEM_NONE && gSaveBlock1Ptr->registeredItem == bagItemId)
+        else if (QuickSelect_IsItemRegistered(bagItemId))
         {
             BlitBitmapToWindow(windowId, sBlit_SelectButton, 0x70, y, 0x18, 0x10);
         }
@@ -1413,10 +1414,12 @@ static void OpenContextMenu(u8 taskId)
                 sContextMenuItemsPtr = sContextMenuItemsBuffer;
                 sContextMenuNumItems = 3;
                 sContextMenuItemsBuffer[2] = ITEMMENUACTION_CANCEL;
-                if (gSaveBlock1Ptr->registeredItem == gSpecialVar_ItemId)
+                if (QuickSelect_IsItemRegistered(gSpecialVar_ItemId))
                     sContextMenuItemsBuffer[1] = ITEMMENUACTION_DESELECT;
-                else
+                else if (QuickSelect_HasEmptyItemSlot())
                     sContextMenuItemsBuffer[1] = ITEMMENUACTION_REGISTER;
+                else
+                    sContextMenuItemsBuffer[1] = ITEMMENUACTION_CANCEL;
                 if (gSpecialVar_ItemId == ITEM_TM_CASE || gSpecialVar_ItemId == ITEM_BERRY_POUCH)
                     sContextMenuItemsBuffer[0] = ITEMMENUACTION_OPEN;
                 else if (gSpecialVar_ItemId == ITEM_BICYCLE && TestPlayerAvatarFlags(PLAYER_AVATAR_FLAG_ACRO_BIKE | PLAYER_AVATAR_FLAG_MACH_BIKE))
@@ -1600,10 +1603,10 @@ static void Task_ItemMenuAction_ToggleSelect(u8 taskId)
     u16 itemId;
     s16 *data = gTasks[taskId].data;
     itemId = BagGetItemIdByPocketPosition(gBagMenuState.pocket + 1, data[1]);
-    if (gSaveBlock1Ptr->registeredItem == itemId)
-        gSaveBlock1Ptr->registeredItem = ITEM_NONE;
+    if (QuickSelect_IsItemRegistered(itemId))
+        QuickSelect_UnregisterItem(itemId);
     else
-        gSaveBlock1Ptr->registeredItem = itemId;
+        QuickSelect_RegisterItem(itemId);
 
     DestroyListMenuTask(data[0], &gBagMenuState.cursorPos[gBagMenuState.pocket], &gBagMenuState.itemsAbove[gBagMenuState.pocket]);
     Bag_BuildListMenuTemplate(gBagMenuState.pocket);
@@ -2041,20 +2044,20 @@ bool8 UseRegisteredKeyItemOnField(void)
         return FALSE;
     DismissMapNamePopup();
     ChangeBgY(0, 0, 0);
-    if (gSaveBlock1Ptr->registeredItem != ITEM_NONE)
+    if (gSaveBlock1Ptr->registeredItems[0] != ITEM_NONE)
     {
-        if (CheckBagHasItem(gSaveBlock1Ptr->registeredItem, 1) == TRUE)
+        if (CheckBagHasItem(gSaveBlock1Ptr->registeredItems[0], 1) == TRUE)
         {
             LockPlayerFieldControls();
             FreezeObjectEvents();
             HandleEnforcedLookDirectionOnPlayerStopMoving();
             StopPlayerAvatar();
-            gSpecialVar_ItemId = gSaveBlock1Ptr->registeredItem;
-            taskId = CreateTask(ItemId_GetFieldFunc(gSaveBlock1Ptr->registeredItem), 8);
+            gSpecialVar_ItemId = gSaveBlock1Ptr->registeredItems[0];
+            taskId = CreateTask(ItemId_GetFieldFunc(gSaveBlock1Ptr->registeredItems[0]), 8);
             gTasks[taskId].data[3] = 1;
             return TRUE;
         }
-        gSaveBlock1Ptr->registeredItem = ITEM_NONE;
+        gSaveBlock1Ptr->registeredItems[0] = ITEM_NONE;
     }
     ScriptContext_SetupScript(EventScript_BagItemCanBeRegistered);
     return TRUE;
@@ -2080,7 +2083,7 @@ static void BackUpPlayerBag(void)
     memcpy(sBackupPlayerBag->bagPocket_Items, gSaveBlock1Ptr->bagPocket_Items, BAG_ITEMS_COUNT * sizeof(struct ItemSlot));
     memcpy(sBackupPlayerBag->bagPocket_KeyItems, gSaveBlock1Ptr->bagPocket_KeyItems, BAG_KEYITEMS_COUNT * sizeof(struct ItemSlot));
     memcpy(sBackupPlayerBag->bagPocket_PokeBalls, gSaveBlock1Ptr->bagPocket_PokeBalls, BAG_POKEBALLS_COUNT * sizeof(struct ItemSlot));
-    sBackupPlayerBag->registeredItem = gSaveBlock1Ptr->registeredItem;
+    memcpy(sBackupPlayerBag->registeredItems, gSaveBlock1Ptr->registeredItems, sizeof(gSaveBlock1Ptr->registeredItems));
     sBackupPlayerBag->pocket = gBagMenuState.pocket;
     for (i = 0; i < NUM_BAG_POCKETS_NO_CASES; i++)
     {
@@ -2090,7 +2093,7 @@ static void BackUpPlayerBag(void)
     ClearItemSlots(gSaveBlock1Ptr->bagPocket_Items, BAG_ITEMS_COUNT);
     ClearItemSlots(gSaveBlock1Ptr->bagPocket_KeyItems, BAG_KEYITEMS_COUNT);
     ClearItemSlots(gSaveBlock1Ptr->bagPocket_PokeBalls, BAG_POKEBALLS_COUNT);
-    gSaveBlock1Ptr->registeredItem = ITEM_NONE;
+    memset(gSaveBlock1Ptr->registeredItems, 0, sizeof(gSaveBlock1Ptr->registeredItems));
     ResetBagCursorPositions();
 }
 
@@ -2100,7 +2103,7 @@ static void RestorePlayerBag(void)
     memcpy(gSaveBlock1Ptr->bagPocket_Items, sBackupPlayerBag->bagPocket_Items, BAG_ITEMS_COUNT * sizeof(struct ItemSlot));
     memcpy(gSaveBlock1Ptr->bagPocket_KeyItems, sBackupPlayerBag->bagPocket_KeyItems, BAG_KEYITEMS_COUNT * sizeof(struct ItemSlot));
     memcpy(gSaveBlock1Ptr->bagPocket_PokeBalls, sBackupPlayerBag->bagPocket_PokeBalls, BAG_POKEBALLS_COUNT * sizeof(struct ItemSlot));
-    gSaveBlock1Ptr->registeredItem = sBackupPlayerBag->registeredItem;
+    memcpy(gSaveBlock1Ptr->registeredItems, sBackupPlayerBag->registeredItems, sizeof(gSaveBlock1Ptr->registeredItems));
     gBagMenuState.pocket = sBackupPlayerBag->pocket;
     for (i = 0; i < NUM_BAG_POCKETS_NO_CASES; i++)
     {
@@ -2244,7 +2247,7 @@ static void Task_Bag_TeachyTvRegister(u8 taskId)
             break;
         case 408:
             PlaySE(SE_SELECT);
-            gSaveBlock1Ptr->registeredItem = gSpecialVar_ItemId;
+            QuickSelect_RegisterItem(gSpecialVar_ItemId);
             HideBagWindow(10);
             HideBagWindow(6);
             PutWindowTilemap(0);

@@ -1182,6 +1182,7 @@ extern const u8 Text_MonSentToBoxSomeonesBoxFull[];
 extern const u8 Text_MonSentToBoxBillsBoxFull[];
 
 extern const u8 EventScript_BagItemCanBeRegistered[];
+extern const u8 EventScript_CantUseHMHere[];
 
 // fldeff_cut
 extern const u8 EventScript_FldEffCut[];

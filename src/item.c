@@ -518,14 +518,20 @@ void ItemPcCompaction(void)
 
 void RegisteredItemHandleBikeSwap(void)
 {
-    switch (gSaveBlock1Ptr->registeredItem)
+    u8 i;
+
+    /* Scan all quick-select item slots for bike entries and swap them */
+    for (i = 0; i < ARRAY_COUNT(gSaveBlock1Ptr->registeredItems); i++)
     {
-    case ITEM_MACH_BIKE:
-        gSaveBlock1Ptr->registeredItem = ITEM_ACRO_BIKE;
-        break;
-    case ITEM_ACRO_BIKE:
-        gSaveBlock1Ptr->registeredItem = ITEM_MACH_BIKE;
-        break;
+        switch (gSaveBlock1Ptr->registeredItems[i])
+        {
+        case ITEM_MACH_BIKE:
+            gSaveBlock1Ptr->registeredItems[i] = ITEM_ACRO_BIKE;
+            break;
+        case ITEM_ACRO_BIKE:
+            gSaveBlock1Ptr->registeredItems[i] = ITEM_MACH_BIKE;
+            break;
+        }
     }
 }
 

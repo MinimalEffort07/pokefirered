@@ -33,6 +33,7 @@
 #include "field_poison.h"
 #include "field_specials.h"
 #include "item_menu.h"
+#include "quick_select_menu.h"
 #include "link.h"
 #include "wonder_news.h"
 #include "metatile_behavior.h"
@@ -309,7 +310,7 @@ int ProcessPlayerFieldInput(struct FieldInput *input)
         ShowStartMenu();
         return TRUE;
     }
-    if (input->pressedSelectButton && UseRegisteredKeyItemOnField() == TRUE)
+    if (input->pressedSelectButton && OpenQuickSelectMenu() == TRUE)
     {
         gFieldInputRecord.pressedSelectButton = TRUE;
         return TRUE;
