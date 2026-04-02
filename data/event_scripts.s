@@ -858,6 +858,9 @@ Text_BagItemCanBeRegistered::
 	.string "An item in the BAG can be\n"
 	.string "registered to SELECT for easy use.$"
 
+Text_CantUseHMHere::
+	.string "That move can't be used here.$"
+
 @ Unused (email from R/S Rivals computer)
 Text_TrainerSchoolEmail::
 	.string "パソコンに\n"
@@ -1129,6 +1132,10 @@ EventScript_HandOverItem::
 
 EventScript_BagItemCanBeRegistered::
 	msgbox Text_BagItemCanBeRegistered, MSGBOX_SIGN
+	end
+
+EventScript_CantUseHMHere::
+	msgbox Text_CantUseHMHere, MSGBOX_SIGN
 	end
 
 EventScript_Return::

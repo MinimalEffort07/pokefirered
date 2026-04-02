@@ -394,9 +394,27 @@ PalletTown_Movement_SignLadyMoveOutOfWayLeft::
 
 PalletTown_EventScript_FatMan::
 	lock
-    setflag FLAG_SYS_POKEDEX_GET
-    givemon SPECIES_LAPRAS, 100
-    givemon SPECIES_PIKACHU, 100
+	setflag FLAG_SYS_POKEDEX_GET
+	givemon SPECIES_LAPRAS, 100
+	givemon SPECIES_PIKACHU, 100
+	@ Give all 7 HM items
+	additem ITEM_HM01
+	additem ITEM_HM02
+	additem ITEM_HM03
+	additem ITEM_HM04
+	additem ITEM_HM05
+	additem ITEM_HM06
+	additem ITEM_HM07
+	@ Give bicycle
+	additem ITEM_BICYCLE
+	@ Set all 7 badges so HMs are usable from quick-select
+	setflag FLAG_BADGE01_GET
+	setflag FLAG_BADGE02_GET
+	setflag FLAG_BADGE03_GET
+	setflag FLAG_BADGE04_GET
+	setflag FLAG_BADGE05_GET
+	setflag FLAG_BADGE06_GET
+	setflag FLAG_BADGE07_GET
 	msgbox PalletTown_Text_WarpToMtMoon, MSGBOX_YESNO
 	compare VAR_RESULT, YES
 	goto_if_eq PalletTown_EventScript_FatManWarp
