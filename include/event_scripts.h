@@ -1129,6 +1129,9 @@ extern const u8 EventScript_FldEffRockSmash[];
 
 extern const u8 SafariZone_EventScript_TimesUp[];
 extern const u8 SafariZone_EventScript_RetirePrompt[];
+
+extern const u8 EventScript_MultiplayerStarted[];
+extern const u8 EventScript_MultiplayerStopped[];
 extern const u8 SafariZone_EventScript_OutOfBallsMidBattle[];
 extern const u8 SafariZone_EventScript_OutOfBalls[];
 

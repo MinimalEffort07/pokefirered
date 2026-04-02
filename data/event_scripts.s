@@ -1348,6 +1348,8 @@ Text_TestMsg::
 	.include "data/scripts/repel.inc"
 	.include "data/scripts/safari_zone.inc"
 	.include "data/text/safari_zone.inc"
+	.include "data/scripts/multiplayer.inc"
+	.include "data/text/multiplayer.inc"
 	.include "data/text/competitive_brothers.inc"
 	.include "data/text/eon_ticket.inc"
 	.include "data/text/berries.inc"

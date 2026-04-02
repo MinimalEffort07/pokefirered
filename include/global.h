@@ -24,16 +24,18 @@
 #ifndef GUARD_GLOBAL_H
 #define GUARD_GLOBAL_H
 
-#include "config.h"
-#include "gba/gba.h"
-#include <string.h>
+#include "config.h"   // IWYU pragma: keep
+#include "gba/gba.h"  // IWYU pragma: keep
+#include <string.h>   // IWYU pragma: keep
+
 #include "constants/global.h"
 #include "constants/flags.h"
 #include "constants/vars.h"
 #include "constants/species.h"
-#include "constants/pokedex.h"
+#include "constants/pokedex.h"  // IWYU pragma: keep
+
 #include "constants/easy_chat.h"
-#include "constants/rgb.h"
+#include "constants/rgb.h"  // IWYU pragma: keep
 
 // Prevent cross-jump optimization.
 #define BLOCK_CROSS_JUMP asm("");
@@ -711,7 +713,7 @@ struct MysteryGiftSave
     struct WonderCardMetadata cardMetadata;
     u16 questionnaireWords[NUM_QUESTIONNAIRE_WORDS];
     struct WonderNewsMetadata newsMetadata;
-    u32 trainerIds[2][5]; // Saved ids for 10 trainers, 5 each for battles and trades 
+    u32 trainerIds[2][5]; // Saved ids for 10 trainers, 5 each for battles and trades
 }; // 0x36C 0x348C
 
 struct TrainerTower

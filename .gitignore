@@ -1,4 +1,5 @@
 *.1bpp
+*CLAUDE.md*
 *.4bpp
 *.8bpp
 *.DS_Store
