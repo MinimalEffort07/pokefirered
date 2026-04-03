@@ -59,6 +59,7 @@
 #include "constants/battle_anim.h"
 #include "constants/items.h"
 #include "constants/moves.h"
+#include "constants/abilities.h"
 #include "constants/songs.h"
 #include "constants/sound.h"
 
@@ -139,6 +140,8 @@ static void DoSwitchOutAnimation(void);
 static void PlayerDoMoveAnimation(void);
 static void Task_StartSendOutAnim(u8 taskId);
 static void PreviewDeterminativeMoveTargets(void);
+static u16 GetMoveEffectivenessColor(u16 move, u8 defType1, u8 defType2, u8 defAbility);
+static void MoveSelectionSetEffectivenessColors(void);
 static void SwitchIn_HandleSoundAndEnd(void);
 static void Task_GiveExpWithExpBar(u8 taskId);
 static void Task_CreateLevelUpVerticalStripes(u8 taskId);
@@ -696,6 +699,7 @@ static void HandleMoveSwitching(void)
                 gDisableStructs[gActiveBattler].mimickedMoves &= (~gBitTable[gMoveSelectionCursor[gActiveBattler]]);
                 gDisableStructs[gActiveBattler].mimickedMoves |= gBitTable[gMultiUsePlayerCursor];
             }
+            MoveSelectionSetEffectivenessColors();
             MoveSelectionDisplayMoveNames();
             for (i = 0; i < MAX_MON_MOVES; ++i)
                 perMovePPBonuses[i] = (gBattleMons[gActiveBattler].ppBonuses & (3 << (i * 2))) >> (i * 2);
@@ -1413,6 +1417,134 @@ static void MoveSelectionDisplayMoveNames(void)
         BattlePutTextOnWindow(gDisplayedStringBattle, i + 3);
         if (moveInfo->moves[i] != MOVE_NONE)
             ++gNumberOfMovesToChoose;
+    }
+}
+
+/*
+ * Returns an RGB text color representing how effective a move's type is
+ * against the given defender types and ability.  Walks gTypeEffectiveness[]
+ * directly with no side-effects (does not touch gBattleMoveDamage).
+ *
+ * Color mapping (text on white background):
+ *   Dark red   — immune (0x damage)
+ *   Dark amber — not very effective (0.5x / 0.25x)
+ *   Dark gray  — neutral (1x, unchanged)
+ *   Dark green — super effective (2x / 4x)
+ */
+static u16 GetMoveEffectivenessColor(u16 move, u8 defType1, u8 defType2, u8 defAbility)
+{
+    s32 i;
+    u8 flags = 0;
+    u8 moveType;
+
+    if (move == MOVE_NONE || move == MOVE_STRUGGLE)
+        return RGB(9, 9, 9);
+
+    moveType = gBattleMoves[move].type;
+
+    /* Levitate grants Ground immunity */
+    if (defAbility == ABILITY_LEVITATE && moveType == TYPE_GROUND)
+        return RGB(24, 0, 0);
+
+    for (i = 0; TYPE_EFFECT_ATK_TYPE(i) != TYPE_ENDTABLE; i += 3)
+    {
+        if (TYPE_EFFECT_ATK_TYPE(i) == TYPE_FORESIGHT)
+            continue;
+
+        if (TYPE_EFFECT_ATK_TYPE(i) == moveType)
+        {
+            if (TYPE_EFFECT_DEF_TYPE(i) == defType1)
+            {
+                if (TYPE_EFFECT_MULTIPLIER(i) == TYPE_MUL_NO_EFFECT)
+                    flags |= MOVE_RESULT_DOESNT_AFFECT_FOE;
+                else if (TYPE_EFFECT_MULTIPLIER(i) == TYPE_MUL_NOT_EFFECTIVE)
+                    flags |= MOVE_RESULT_NOT_VERY_EFFECTIVE;
+                else if (TYPE_EFFECT_MULTIPLIER(i) == TYPE_MUL_SUPER_EFFECTIVE)
+                    flags |= MOVE_RESULT_SUPER_EFFECTIVE;
+            }
+            if (TYPE_EFFECT_DEF_TYPE(i) == defType2 && defType1 != defType2)
+            {
+                if (TYPE_EFFECT_MULTIPLIER(i) == TYPE_MUL_NO_EFFECT)
+                    flags |= MOVE_RESULT_DOESNT_AFFECT_FOE;
+                else if (TYPE_EFFECT_MULTIPLIER(i) == TYPE_MUL_NOT_EFFECTIVE)
+                    flags |= MOVE_RESULT_NOT_VERY_EFFECTIVE;
+                else if (TYPE_EFFECT_MULTIPLIER(i) == TYPE_MUL_SUPER_EFFECTIVE)
+                    flags |= MOVE_RESULT_SUPER_EFFECTIVE;
+            }
+        }
+    }
+
+    /*
+     * Wonder Guard: non-super-effective damaging moves can't hit.
+     * Same logic as TypeCalc / AI_TypeCalc.
+     */
+    if (defAbility == ABILITY_WONDER_GUARD
+        && gBattleMoves[move].power
+        && (!(flags & MOVE_RESULT_SUPER_EFFECTIVE)
+            || ((flags & (MOVE_RESULT_SUPER_EFFECTIVE | MOVE_RESULT_NOT_VERY_EFFECTIVE))
+                == (MOVE_RESULT_SUPER_EFFECTIVE | MOVE_RESULT_NOT_VERY_EFFECTIVE))))
+        flags |= MOVE_RESULT_DOESNT_AFFECT_FOE;
+
+    if (flags & MOVE_RESULT_DOESNT_AFFECT_FOE)
+        return RGB(24, 0, 0);    /* dark red */
+    if ((flags & MOVE_RESULT_SUPER_EFFECTIVE) && (flags & MOVE_RESULT_NOT_VERY_EFFECTIVE))
+        return RGB(9, 9, 9);     /* neutral — types cancel out */
+    if (flags & MOVE_RESULT_SUPER_EFFECTIVE)
+        return RGB(0, 20, 0);    /* dark green */
+    if (flags & MOVE_RESULT_NOT_VERY_EFFECTIVE)
+        return RGB(26, 26, 0);   /* yellow */
+
+    return RGB(9, 9, 9);         /* neutral dark gray (unchanged) */
+}
+
+/*
+ * Assigns each move-name window (B_WIN_MOVE_NAME_1..4) its own BG palette
+ * and sets the text color (palette entry 13) to reflect how effective that
+ * move is against the current opponent.  Must be called BEFORE
+ * MoveSelectionDisplayMoveNames() so the palette assignment is in place
+ * when PutWindowTilemap writes tilemap entries.
+ *
+ * Uses palettes 10-13 which are unused during battle.  Palettes 8-9 are
+ * reserved by the animation system (BG_ANIM_PAL_1/2 in battle_anim_mons.c)
+ * and must not be touched here.
+ */
+static void MoveSelectionSetEffectivenessColors(void)
+{
+    s32 i;
+    struct ChooseMoveStruct *moveInfo = (struct ChooseMoveStruct *)(&gBattleBufferA[gActiveBattler][4]);
+    u8 defender;
+    u8 defType1, defType2, defAbility;
+
+    defender = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
+    defType1 = gBattleMons[defender].type1;
+    defType2 = gBattleMons[defender].type2;
+    defAbility = gBattleMons[defender].ability;
+
+    for (i = 0; i < MAX_MON_MOVES; i++)
+    {
+        u8 windowId = B_WIN_MOVE_NAME_1 + i;
+        u8 pal = 10 + i;  /* palettes 10, 11, 12, 13 */
+        u16 textColor;
+        s32 j;
+
+        /*
+         * Copy palette 5 text color entries (11-15) into this palette slot
+         * so text foreground, shadow, and PP colors render correctly.
+         */
+        for (j = 11; j <= 15; j++)
+            gPlttBufferUnfaded[BG_PLTT_ID(pal) + j] = gPlttBufferUnfaded[BG_PLTT_ID(5) + j];
+
+        /* Override entry 13 (text foreground) with the effectiveness color */
+        textColor = GetMoveEffectivenessColor(moveInfo->moves[i], defType1, defType2, defAbility);
+        gPlttBufferUnfaded[BG_PLTT_ID(pal) + 13] = textColor;
+
+        /* Sync to the faded palette buffer so the color appears immediately */
+        CpuCopy16(&gPlttBufferUnfaded[BG_PLTT_ID(pal) + 11],
+                   &gPlttBufferFaded[BG_PLTT_ID(pal) + 11],
+                   PLTT_SIZEOF(5));
+
+        /* Point this window at its dedicated palette */
+        SetWindowAttribute(windowId, WINDOW_PALETTE_NUM, pal);
     }
 }
 
@@ -2477,6 +2609,7 @@ static void PlayerHandleChooseMove(void)
 
 void InitMoveSelectionsVarsAndStrings(void)
 {
+    MoveSelectionSetEffectivenessColors();
     MoveSelectionDisplayMoveNames();
     gMultiUsePlayerCursor = 0xFF;
     MoveSelectionCreateCursorAt(gMoveSelectionCursor[gActiveBattler], 0);
