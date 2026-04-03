@@ -1,6 +1,6 @@
 # Pokémon FireRed and LeafGreen
 
-This is a decompilation of English Pokémon FireRed and LeafGreen.
+This is a fork of the PRET project that uses AI to implement additional features. 
 
 ## Added Features
 
@@ -29,6 +29,9 @@ This is a decompilation of English Pokémon FireRed and LeafGreen.
 - **Walk With Pokemon** — Your pokemon follows you around in the overworld.
 
   ![Walk With Pokemon](gifs/WalkWithPokemon.gif)
+
+
+This is a decompilation of English Pokémon FireRed and LeafGreen.
 
 It builds the following ROM images:
 
