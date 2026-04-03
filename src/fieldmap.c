@@ -202,6 +202,12 @@ void InitMap(void)
 void InitMapFromSavedGame(void)
 {
     InitMapLayoutData(&gMapHeader);
+    /* Regenerate Mt. Moon cave on save reload. Without this, the map reverts
+     * to the original ROM layout but NPC positions and the player's saved
+     * coordinates still reflect the procedurally generated layout, causing
+     * NPCs to be stuck in walls and the player to spawn inside terrain. */
+    if (gMapHeader.mapLayoutId == LAYOUT_MT_MOON_1F || gMapHeader.mapLayoutId == LAYOUT_MT_MOON_B1F)
+        GenerateMtMoonCave();
     LoadSavedMapView();
     RunOnLoadMapScript();
 }

@@ -782,6 +782,8 @@ struct ExternalEventFlags
 
 } __attribute__((packed));/*size = 0x15*/
 
+#define REGISTERED_ITEMS_MAX 20
+
 struct SaveBlock1
 {
     /*0x0000*/ struct Coords16 pos;
@@ -799,7 +801,7 @@ struct SaveBlock1
     /*0x0038*/ struct Pokemon playerParty[PARTY_SIZE];
     /*0x0290*/ u32 money;
     /*0x0294*/ u16 coins;
-    /*0x0296*/ u16 registeredItems[20]; /* quick-select registered items */
+    /*0x0296*/ u16 registeredItems[REGISTERED_ITEMS_MAX]; /* quick-select registered items */
     /*0x0298*/ struct ItemSlot pcItems[PC_ITEMS_COUNT];
     /*0x0310*/ struct ItemSlot bagPocket_Items[BAG_ITEMS_COUNT];
     /*0x03b8*/ struct ItemSlot bagPocket_KeyItems[BAG_KEYITEMS_COUNT];

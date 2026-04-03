@@ -67,8 +67,8 @@
  *   Your tile position on the current map.
  *
  * Frame 2 (bit 15 = 1): APPEARANCE
- *   Bits 14-8: Graphics ID (7 bits, which sprite to display)
- *   Bits 7-4:  Facing direction (4 bits)
+ *   Bits 13-5: Graphics ID (8 bits, which sprite to display, 0-255)
+ *   Bits 4-2:  Facing direction (3 bits, values 1-4)
  *   Bit 1:     In battle flag
  *   Bit 0:     Active flag (1 = player is connected and playing)
  *
@@ -148,8 +148,11 @@ EWRAM_DATA bool8 gMultiplayerEnabled = FALSE;
 static EWRAM_DATA u8 sLocalId = 0;
 static EWRAM_DATA u8 sFrame = 0;
 static EWRAM_DATA u8 sNameIdx = 0;  /* Current byte index for name packet rotation (0-7) */
-static EWRAM_DATA u16 sRecvBuffer[MP_MAX_PLAYERS] = {0};
-static EWRAM_DATA bool8 sTransferDone = FALSE;
+/* volatile: written by ISR (MP_SerialCallback), read by main loop.
+ * Without volatile, the compiler may cache these in registers and
+ * never re-read from memory, especially with MODERN=1 optimizations. */
+static EWRAM_DATA volatile u16 sRecvBuffer[MP_MAX_PLAYERS] = {0};
+static EWRAM_DATA volatile bool8 sTransferDone = FALSE;
 
 /*
  * MP_SPRITE_TAG: Magic value stored in sprite->data[7] to identify sprites
@@ -392,7 +395,10 @@ static void DespawnRemoteSprite(u8 remoteIdx)
         return;
 
     objEvent = &gObjectEvents[rp->objEventId];
-    /* Only destroy if the ObjectEvent still belongs to us */
+    /* Only destroy if the ObjectEvent still belongs to us. Setting
+     * active = FALSE INSIDE the check prevents deactivating an unrelated
+     * NPC that may have been assigned this slot after our sprite was
+     * destroyed by a battle transition or menu. */
     if (objEvent->active && objEvent->spriteId < MAX_SPRITES)
     {
         struct Sprite *sprite = &gSprites[objEvent->spriteId];
@@ -402,8 +408,8 @@ static void DespawnRemoteSprite(u8 remoteIdx)
             DestroySprite(sprite);
         }
         objEvent->spriteId = MAX_SPRITES;
+        objEvent->active = FALSE;
     }
-    objEvent->active = FALSE;
     rp->spriteSpawned = FALSE;
 }
 
@@ -562,10 +568,18 @@ static void UpdateRemoteSprite(u8 remoteIdx)
 static void SpriteCB_RemotePlayer(struct Sprite *sprite)
 {
     u8 remoteIdx = sprite->data[0];
-    struct RemotePlayer *rp = &sRemotePlayers[remoteIdx];
-    struct ObjectEvent *objEvent = &gObjectEvents[rp->objEventId];
+    struct RemotePlayer *rp;
+    struct ObjectEvent *objEvent;
     s16 targetPixelX, targetPixelY;
     bool8 isMoving;
+
+    /* Guard against out-of-bounds access if sprite->data[0] contains
+     * garbage (e.g., sprite slot was reused after a battle transition). */
+    if (remoteIdx >= MP_MAX_REMOTE)
+        return;
+
+    rp = &sRemotePlayers[remoteIdx];
+    objEvent = &gObjectEvents[rp->objEventId];
 
     /* Position the sprite at the interpolated coordinates */
     sprite->x = objEvent->initialCoords.x;
@@ -895,7 +909,16 @@ void UpdateMultiplayerState(void)
     /* Process received data from the last serial transfer */
     if (sTransferDone)
     {
+        /* Copy the volatile receive buffer to a local snapshot under
+         * interrupt protection. Without this, a new serial interrupt
+         * could fire mid-loop and overwrite sRecvBuffer, causing us
+         * to mix data from two different transfer cycles. */
+        u16 localBuf[MP_MAX_PLAYERS];
         sTransferDone = FALSE;
+        DisableInterrupts(INTR_FLAG_SERIAL);
+        for (i = 0; i < MP_MAX_PLAYERS; i++)
+            localBuf[i] = sRecvBuffer[i];
+        EnableInterrupts(INTR_FLAG_SERIAL);
 
         for (i = 0; i < MP_MAX_PLAYERS; i++)
         {
@@ -917,7 +940,7 @@ void UpdateMultiplayerState(void)
                 continue;
 
             rp = &sRemotePlayers[remoteIdx];
-            recv = sRecvBuffer[i];
+            recv = localBuf[i];
 
             /* 0xFFFF or 0 means no player connected at this position */
             if (recv == 0xFFFF || recv == 0)
@@ -956,11 +979,11 @@ void UpdateMultiplayerState(void)
             case PKT_TYPE_DIR:
             {
                 /*
-                 * Appearance packet: bits 13-8 = graphicsId (6),
-                 * bits 7-4 = direction (4), bits 1-0 = flags (2)
+                 * Appearance packet: bits 13-5 = graphicsId (8),
+                 * bits 4-2 = direction (3), bits 1-0 = flags (2)
                  */
-                rp->graphicsId = (recv >> 8) & 0x3F;
-                rp->direction = (recv >> 4) & 0xF;
+                rp->graphicsId = (recv >> 5) & 0xFF;
+                rp->direction = (recv >> 2) & 0x7;
                 rp->flags = recv & 0x3;
 
                 if (rp->flags & MP_FLAG_ACTIVE)
@@ -984,13 +1007,23 @@ void UpdateMultiplayerState(void)
                  * bits 7-0 = character value in game encoding.
                  * The sender rotates through all 8 bytes (7 chars + EOS)
                  * continuously, so late joiners eventually get the full name.
+                 *
+                 * We track received bytes via a bitmask (nameRecvMask) rather
+                 * than triggering on the first EOS seen, because a late-joining
+                 * receiver may catch the sender mid-rotation (e.g., indices
+                 * 5,6,7) and would fire the "joined" notification with an
+                 * incomplete name. Waiting for all 8 bits ensures the full
+                 * name is present before we display it.
                  */
                 u8 nameIdx = (recv >> 11) & 0x7;
                 u8 ch = recv & 0xFF;
 
                 if (nameIdx < PLAYER_NAME_LENGTH + 1)
                     rp->name[nameIdx] = ch;
-                if (ch == EOS || nameIdx == PLAYER_NAME_LENGTH)
+                rp->nameRecvMask |= (1 << nameIdx);
+
+                /* All 8 bytes (indices 0-7) received → name is complete */
+                if (rp->nameRecvMask == 0xFF && !rp->nameReceived)
                 {
                     rp->nameReceived = TRUE;
                     /* Show "joined" notification once name is complete */
@@ -1063,14 +1096,15 @@ void UpdateMultiplayerState(void)
                 | (gSaveBlock1Ptr->pos.x & 0x7F);
         break;
     case 2:
-        /* Appearance packet: bits15-14=10, gfxId(6), dir(4), flags(2) */
+        /* Appearance packet: bits15-14=10, gfxId(8) in bits 13-5,
+         * direction(3) in bits 4-2, flags(2) in bits 1-0 */
         {
             u8 flags = MP_FLAG_ACTIVE;
             if (gMain.inBattle)
                 flags |= MP_FLAG_IN_BATTLE;
             sendVal = PKT_TYPE_DIR
-                    | ((gSaveBlock2Ptr->playerAvatarGfxId & 0x3F) << 8)
-                    | ((GetPlayerFacingDirection() & 0xF) << 4)
+                    | ((gSaveBlock2Ptr->playerAvatarGfxId & 0xFF) << 5)
+                    | ((GetPlayerFacingDirection() & 0x7) << 2)
                     | flags;
         }
         break;
