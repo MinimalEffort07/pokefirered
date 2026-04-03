@@ -21,7 +21,8 @@
  * R switches page.
  */
 
-#define REGISTERED_ITEMS_MAX 20
+/* REGISTERED_ITEMS_MAX is defined in global.h (next to the save struct
+ * field it sizes) so that global.h doesn't need to include this header. */
 
 bool8 OpenQuickSelectMenu(void);
 bool8 QuickSelect_IsItemRegistered(u16 itemId);

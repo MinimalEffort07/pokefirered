@@ -35,7 +35,8 @@ struct RemotePlayer {
     u8 spriteSpawned;
     u16 timeoutCounter;  /* Frames since last valid data; for disconnect detection */
     u8 name[PLAYER_NAME_LENGTH + 1];  /* Remote player's name, received via name packets */
-    bool8 nameReceived;               /* TRUE once we have a complete name (found EOS) */
+    bool8 nameReceived;               /* TRUE once we have a complete name (all bytes arrived) */
+    u8 nameRecvMask;                  /* Bitmask: bit N set = received name byte at index N */
 };
 
 extern bool8 gMultiplayerEnabled;

@@ -199,10 +199,12 @@ static bool8 ExecuteItemSelection(u8 slot)
     if (itemId == ITEM_NONE || !CheckBagHasItem(itemId, 1))
         return FALSE;
 
-    /* Tear down menu — leave player locked for the item callback */
-    DestroyListMenuTask(sQS.listTaskId, NULL, NULL);
+    /* Tear down menu — leave player locked for the item callback.
+     * Note: the list task was already destroyed by the caller (STATE_INPUT)
+     * before calling this function, so we must NOT destroy it again here. */
     ClearStdWindowAndFrameToTransparent(sQS.windowId, TRUE);
     RemoveWindow(sQS.windowId);
+    ScheduleBgCopyTilemapToVram(0);
     DestroyTask(sQS.taskId);
 
     gSpecialVar_ItemId = itemId;
@@ -287,6 +289,15 @@ static void Task_QuickSelectMenu(u8 taskId)
         listTemplate.scrollMultiple = LIST_NO_MULTIPLE_SCROLL;
         listTemplate.fontId = FONT_NORMAL;
         listTemplate.cursorKind = 0;
+
+        /* Clamp saved cursor position to prevent out-of-bounds reads when
+         * the number of entries decreased since the last open (e.g., item
+         * was consumed or a badge was lost). */
+        if (sQS.cursorPos + sQS.itemsAbove >= sQS.numEntries)
+        {
+            sQS.cursorPos = 0;
+            sQS.itemsAbove = 0;
+        }
 
         sQS.listTaskId = ListMenuInit(&listTemplate, sQS.cursorPos, sQS.itemsAbove);
         CopyWindowToVram(sQS.windowId, COPYWIN_FULL);
