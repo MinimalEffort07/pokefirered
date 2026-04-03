@@ -1,6 +1,6 @@
 # Pokémon FireRed and LeafGreen
 
-This is a fork of the PRET project that uses AI to implement additional features. 
+This is a fork of the PRET project with custom features. Development is AI-assisted (Claude Code) with human review and direction.
 
 ## Added Features
 
