@@ -18,7 +18,7 @@ This is a decompilation of English Pokémon FireRed and LeafGreen.
 
   ![Character Select](gifs/character_select.gif)
 
-- **Cycle Anywhere** — Use the bicycle on any outdoor map without restrictions.
+- **Cycle Anywhere** — Use the bicycle anywhere without restrictions.
 
   ![Cycle Anywhere](gifs/cycleAnywhere.gif)
 
