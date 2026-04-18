@@ -81,6 +81,7 @@
 #include "random.h"
 #include "renewable_hidden_items.h"
 #include "roamer.h"
+#include "roaming_pokemon.h"
 #include "safari_zone.h"
 #include "save_location.h"
 #include "scanline_effect.h"
@@ -833,6 +834,7 @@ static void LoadMapFromWarp(bool32 unused)
 
     DespawnRemotePlayerSprites();
     DespawnFollowerSprite();
+    DespawnAllRoamingPokemon();
     LoadCurrentMapData();
     LoadObjEventTemplatesFromHeader();
     isOutdoors = IsMapTypeOutdoors(gMapHeader.mapType);
@@ -1531,6 +1533,8 @@ void CB1_Overworld(void)
             DoCB1_Overworld(gMain.newKeys, gMain.heldKeys);
         UpdateMultiplayerState();
         UpdateFollowerPokemon();
+        UpdateRoamingPokemon();
+        UpdateRoamingFlybys();
     }
 }
 
@@ -2304,6 +2308,7 @@ static void InitObjectEventsLocal(void)
     TrySpawnObjectEvents(0, 0);
     SpawnRemotePlayerSprites();
     SpawnFollowerSprite();
+    SpawnRoamingPokemonOnMap();
     TryRunOnWarpIntoMapScript();
 }
 
@@ -2312,6 +2317,7 @@ static void ReloadObjectsAndRunReturnToFieldMapScript(void)
     SpawnObjectEventsOnReturnToField(0, 0);
     SpawnRemotePlayerSprites();
     SpawnFollowerSprite();
+    SpawnRoamingPokemonOnMap();
     RunOnReturnToFieldMapScript();
 }
 
