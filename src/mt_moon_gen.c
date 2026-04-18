@@ -58,25 +58,102 @@
 #define CAVE_SIZE (CAVE_W * CAVE_H)
 
 // Full u16 metatile entries (metatile | collision<<10 | elevation<<12)
+// TILE_FLOOR: the "regular" cave floor (metatile 0x281, palette 8). At
+// runtime this palette renders as a muted tan-with-wavy-grain, and
+// vanilla Mt Moon uses it for ~44% of all map cells -- it's the
+// dominant floor the player walks on in the corridor network.
+// TILE_SAND: the brighter yellow-gold sand patch (metatile 0x2fc, palette
+// 11) that vanilla scatters as accents near items and in the upper
+// plateau area. We sprinkle a minority of floor cells with this tile
+// so the cave has visual variety instead of a uniform carpet.
 #define TILE_FLOOR          0x3281
+#define TILE_SAND           0x32fc
 #define TILE_ENTRANCE       0x3287
 #define TILE_EXIT           0x3285
 
-// Wall tiles by cardinal adjacency
-#define TILE_W_NONE         0x0691  // interior
-#define TILE_W_BELOW        0x0711  // cliff face
-#define TILE_W_ABOVE        0x0689  // wall top
-#define TILE_W_LEFT         0x0690  // floor to left
-#define TILE_W_RIGHT        0x0692  // floor to right
-#define TILE_W_ABOVE_LEFT   0x0688
-#define TILE_W_ABOVE_RIGHT  0x068a
-#define TILE_W_BELOW_LEFT   0x0683
-#define TILE_W_BELOW_RIGHT  0x0683
-#define TILE_W_ABOVE_LR     0x069f
-#define TILE_W_BELOW_LR     0x0699
-#define TILE_W_LEFT_RIGHT   0x0682
-#define TILE_W_ABOVE_BELOW  0x0682
-#define TILE_W_SURROUNDED   0x0682  // use thin wall tile instead of 717 (has signpost behavior)
+/*
+ * Wall tiles by cardinal adjacency.
+ *
+ * The Mt. Moon tileset actually provides TWO wall sets that render at
+ * DIFFERENT APPARENT HEIGHTS:
+ *
+ *   A. Rim-wall (single-cell) set, 0x0688..0x069a. A clean 3x3 panel:
+ *        0x0688 TL  0x0689 T   0x068A TR
+ *        0x0690 L   0x0691 mid 0x0692 R
+ *        0x0698 BL  0x0699 B   0x069A BR
+ *      Each cell is a SHORT wall -- the top edge is visible, the
+ *      bottom edge is visible, and it reads as "about one tile tall".
+ *      Good for thin interior wall strips in procgen caves.
+ *
+ *   B. Cliff-face (TWO-cell tall) set:
+ *                            0x06c4   (upper cliff face -- the row that
+ *                                       sits ABOVE a cliff-bottom cell;
+ *                                       looks like the top of a tall
+ *                                       drop. Has collision.)
+ *        0x0710  0x0711  0x0712       (cliff bottom row: BL / B / BR.
+ *                                       These are "wall with floor to
+ *                                       the south" i.e. the face the
+ *                                       player sees when standing in
+ *                                       front of a tall wall.)
+ *        0x0715          0x0716       (cliff side faces: LEFT edge,
+ *                                       RIGHT edge -- for vertical
+ *                                       cliff walls with floor to the
+ *                                       west or east respectively.)
+ *      The 2-row "upper + bottom" structure is what makes vanilla cave
+ *      walls look VISUALLY MULTI-LEVEL / TALL. The upper row (0x06c4)
+ *      is NOT a separate wall cell in the map grid -- it's what we
+ *      place in the wall cell IMMEDIATELY NORTH of a cliff-bottom cell.
+ *
+ * Procgen strategy:
+ *   - If a wall cell would get signature BELOW / BELOW_LEFT / BELOW_RIGHT
+ *     AND the cell to its NORTH is also a wall (i.e. this is the bottom
+ *     of a wall that is at least 2 cells tall), use the CLIFF set so it
+ *     reads as a tall wall. Thin single-cell wall strips still fall
+ *     back to the short rim-wall set.
+ *   - If a wall cell has NO cardinal floor and its SOUTH neighbour is
+ *     a cliff-bottom, place 0x06c4 on it so the rendered column reads
+ *     "upper cliff face ABOVE cliff bottom" -- the multi-level look.
+ *   - Vertical wall edges (floor E or floor W) also promote to cliff
+ *     side faces 0x0716 / 0x0715 when the wall is at least 2 cells
+ *     tall, matching the top and bottom cells so the cliff has height.
+ *   - Corners/inside cells keep rim-wall style to avoid mismatched
+ *     seams where cliff and rim would meet.
+ */
+
+/* --- Rim-wall (short) set. Used for single-cell wall strips and
+ * anywhere the cliff styling doesn't apply. ----------------------- */
+#define TILE_W_NONE         0x0691  // rim interior
+#define TILE_W_RIM_BELOW    0x0699  // rim bottom-center
+#define TILE_W_ABOVE        0x0689  // rim top-center
+#define TILE_W_RIM_LEFT     0x0690  // rim left
+#define TILE_W_RIM_RIGHT    0x0692  // rim right
+#define TILE_W_ABOVE_LEFT   0x0688  // rim top-left corner
+#define TILE_W_ABOVE_RIGHT  0x068a  // rim top-right corner
+#define TILE_W_RIM_BL       0x0698  // rim bottom-left corner
+#define TILE_W_RIM_BR       0x069a  // rim bottom-right corner
+#define TILE_W_ABOVE_LR     0x069f  // narrow vertical wall, top
+#define TILE_W_LEFT_RIGHT   0x0682  // single-column wall
+#define TILE_W_ABOVE_BELOW  0x0682  // single-row wall sandwiched N-S
+#define TILE_W_SURROUNDED   0x0691  // floors on all 4 sides -> isolated wall
+
+/* --- Cliff-face (tall) set. The "BELOW" variants go in the BOTTOM
+ * cell of a tall wall; TILE_W_UPPER_FACE goes in the wall cell
+ * immediately ABOVE a TILE_W_CLIFF_B* so the pair renders as a 2-row
+ * tall cliff. SIDE_LEFT/RIGHT are the 2-row-tall vertical cliff faces
+ * for walls with only floor west or east respectively. ------------ */
+#define TILE_W_CLIFF_B      0x0711  // cliff bottom-center (floor south)
+#define TILE_W_CLIFF_BL     0x0710  // cliff bottom-left corner (S+W)
+#define TILE_W_CLIFF_BR     0x0712  // cliff bottom-right corner (S+E)
+#define TILE_W_CLIFF_SIDE_L 0x0715  // cliff left edge (floor west)
+#define TILE_W_CLIFF_SIDE_R 0x0716  // cliff right edge (floor east)
+#define TILE_W_CLIFF_BODY   0x06c6  // cliff body -- STACKABLE vertically
+                                    // (vanilla stacks 0x06c6 on itself
+                                    // for any row height, forming the
+                                    // tall cliff body between the top
+                                    // and the cliff bottom 0x0711).
+#define TILE_W_UPPER_FACE   0x06c4  // cliff top-face (placed ABOVE a
+                                    // cliff-body column -- vanilla uses
+                                    // this at the map's top border).
 
 // Entrance doorframe
 #define TILE_DOORFRAME_M    0x06c9  // 713
@@ -196,6 +273,197 @@ static void SmoothGrid(void)
         }
 }
 
+/*
+ * Smooth wall boundaries so they match vanilla Mt Moon's rounded,
+ * axis-aligned cliff edges instead of jagged stair-steps.
+ *
+ * We run two cleanups:
+ *
+ *   A. REMOVE WALL BUMPS -- a wall cell at a convex corner (2 adjacent
+ *      cardinal floors, say N and E) whose 2x2 block's OTHER three
+ *      cells aren't all walls is a single-cell "bump" jutting into the
+ *      floor. It renders with a cliff-corner tile that looks like a
+ *      sharp diagonal point, because the tile expects to sit on top of
+ *      a 2x2 wall block. Remove it.
+ *
+ *   B. FILL WALL NOTCHES -- a floor cell with 3+ cardinal wall
+ *      neighbours is a 1-cell indent scooped out of a wall mass. It
+ *      makes the wall boundary look serrated from the floor side.
+ *      Fill it back to wall.
+ *
+ * Each cleanup iterates a few times because one fix can expose another.
+ * Applied AFTER the thin-wall removal so walls are already at least
+ * 2 cells wide; the remaining artefacts are irregular edges.
+ */
+static void SmoothWallEdges(void)
+{
+    s32 x, y, iter;
+    bool8 changed;
+    bool8 fA, fB, fL, fR;
+    u8 walls;
+
+    /* Pass A: remove convex-corner bumps */
+    for (iter = 0; iter < 3; iter++)
+    {
+        changed = FALSE;
+        for (y = 2; y < CAVE_H - 3; y++)
+            for (x = 2; x < CAVE_W - 2; x++)
+            {
+                if (GRID(x, y) != 0) continue;  /* skip floor */
+                fA = IsFloor(x,     y - 1);
+                fB = IsFloor(x,     y + 1);
+                fL = IsFloor(x - 1, y);
+                fR = IsFloor(x + 1, y);
+                /* Check each convex-corner case (2 adjacent cardinal
+                 * floors). The "inside" diagonal of that corner should
+                 * be a wall -- if it's a floor, this cell is a bump. */
+                if (fA && fR && IsFloor(x + 1, y - 1))      { GRID_SET(x, y, 1); changed = TRUE; continue; }
+                if (fA && fL && IsFloor(x - 1, y - 1))      { GRID_SET(x, y, 1); changed = TRUE; continue; }
+                if (fB && fR && IsFloor(x + 1, y + 1))      { GRID_SET(x, y, 1); changed = TRUE; continue; }
+                if (fB && fL && IsFloor(x - 1, y + 1))      { GRID_SET(x, y, 1); changed = TRUE; continue; }
+            }
+        if (!changed) break;
+    }
+
+    /* Pass B: fill notches (floor with 3+ cardinal wall neighbours) */
+    for (iter = 0; iter < 2; iter++)
+    {
+        changed = FALSE;
+        for (y = 2; y < CAVE_H - 3; y++)
+            for (x = 2; x < CAVE_W - 2; x++)
+            {
+                if (GRID(x, y) == 0) continue;  /* skip wall */
+                walls = (!IsFloor(x, y - 1))
+                      + (!IsFloor(x, y + 1))
+                      + (!IsFloor(x - 1, y))
+                      + (!IsFloor(x + 1, y));
+                if (walls >= 3)
+                {
+                    GRID_SET(x, y, 0);
+                    changed = TRUE;
+                }
+            }
+        if (!changed) break;
+    }
+}
+
+/*
+ * Fill in diagonal wall-floor checkerboards to eliminate 2x2 patterns
+ * where walls touch diagonally at a single point. In a block like
+ *
+ *     W F             F W
+ *     F W     or      W F
+ *
+ * the wall mass visibly "pinches" to zero thickness at the shared
+ * corner, which reads as a jagged serration once the tile picker
+ * emits a rim corner for each wall cell. Vanilla Mt Moon never
+ * contains this pattern -- its walls are always thickened to 2x2
+ * blocks at bends. We match that by promoting one of the two floor
+ * cells in the pattern to wall, closing the pinch.
+ *
+ * We pick the floor cell that already has the MORE wall neighbours;
+ * that keeps the cave's overall walkable area intact and avoids
+ * accidentally blocking corridors. The loop runs a few times because
+ * one fill can create a new diagonal elsewhere.
+ */
+static void FillDiagonalCorners(void)
+{
+    s32 x, y, iter;
+    bool8 changed;
+    for (iter = 0; iter < 3; iter++)
+    {
+        changed = FALSE;
+        for (y = 2; y < CAVE_H - 3; y++)
+            for (x = 2; x < CAVE_W - 3; x++)
+            {
+                bool8 a = !IsFloor(x,     y);
+                bool8 b = !IsFloor(x + 1, y);
+                bool8 c = !IsFloor(x,     y + 1);
+                bool8 d = !IsFloor(x + 1, y + 1);
+                if (a && d && !b && !c)
+                {
+                    /* pick the floor with more wall neighbours */
+                    if (CountWallNeighbors(x + 1, y) >= CountWallNeighbors(x, y + 1))
+                        GRID_SET(x + 1, y, 0);
+                    else
+                        GRID_SET(x, y + 1, 0);
+                    changed = TRUE;
+                }
+                else if (!a && !d && b && c)
+                {
+                    if (CountWallNeighbors(x, y) >= CountWallNeighbors(x + 1, y + 1))
+                        GRID_SET(x, y, 0);
+                    else
+                        GRID_SET(x + 1, y + 1, 0);
+                    changed = TRUE;
+                }
+            }
+        if (!changed) break;
+    }
+}
+
+/*
+ * Convert 1-cell-wide wall strands back to floor.
+ *
+ * Cellular automata smoothing leaves thin vertical or horizontal wall
+ * fingers sprinkled through the cave: cells that are wall but have
+ * FLOOR on both opposite sides (floor W and floor E -- a vertical
+ * 1-wide strand; or floor N and floor S -- a horizontal 1-wide strand).
+ *
+ * Those thin strands render as jagged cliff protrusions jutting out
+ * onto the walkable area, because our tile picker falls back to the
+ * short rim-wall set and the cliff-body set for them in awkward ways,
+ * and because vanilla Mt Moon never has walls thinner than 2 cells.
+ *
+ * Wiping them produces the smooth, chunky wall masses the player
+ * expects, and also gives the tile picker enough wall thickness to
+ * consistently emit the 2-cell-tall cliff (upper face + body + bottom)
+ * stack that makes cave walls read as "tall".
+ *
+ * Iterates up to 3 times because removing one strand can expose a
+ * neighbour as newly 1-wide.
+ */
+static void RemoveThinWalls(void)
+{
+    s32 x, y, iter;
+    u8 cardinalWalls;
+    bool8 changed;
+    for (iter = 0; iter < 4; iter++)
+    {
+        changed = FALSE;
+        for (y = 2; y < CAVE_H - 3; y++)
+            for (x = 2; x < CAVE_W - 2; x++)
+            {
+                if (GRID(x, y) != 0) continue;
+                /* 1-wide strand: floor on both opposing cardinals */
+                if ((IsFloor(x - 1, y) && IsFloor(x + 1, y))
+                    || (IsFloor(x, y - 1) && IsFloor(x, y + 1)))
+                {
+                    GRID_SET(x, y, 1);
+                    changed = TRUE;
+                    continue;
+                }
+                /* 1-cell protrusion / tip: the cell connects to the
+                 * main wall mass through at most ONE cardinal wall.
+                 * It's a single wall "finger" jutting into floor and
+                 * renders as a pointy rim corner stub that the player
+                 * reads as an out-of-place tile. Demote to floor --
+                 * the tile-picker then emits the surrounding wall
+                 * edge tiles cleanly around the newly-opened cell. */
+                cardinalWalls = (!IsFloor(x, y - 1))
+                              + (!IsFloor(x, y + 1))
+                              + (!IsFloor(x - 1, y))
+                              + (!IsFloor(x + 1, y));
+                if (cardinalWalls <= 1)
+                {
+                    GRID_SET(x, y, 1);
+                    changed = TRUE;
+                }
+            }
+        if (!changed) break;
+    }
+}
+
 static bool8 FloodFillReaches(s32 fromX, s32 fromY, s32 toX, s32 toY)
 {
     s32 x, y;
@@ -264,6 +532,24 @@ static void CarvePath(s32 fromX, s32 fromY, s32 toX, s32 toY)
     ForceFloorRect(toX - 1, toY - 1, toX + 1, toY + 1);
 }
 
+/*
+ * Scan straight down from (x, y) looking for floor within `maxDepth`
+ * rows. Returns the y-coordinate of the floor cell found, or -1 if
+ * no floor within range. Used by GetWallTile to decide whether a
+ * solid-interior wall cell is part of a tall cliff whose face is
+ * visible below, in which case we render it as cliff body.
+ */
+static s32 FloorBelowWithin(s32 x, s32 y, s32 maxDepth)
+{
+    s32 dy;
+    for (dy = 1; dy <= maxDepth; dy++)
+    {
+        if (y + dy >= CAVE_H) return -1;
+        if (IsFloor(x, y + dy)) return y + dy;
+    }
+    return -1;
+}
+
 static u16 GetWallTile(s32 x, s32 y)
 {
     bool8 fA = IsFloor(x, y - 1);
@@ -276,41 +562,59 @@ static u16 GetWallTile(s32 x, s32 y)
     {
         switch (cardinal)
         {
-        case 0x1: return TILE_W_RIGHT;
-        case 0x2: return TILE_W_LEFT;
-        case 0x3: return TILE_W_LEFT_RIGHT;
-        case 0x4: return TILE_W_BELOW;
-        case 0x5: return TILE_W_BELOW_RIGHT;
-        case 0x6: return TILE_W_BELOW_LEFT;
-        case 0x7: return TILE_W_BELOW_LR;
-        case 0x8: return TILE_W_ABOVE;
-        case 0x9: return TILE_W_ABOVE_RIGHT;
-        case 0xA: return TILE_W_ABOVE_LEFT;
-        case 0xB: return TILE_W_ABOVE_LR;
-        case 0xC: return TILE_W_ABOVE_BELOW;
-        default:  return TILE_W_SURROUNDED;
+        /* Wall-floor edges: RIM tiles (0x0688..0x069a) are the "cave
+         * floor context" wall set -- they render as dark rocky walls
+         * with a clean tan transition to the regular floor (0x3281).
+         * The CLIFF set (0x0711, 0x0710, 0x0712, 0x0715, 0x0716) is
+         * visually near-identical but has a yellow/gold pixel strip
+         * along its floor-side edge; that yellow reads as "beach sand"
+         * and doesn't belong against a tan cave floor. We reserve the
+         * cliff set for walls adjacent to sand patches (handled via
+         * the cliff body fallback for interior cells). */
+        case 0x1: return TILE_W_RIM_RIGHT;     /* floor E   -> dark rocky right edge */
+        case 0x2: return TILE_W_RIM_LEFT;      /* floor W   -> dark rocky left edge */
+        case 0x3: return TILE_W_LEFT_RIGHT;    /* floor E+W (thin strand) */
+        case 0x4: return TILE_W_RIM_BELOW;     /* floor S   -> dark rocky bottom */
+        case 0x5: return TILE_W_RIM_BR;        /* floor S+E -> dark rocky BR corner */
+        case 0x6: return TILE_W_RIM_BL;        /* floor S+W -> dark rocky BL corner */
+        case 0x7: return TILE_W_RIM_BELOW;     /* floor S+E+W */
+        /* Walls with floor NORTH: in vanilla these are rendered with
+         * the rim-top set (0x0288/0x0289/0x028a), but those tiles are
+         * mostly FLOOR-COLOURED ground with only a thin dark cliff-edge
+         * strip -- they're designed to represent "looking down at a
+         * short wall from above". Dropped adjacent to the dark cliff-
+         * body cells we emit for interior walls, they read as a pale
+         * flipped panel and break the tall-cliff illusion.
+         * Emit cliff body instead so the wall stays uniformly dark all
+         * the way up to the floor edge above. */
+        case 0x8: return TILE_W_CLIFF_BODY;
+        case 0x9: return TILE_W_CLIFF_BODY;
+        case 0xA: return TILE_W_CLIFF_BODY;
+        case 0xB: return TILE_W_ABOVE_LR;      /* floor N+E+W (thin strand) */
+        case 0xC: return TILE_W_ABOVE_BELOW;   /* floor N+S (thin strand) */
+        default:  return TILE_W_CLIFF_BODY;    /* floor on all 4 sides (isolated wall) */
         }
     }
 
-    // No cardinal floor - check diagonals for inner corners
-    // Only use edge tile ~25% of the time for visual variety, otherwise plain interior
-    {
-        bool8 fNW = IsFloor(x - 1, y - 1);
-        bool8 fNE = IsFloor(x + 1, y - 1);
-        bool8 fSW = IsFloor(x - 1, y + 1);
-        bool8 fSE = IsFloor(x + 1, y + 1);
-
-        if (fSW || fSE || fNW || fNE)
-        {
-            if ((Random() % 4) == 0)
-            {
-                if (fSW || fSE) return TILE_W_BELOW;
-                return TILE_W_ABOVE;
-            }
-        }
-    }
-
-    return TILE_W_NONE;
+    /*
+     * Solid interior wall cell (no cardinal floor neighbour).
+     *
+     * Always emit TILE_W_CLIFF_BODY so interior wall cells blend with
+     * the cliff-body / cliff-bottom tiles we emit along the wall-floor
+     * boundary. The earlier design used TILE_W_NONE (rim interior) for
+     * deep interior cells, but that tile renders as a light pinkish-tan
+     * "dirt" panel under the cave's runtime palette and stands out
+     * against the dark cliff-body walls around it -- exactly the
+     * "random top wall tile sticking out" artefact.
+     *
+     * TILE_W_UPPER_FACE is only used at y == 0 (the top map border),
+     * because vanilla uses that tile there to represent "cliff meeting
+     * the void" at the map's edge. Anywhere else it produces a bright
+     * flat-top tile that also breaks the cliff illusion.
+     */
+    if (y == 0)
+        return TILE_W_UPPER_FACE;
+    return TILE_W_CLIFF_BODY;
 }
 
 static void WriteGridToVMap(void)
@@ -325,11 +629,28 @@ static void WriteGridToVMap(void)
         for (x = 0; x < mapW; x++)
             MapGridSetMetatileEntryAt(x + MAP_OFFSET, y + MAP_OFFSET, TILE_W_NONE);
 
-    // Then write the generated cave grid over it
+    // Then write the generated cave grid over it.
+    //
+    // Floor cells: use TILE_FLOOR for the majority (vanilla's corridor
+    // floor) and TILE_SAND for ~8% of cells as accent patches. A
+    // position-based pseudo-hash keeps the pattern stable across frames
+    // so we don't shimmer the floor on every redraw. (We can't use
+    // Random() here because it advances the global RNG every call,
+    // and WriteGridToVMap runs on every reload.)
     for (y = 0; y < CAVE_H; y++)
         for (x = 0; x < CAVE_W; x++)
         {
-            u16 tile = GRID(x, y) ? TILE_FLOOR : GetWallTile(x, y);
+            u16 tile;
+            if (GRID(x, y))
+            {
+                /* hash(x,y) -> 0..255; <21 (~8%) becomes sand */
+                u32 h = (x * 73u + y * 151u + x * y * 17u) & 0xff;
+                tile = (h < 21) ? TILE_SAND : TILE_FLOOR;
+            }
+            else
+            {
+                tile = GetWallTile(x, y);
+            }
             MapGridSetMetatileEntryAt(x + MAP_OFFSET, y + MAP_OFFSET, tile);
         }
 
@@ -537,6 +858,22 @@ static void GenerateCave(void)
         for (x = 3; x < CAVE_W - 3; x++)
             if (GRID(x, y) == 1 && (8 - CountWallNeighbors(x, y)) < 3)
                 GRID_SET(x, y, 0);
+    ReinforceKeyAreas();
+
+    // Remove 1-cell-wide wall strands that otherwise render as jagged
+    // cliff fingers over the floor.
+    RemoveThinWalls();
+    ReinforceKeyAreas();
+
+    // Fill 2x2 diagonal wall pinches so wall corners are clean blocks
+    // instead of single-point serrations.
+    FillDiagonalCorners();
+    ReinforceKeyAreas();
+
+    // Smooth wall edges: remove single-cell convex-corner bumps and
+    // fill single-cell notches so the wall-floor boundary reads as
+    // rounded axis-aligned edges instead of jagged stair-steps.
+    SmoothWallEdges();
     ReinforceKeyAreas();
 
     // Ensure connectivity

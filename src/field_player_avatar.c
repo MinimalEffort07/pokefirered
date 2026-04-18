@@ -61,6 +61,7 @@
 #include "quest_log.h"
 #include "quest_log_player.h"
 #include "random.h"
+#include "roaming_pokemon.h"
 #include "script.h"
 #include "strings.h"
 #include "wild_encounter.h"
@@ -656,6 +657,21 @@ u8 CheckForObjectEventCollision(struct ObjectEvent *objectEvent, s16 x, s16 y, u
     }
     if (collision == COLLISION_OBJECT_EVENT && TryPushBoulder(x, y, direction))
         return COLLISION_PUSHED_BOULDER;
+
+    /*
+     * Roaming Pokemon bump-to-battle: if the player tried to walk into a
+     * tile occupied by one of our spawned roamers, queue a wild battle.
+     * The actual battle is launched next frame from UpdateRoamingPokemon
+     * (deferring keeps the field-control pipeline clean). We still
+     * return COLLISION_OBJECT_EVENT so the player visibly stays on
+     * their current tile until the battle screen takes over.
+     */
+    if (collision == COLLISION_OBJECT_EVENT)
+    {
+        u8 roamerObjId = GetObjectEventIdByXY(x, y);
+        if (roamerObjId < OBJECT_EVENTS_COUNT && IsRoamingPokemonObjectEvent(roamerObjId))
+            TryStartRoamingBattle(roamerObjId);
+    }
 
     if (collision == COLLISION_NONE)
     {
