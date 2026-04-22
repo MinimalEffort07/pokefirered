@@ -68,6 +68,7 @@
 #include "teachy_tv.h"
 #include "tm_case.h"
 #include "vs_seeker.h"
+#include "poke_radar.h"
 #include "constants/sound.h"
 #include "constants/items.h"
 #include "constants/item_effects.h"
@@ -368,6 +369,29 @@ void ItemUseOutOfBattle_Itemfinder(u8 taskId)
 {
     IncrementGameStat(GAME_STAT_USED_ITEMFINDER);
     sItemUseOnFieldCB = ItemUseOnFieldCB_Itemfinder;
+    SetUpItemUseOnFieldCallback(taskId);
+}
+
+static void ItemUseOnFieldCB_PokeRadar(u8 taskId)
+{
+    /* Field-use callback: the player has confirmed using the PokeRadar and
+     * the screen has finished fading in. Actually spawn the shaking patches
+     * now, consume the charge, and destroy the task. */
+    PokeRadar_Activate();
+    DestroyTask(taskId);
+}
+
+void ItemUseOutOfBattle_PokeRadar(u8 taskId)
+{
+    /* Gate usage: must be in tall grass AND have a charge available. When
+     * blocked we route through PrintNotTheTimeToUseThat so the player gets
+     * the standard "can't use it here" dialog via Prof. Oak's voice. */
+    if (!PokeRadar_IsUsableHere() || PokeRadar_Get()->charges == 0)
+    {
+        PrintNotTheTimeToUseThat(taskId, gTasks[taskId].data[3]);
+        return;
+    }
+    sItemUseOnFieldCB = ItemUseOnFieldCB_PokeRadar;
     SetUpItemUseOnFieldCallback(taskId);
 }
 

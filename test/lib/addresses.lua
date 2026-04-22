@@ -267,4 +267,53 @@ ADDR.MAP_NUM_PALLET_TOWN      = 0
 ADDR.MAP_NUM_ROUTE1           = 19
 ADDR.MAP_NUM_VIRIDIAN_CITY    = 1   -- north of Route 1, used for warp-cleanup test
 
+-------------------------------------------------------------------------------
+-- WILD ENCOUNTER STATE
+-------------------------------------------------------------------------------
+-- sWildEncounterData is a static EWRAM struct in src/wild_encounter.c that
+-- tracks the encounter-rate accumulator, its own RNG state (separate from
+-- gRngValue!), and a cooldown counter. Tests that need to force or suppress
+-- encounters poke these fields directly.
+--
+-- struct WildEncounterData:
+--   0x00  u32 rngState                 -- separate LCG state for WildEncounterRandom
+--   0x04  u16 prevMetatileBehavior
+--   0x06  u16 encounterRateBuff        -- "pity" accumulator; saturates encounter rate
+--   0x08  u8  stepsSinceLastEncounter  -- cooldown (must reach minSteps to bypass dice)
+--   0x09  u8  abilityEffect
+--   0x0A  u16 leadMonHeldItem
+ADDR.sWildEncounterData              = 0x02038760
+ADDR.WED_RNG_STATE                   = 0x00
+ADDR.WED_PREV_METATILE               = 0x04
+ADDR.WED_ENCOUNTER_RATE_BUFF         = 0x06
+ADDR.WED_STEPS_SINCE_LAST            = 0x08
+ADDR.WED_ABILITY_EFFECT              = 0x09
+ADDR.WED_LEAD_MON_HELD_ITEM          = 0x0A
+
+-------------------------------------------------------------------------------
+-- ROAMING POKEMON STATE
+-------------------------------------------------------------------------------
+-- gRoamers is a 4-slot EWRAM array of RoamingMon (4 bytes each). A test that
+-- wants to isolate the regular wild-encounter path must disable all roamers
+-- first, because a roamer can hijack the step via StartScriptedWildBattle
+-- (which sets BATTLE_TYPE_WILD_SCRIPTED and bypasses GenerateWildMon entirely).
+-- The canonical "inactive slot" sentinel is objEventId == OBJECT_EVENTS_COUNT
+-- (16) — see src/roaming_pokemon.c. pendingBattle=0 stops any in-flight
+-- roamer battle from firing after a collision mark.
+--
+-- struct RoamingMon (4 bytes):
+--   0x00  u8 objEventId    -- OBJECT_EVENTS_COUNT (16) means "slot free"
+--   0x01  u8 tableIdx
+--   0x02  u8 level
+--   0x03  u8 pendingBattle -- set by collision check, cleared when battle starts
+ADDR.gRoamers                        = 0x0203f890
+ADDR.gRoamerCount                    = 0x0203f8a4
+ADDR.ROAMER_CAP_VISIBLE              = 4
+ADDR.ROAMER_SIZE                     = 4
+ADDR.ROAMER_OFF_OBJ_EVENT_ID         = 0x00
+ADDR.ROAMER_OFF_TABLE_IDX            = 0x01
+ADDR.ROAMER_OFF_LEVEL                = 0x02
+ADDR.ROAMER_OFF_PENDING_BATTLE       = 0x03
+ADDR.OBJECT_EVENTS_COUNT             = 16   -- sentinel for "no such slot"
+
 return ADDR

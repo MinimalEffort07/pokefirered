@@ -64,6 +64,7 @@
 #include "berry_powder.h"
 #include "overworld.h"
 #include "quest_log.h"
+#include "poke_radar.h"
 
 /*
  * SAVEBLOCK_MOVE_RANGE: The size of the random offset range for ASLR.
@@ -466,6 +467,11 @@ void LoadSerializedGame(void)
 {
     LoadPlayerParty();
     LoadObjectEvents();
+    /* PokeRadar lives in SaveBlock1::unused_348C[]. On saves that predate
+     * this feature, the region is zero/garbage: magic number mismatches,
+     * EnsureInit zero-fills the struct and grants the key item. On saves
+     * already running this feature, it's a no-op. */
+    PokeRadar_EnsureInit();
 }
 
 /**

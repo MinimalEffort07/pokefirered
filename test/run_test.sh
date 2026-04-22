@@ -35,7 +35,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Path to the mGBA headless binary (no GUI, runs as fast as possible).
-MGBA_HEADLESS="/home/min/projects/minimalefforts/mgba/build/mgba-headless"
+MGBA_HEADLESS="/home/min/projects/minimaleffort/mgba/build/mgba-headless"
 
 # Path to the compiled ROM.
 ROM="$PROJECT_DIR/pokefirered.gba"
@@ -81,14 +81,17 @@ echo ""
 # GBA hardware events (DMA, SWI, Serial I/O) which would drown out
 # our test output.
 #
-# --line-buffered ensures output appears in real-time, not after the
-# process exits.
+# `stdbuf -oL` forces mGBA's stdout to be line-buffered instead of
+# block-buffered. Without it, the last ~1-2KB of Scripting: output gets
+# truncated because mGBA exits (via clean_shutdown's SIGTERM-self) before
+# its stdout buffer is flushed. grep --line-buffered ensures the pipeline
+# from grep onward is also line-buffered.
 #
 # timeout prevents runaway tests from hanging forever. The Seel test
 # takes about 10 seconds in headless mode. 60 seconds is a generous limit.
 cd "$PROJECT_DIR"
 set +e
-timeout 60 "$MGBA_HEADLESS" "$ROM" --script "$TEST_SCRIPT" 2>&1 \
+stdbuf -oL -eL timeout 60 "$MGBA_HEADLESS" "$ROM" --script "$TEST_SCRIPT" 2>&1 \
     | grep --line-buffered -E "^Scripting:"
 MGBA_EXIT=${PIPESTATUS[0]}
 set -e

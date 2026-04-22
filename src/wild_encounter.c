@@ -55,6 +55,7 @@
 #include "script.h"
 #include "link.h"
 #include "quest_log.h"
+#include "poke_radar.h"
 #include "constants/maps.h"
 #include "constants/abilities.h"
 #include "constants/items.h"
@@ -269,7 +270,36 @@ static void GenerateWildMon(u16 species, u8 level, u8 slot)
 {
     u32 personality;
     s8 chamber;
+    struct PokeRadar *radar = PokeRadar_Get();
+
+    /* PokeRadar patch-forced encounter: if the player stepped onto a
+     * shaking patch, the encounter species is locked to the chain species
+     * (if one is already chained). If no chain is active yet, we leave
+     * the species alone — it will become the new chain species. */
+    if ((radar->flags & POKE_RADAR_FLAG_FROM_PATCH_ENCOUNTER)
+        && radar->chainSpecies != SPECIES_NONE)
+    {
+        species = radar->chainSpecies;
+    }
+
+    /* Notify radar of the imminent encounter. May break the chain if this
+     * is a non-patch encounter of a different species. */
+    PokeRadar_OnEncounterStart(species);
+
     ZeroEnemyPartyMons();
+
+    /* Shiny-chain injection: only valid for non-Unown chained encounters
+     * where a chain is actively built and this encounter's species
+     * matches. The reroll count scales with the chain. */
+    if (species != SPECIES_UNOWN
+        && radar->chainCount > 0
+        && radar->chainSpecies == species
+        && PokeRadar_TryInjectShiny(species, &personality))
+    {
+        CreateMon(&gEnemyParty[0], species, level, USE_RANDOM_IVS, TRUE, personality, OT_ID_PLAYER_ID, 0);
+        return;
+    }
+
     if (species != SPECIES_UNOWN)
     {
         CreateMonWithNature(&gEnemyParty[0], species, level, USE_RANDOM_IVS, Random() % NUM_NATURES);

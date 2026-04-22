@@ -162,6 +162,7 @@
 #include "trig.h"
 #include "vs_seeker.h"
 #include "util.h"
+#include "poke_radar.h"
 #include "constants/abilities.h"
 #include "constants/battle_move_effects.h"
 #include "constants/battle_setup.h"
@@ -4368,6 +4369,12 @@ static void ReturnFromBattleToOverworld(void)
     }
     if (!(gBattleTypeFlags & BATTLE_TYPE_LINK) || !gReceivedRemoteLinkPlayers)
     {
+        /* PokeRadar shiny chain bookkeeping: only wild battles affect the
+         * chain. Trainer battles (including safari/roamer paths that are
+         * still "wild" from the PokeRadar's perspective have their own
+         * handling) pass through unchanged. */
+        if (!(gBattleTypeFlags & BATTLE_TYPE_TRAINER))
+            PokeRadar_OnBattleEnd(gBattleOutcome);
         gSpecialVar_Result = gBattleOutcome;
         gMain.inBattle = FALSE;
         gMain.callback1 = gPreBattleCallback1;
