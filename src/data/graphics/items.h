@@ -711,3 +711,7 @@ const u32 gItemIconPalette_PowderJar[] = INCBIN_U32("graphics/items/icon_palette
 const u32 gItemIconPalette_Ruby[] = INCBIN_U32("graphics/items/icon_palettes/ruby.gbapal.lz");
 const u32 gItemIcon_Gem[] = INCBIN_U32("graphics/items/icons/gem.4bpp.lz");
 const u32 gItemIconPalette_Sapphire[] = INCBIN_U32("graphics/items/icon_palettes/sapphire.gbapal.lz");
+
+// Placeholder: reuses the Itemfinder icon until a dedicated PokeRadar sprite lands.
+const u32 gItemIcon_PokeRadar[] = INCBIN_U32("graphics/items/icons/itemfinder.4bpp.lz");
+const u32 gItemIconPalette_PokeRadar[] = INCBIN_U32("graphics/items/icon_palettes/itemfinder.gbapal.lz");

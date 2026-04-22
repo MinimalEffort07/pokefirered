@@ -46,6 +46,7 @@
 #include "trainer_see.h"
 #include "vs_seeker.h"
 #include "wild_encounter.h"
+#include "poke_radar.h"
 #include "constants/songs.h"
 #include "constants/event_bg.h"
 #include "constants/event_objects.h"
@@ -241,6 +242,9 @@ int ProcessPlayerFieldInput(struct FieldInput *input)
         RunMassageCooldownStepCounter();
         IncrementResortGorgeousStepCounter();
         IncrementBirthIslandRockStepCount();
+        /* PokeRadar per-step tick: recharge counter, detect step-onto-patch
+         * for forced encounters, and break the chain on stepping off grass. */
+        PokeRadar_OnStep();
         if (TryStartStepBasedScript(&position, metatileBehavior, playerDirection) == TRUE)
         {
             gFieldInputRecord.tookStep = TRUE;

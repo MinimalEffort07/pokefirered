@@ -30,6 +30,10 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![Walk With Pokemon](gifs/WalkWithPokemon.gif)
 
+- **Shiny Chaining (Gen 4 PokéRadar)** — Granted at game start. Use in tall grass to spawn shaking patches; defeating or catching the same species from patches builds a chain, boosting shiny odds up to ~1/200 at chain 40.
+
+  ![Shiny Chaining](gifs/shinyChaining.gif)
+
 
 This is a decompilation of English Pokémon FireRed and LeafGreen.
 

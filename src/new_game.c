@@ -55,6 +55,8 @@
 #include "berry_powder.h"
 #include "pokemon_jump.h"
 #include "event_scripts.h"
+#include "poke_radar.h"
+#include "constants/items.h"
 
 // this file's functions
 static void ResetMiniGamesResults(void);
@@ -376,6 +378,11 @@ void NewGameInitData(void)
     /* Clear bag and registered items */
     memset(gSaveBlock1Ptr->registeredItems, 0, sizeof(gSaveBlock1Ptr->registeredItems));
     ClearBag();
+
+    /* Initialize PokeRadar state (chain counters, charges) and grant the
+     * player the key item. Must run AFTER ClearBag so the item survives. */
+    PokeRadar_ResetOnNewGame();
+    AddBagItem(ITEM_POKE_RADAR, 1);
 
     /* Put a Potion on the player's PC (the classic starting gift) */
     NewGameInitPCItems();

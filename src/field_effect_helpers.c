@@ -825,7 +825,9 @@ u32 FldEff_UnusedGrass(void)
         sprite->oam.priority = gFieldEffectArguments[3];
         sprite->data[0] = FLDEFF_UNUSED_GRASS;
     }
-    return 0;
+    /* Return the sprite ID so the PokeRadar module can track the patch
+     * sprite it just spawned (via FieldEffectStart's result channel). */
+    return spriteId;
 }
 
 u32 FldEff_UnusedGrass2(void)

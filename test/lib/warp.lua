@@ -42,8 +42,10 @@ warp.S_WARP_DESTINATION = 0x02031de4
 
 -- gMain.callback2 slot in IWRAM + the CB2_LoadMap entry point.
 -- The |1 we OR in is the ARM thumb bit (all game code here is thumb).
+-- CB2_LOAD_MAP is a ROM code address that SHIFTS with every rebuild; re-extract
+-- it from pokefirered.map after any change that adds/removes code.
 warp.G_MAIN_CB2   = 0x03003104
-warp.CB2_LOAD_MAP = 0x080569b0
+warp.CB2_LOAD_MAP = 0x080569d4
 
 -- Read the currently-loaded map from SaveBlock1->location as a packed
 -- (mapGroup*256 + mapNum) value, for easy equality checks.
