@@ -131,6 +131,7 @@ TrainerTower_Lobby_Mart_Items::
 	.2byte ITEM_GREAT_BALL
 	.2byte ITEM_FULL_RESTORE
 	.2byte ITEM_MAX_POTION
+	.2byte ITEM_MAX_ELIXIR
 	.2byte ITEM_HYPER_POTION
 	.2byte ITEM_ELIXIR
 	.2byte ITEM_REVIVE
