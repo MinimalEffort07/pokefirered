@@ -16,6 +16,7 @@ ThreeIsland_Mart_EventScript_Clerk::
 ThreeIsland_Mart_Items::
 	.2byte ITEM_ULTRA_BALL
 	.2byte ITEM_HYPER_POTION
+	.2byte ITEM_ELIXIR
 	.2byte ITEM_REVIVE
 	.2byte ITEM_FULL_HEAL
 	.2byte ITEM_ESCAPE_ROPE
