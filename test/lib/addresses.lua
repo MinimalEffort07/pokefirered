@@ -316,4 +316,26 @@ ADDR.ROAMER_OFF_LEVEL                = 0x02
 ADDR.ROAMER_OFF_PENDING_BATTLE       = 0x03
 ADDR.OBJECT_EVENTS_COUNT             = 16   -- sentinel for "no such slot"
 
+-------------------------------------------------------------------------------
+-- MART ITEM LISTS (PP Items in Marts feature)
+-------------------------------------------------------------------------------
+-- ROM addresses for the static .2byte item arrays in mart scripts.
+-- Each list is terminated by 0 (ITEM_NONE). Extracted from pokefirered.map
+-- after building with the PP items feature applied.
+-- Re-extract if mart scripts.inc changes cause map layout shifts.
+
+ADDR.CeruleanCity_Mart_Items         = 0x0816b60c  -- Super Potion tier
+ADDR.CinnabarIsland_Mart_Items       = 0x0816f390  -- Hyper Potion tier
+ADDR.FourIsland_Mart_Items           = 0x08172624  -- Max Potion tier
+ADDR.SevenIsland_Mart_Items          = 0x081714a0  -- dual tier (Hyper + Max)
+
+-- Item IDs referenced in mart tests
+ADDR.ITEM_SUPER_POTION               = 22
+ADDR.ITEM_HYPER_POTION               = 21
+ADDR.ITEM_MAX_POTION                 = 20
+ADDR.ITEM_ETHER                      = 34
+ADDR.ITEM_MAX_ETHER                  = 35
+ADDR.ITEM_ELIXIR                     = 36
+ADDR.ITEM_MAX_ELIXIR                 = 37
+
 return ADDR
