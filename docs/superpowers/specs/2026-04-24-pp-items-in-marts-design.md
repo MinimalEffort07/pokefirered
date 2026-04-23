@@ -56,10 +56,22 @@ Total: 12 files, 15 inserted lines.
 
 ## Testing
 
-1. Build clean: `make -j$(nproc) firered`
-2. Boot ROM, visit Cerulean Mart — confirm Ether and Max Ether appear immediately after Super Potion at prices 1200 / 2000.
-3. Visit Cinnabar Mart — confirm Elixir appears immediately after Hyper Potion at price 3000.
-4. Visit Four Island Mart — confirm Max Elixir appears immediately after Max Potion at price 4500.
-5. Visit Seven Island Mart — confirm both Elixir (after Hyper Potion) and Max Elixir (after Max Potion) appear.
+### Build
+`make -j$(nproc) firered` — clean build, no warnings.
 
-No automated Lua test required — mart lists are static data with no runtime branching logic.
+### Lua test: `test/tests/test_pp_items_in_marts.lua`
+
+Verifies one representative shop per tier, plus the dual-tier case. Each sub-test:
+1. Warps the player to the mart using the existing warp helper
+2. Opens the shop menu via scripted NPC interaction
+3. Reads the displayed item list from the mart menu state in RAM
+4. Asserts the expected PP item appears at the correct position relative to its anchor HP item
+
+Sub-tests:
+- **A — Super Potion tier**: Cerulean Mart contains Ether and Max Ether immediately after Super Potion
+- **B — Hyper Potion tier**: Cinnabar Mart contains Elixir immediately after Hyper Potion
+- **C — Max Potion tier**: Four Island Mart contains Max Elixir immediately after Max Potion
+- **D — Dual tier**: Seven Island Mart contains both Elixir (after Hyper Potion) and Max Elixir (after Max Potion)
+
+### Recording & GIF
+Run `bash test/record_test.sh test/tests/test_pp_items_in_marts.lua` — the recording captures the player walking into each mart and the shop menu opening, which makes a natural demo GIF for the README.
