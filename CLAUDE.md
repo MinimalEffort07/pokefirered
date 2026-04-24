@@ -140,9 +140,10 @@ gh pr merge <PR-number>
 ```
 Do **not** squash commits (`--squash`). Preserve the full commit history from the branch.
 
-**10. After merging — sync local master**
-After the PR is merged, immediately checkout master locally and pull so it reflects the merge:
+**10. After merging — close the issue and sync local master**
+After the PR is merged, close the issue and sync master:
 ```bash
+gh issue close <N>
 git checkout master
 git pull
 ```
