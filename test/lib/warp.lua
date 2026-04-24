@@ -114,4 +114,50 @@ function warp.warp_to(map_group, map_num, warp_id)
     return true
 end
 
+-- Warp to a specific map tile position, bypassing the warp table.
+-- Uses WARP_ID_NONE (0xFF) so the engine places the player at (x, y) directly
+-- rather than looking up a warp entry. x and y are raw map tile coordinates
+-- (the engine adds the 7-tile border offset internally).
+function warp.warp_to_pos(map_group, map_num, x, y)
+    local target_packed = map_group * 256 + map_num
+    local before = warp.current_map_packed()
+    fw.log(string.format("[WARP] %d.%d -> %d.%d (pos %d,%d)",
+        math.floor(before / 256), before % 256,
+        map_group, map_num, x, y))
+
+    local WARP_ID_NONE = 0xFF
+
+    -- 1. Write sWarpDestination with explicit position.
+    emu:write8(warp.S_WARP_DESTINATION + 0, map_group)
+    emu:write8(warp.S_WARP_DESTINATION + 1, map_num)
+    emu:write8(warp.S_WARP_DESTINATION + 2, WARP_ID_NONE)
+    emu:write16(warp.S_WARP_DESTINATION + 4, x)
+    emu:write16(warp.S_WARP_DESTINATION + 6, y)
+
+    -- 2. Apply to SaveBlock1->location.
+    local sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    emu:write8(sb1 + ADDR.SB1_LOC_MAP_GROUP, map_group)
+    emu:write8(sb1 + ADDR.SB1_LOC_MAP_NUM,   map_num)
+    emu:write8(sb1 + 0x06,                   WARP_ID_NONE)
+    emu:write16(sb1 + ADDR.SB1_LOC_X, x)
+    emu:write16(sb1 + ADDR.SB1_LOC_Y, y)
+
+    -- 3. Trigger map load.
+    emu:write32(warp.G_MAIN_CB2, warp.CB2_LOAD_MAP + 1)
+
+    fw.wait_frames(180)
+
+    local after = warp.current_map_packed()
+    if after ~= target_packed then
+        fw.log_error(string.format(
+            "[WARP] expected %d.%d but ended up on %d.%d",
+            map_group, map_num,
+            math.floor(after / 256), after % 256))
+        return false
+    end
+
+    fw.wait_frames(60)
+    return true
+end
+
 return warp
