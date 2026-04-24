@@ -75,6 +75,84 @@ Code changes must be thoroughly documented for contributors who lack embedded sy
 - Note non-obvious hardware constraints (alignment, timing, memory limits)
 - Don't assume familiarity with ARM architecture, memory-mapped I/O, or GBA SDK conventions
 
+## GitHub Issue Workflow
+
+### Upstream Repo Boundary
+This project is forked from `pret/pokefirered`. You may **read** from that upstream repo (e.g. `gh issue list -R pret/pokefirered`) for reference, but **never write to it** — no PRs, comments, pushes, or any mutation of `pret/pokefirered`.
+
+### When Given a GitHub Issue
+Follow these steps in order. Do not skip or reorder them.
+
+**1. Read the full issue**
+Fetch the complete issue with all comments before doing anything else:
+```bash
+gh issue view <N> | cat
+gh issue view <N> --comments | cat
+```
+
+**2. Plan before touching code**
+- If the `superpowers:writing-plans` skill is available, invoke it.
+- Otherwise enter plan mode.
+- Read every referenced file, related code, and relevant test patterns before drafting the plan.
+- Ask the user many clarifying questions to flesh out edge cases, scope limits, and design choices. Do not proceed until the plan is agreed.
+
+**3. Create a feature branch**
+```bash
+git checkout -b issue-<N>-<short-slug>
+```
+Never implement on `master` directly.
+
+**4. Implement with TDD**
+- If the `superpowers:test-driven-development` skill is available, invoke it.
+- Write a failing test first, then implement until it passes.
+- Build must be clean: `make -j$(nproc) firered`
+
+**5. Record a test run**
+```bash
+bash test/record_test.sh test/tests/<relevant_test>.lua
+```
+Move the recording to `~/recordings/` as per project convention.
+
+**6. Update the README**
+Add or update the feature description and include a demo GIF if the feature has visible in-game behaviour.
+
+**7. Update the issue with the plan**
+After the spec is approved and before touching code, post the agreed design as a comment on the GitHub issue so the issue history captures what was decided and why:
+```bash
+gh issue comment <N> --body "..."
+```
+Also edit the issue description to include a summary of scope if the original description was sparse:
+```bash
+gh issue edit <N> --body "..."
+```
+
+**8. Create a PR**
+
+```bash
+gh pr create --title "Fix #<N>: <short description>" --body "..."
+```
+PR body must reference the issue number, summarise what changed, and list what was tested.
+
+**9. Wait for approval — do not merge until told to**
+After creating the PR, stop. The user will review it. Only run the merge command when the user explicitly says to proceed:
+```bash
+gh pr merge <PR-number>
+```
+Do **not** squash commits (`--squash`). Preserve the full commit history from the branch.
+
+**10. After merging — sync local master**
+After the PR is merged, immediately checkout master locally and pull so it reflects the merge:
+```bash
+git checkout master
+git pull
+```
+
+**11. Code review (if skill available)**
+If `superpowers:requesting-code-review` is available, invoke it before creating the PR.
+
+### Superpowers Priority
+Use superpowers skills wherever they apply — planning, brainstorming, TDD, debugging, code review, finishing a branch. They take precedence over improvised approaches.
+
 ## Coding Conventions
 
 - No standard library beyond `<string.h>`. Use GBA-specific types: `u8`, `u16`, `u32`, `s8`, `s16`, `s32`, `bool8`
