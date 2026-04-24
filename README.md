@@ -34,6 +34,10 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![Shiny Chaining](gifs/shinyChaining.gif)
 
+- **PP Items in Marts** — Ether, Max Ether, Elixir, and Max Elixir are now sold in Pokémon Marts, tiered to match the HP restorers already available: Ether/Max Ether alongside Super Potions, Elixir alongside Hyper Potions, Max Elixir alongside Max Potions.
+
+  ![PP Items in Marts](gifs/pp_items_in_marts.gif)
+
 
 This is a decompilation of English Pokémon FireRed and LeafGreen.
 
