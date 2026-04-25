@@ -188,6 +188,7 @@ static void CursorCB_Trade1(u8 taskId);
 static void CursorCB_Trade2(u8 taskId);
 static void CursorCB_Walk(u8 taskId);
 static void CursorCB_ReturnMon(u8 taskId);
+static void CursorCB_MoveToPC(u8 taskId);
 static void CursorCB_FieldMove(u8 taskId);
 static bool8 SetUpFieldMove_Fly(void);
 static bool8 SetUpFieldMove_Waterfall(void);
