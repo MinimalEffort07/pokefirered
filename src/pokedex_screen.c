@@ -39,6 +39,7 @@
 #include "constants/sound.h"
 #include "pokedex_area_markers.h"
 #include "field_specials.h"
+#include "list_menu.h"
 
 #define TAG_AREA_MARKERS 2001
 
@@ -541,7 +542,11 @@ static const struct ListMenuTemplate sListMenuTemplate_OrderedListMenu = {
     .cursorShadowPal = 3,
     .lettersSpacing = 1,
     .itemVerticalPadding = 0,
-    .scrollMultiple = 1,
+    /* L/R buttons page through the Pokedex list by maxShowed (9) entries
+     * at a time.  LIST_MULTIPLE_SCROLL_L_R wires the L and R buttons inside
+     * ListMenu_ProcessInput to call ListMenuChangeSelection with the full
+     * page size, matching the bag's new paging behaviour. */
+    .scrollMultiple = LIST_MULTIPLE_SCROLL_L_R,
     .fontId = FONT_NORMAL,
     .cursorKind = 0,
 };

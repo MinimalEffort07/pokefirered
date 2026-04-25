@@ -96,6 +96,13 @@ gh issue view <N> --comments | cat
 - Read every referenced file, related code, and relevant test patterns before drafting the plan.
 - Ask the user many clarifying questions to flesh out edge cases, scope limits, and design choices. Do not proceed until the plan is agreed.
 
+**2a. Define the test and demo specification before writing any code**
+Before writing a single line of test or demo code, explicitly propose and get approval for:
+- Every scenario the automated test must cover (happy path, failure modes, edge cases — e.g. "what if the box is full?", "what if party is at minimum?")
+- The exact visual flow the demo GIF must show (which menus, which transitions, what on-screen text confirms success)
+- The pass/fail criteria for each check (what value is read, from which address, expected vs. actual)
+Ask as many questions as needed. Do not start Step 4 until the user has approved the full test and demo specification in writing. Under-specified tests are the single biggest source of rework on this project.
+
 **3. Create a feature branch**
 ```bash
 git checkout -b issue-<N>-<short-slug>
@@ -132,6 +139,15 @@ gh issue edit <N> --body "..."
 gh pr create --title "Fix #<N>: <short description>" --body "..."
 ```
 PR body must reference the issue number, summarise what changed, and list what was tested.
+
+After creating the PR, post the following in your response to the user:
+```
+Recordings available at: http://100.116.114.81:8080
+(run: python3 test/serve_recordings.py)
+
+Branch README: https://github.com/MinimalEffort07/pokefirered/blob/<branch-name>/README.md
+```
+Replace `<branch-name>` with the actual feature branch name (e.g. `issue-11-pc-anywhere`).
 
 **9. Wait for approval — do not merge until told to**
 After creating the PR, stop. The user will review it. Only run the merge command when the user explicitly says to proceed:
