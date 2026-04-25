@@ -3468,15 +3468,29 @@ static void CursorCB_MoveToPC(u8 taskId)
     struct Pokemon *mon;
     u8 monName[POKEMON_NAME_LENGTH + 1];
     struct BoxPokemon *slot;
+    u8 usable;
+    u8 i;
 
     PlaySE(SE_SELECT);
 
-    /* Guard: can't deposit last usable mon */
-    if (!CanMovePartyMon())
+    /* Guard: can't deposit last usable mon.
+     * Count usable (non-egg, non-fainted) mons in all OTHER slots.
+     * CanMovePartyMon() cannot be used here — it reads sCursorArea,
+     * a PC-UI static that is always CURSOR_AREA_IN_BOX outside the PC. */
+    usable = 0;
+    for (i = 0; i < gPlayerPartyCount; i++)
+    {
+        if (i == gPartyMenu.slotId)
+            continue;
+        if (!GetMonData(&gPlayerParty[i], MON_DATA_IS_EGG)
+            && GetMonData(&gPlayerParty[i], MON_DATA_HP) > 0)
+            usable++;
+    }
+    if (usable == 0)
     {
         PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[0]);
         PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[1]);
-        DisplayPartyMenuMessage(gText_LastPokemon, FALSE);
+        DisplayPartyMenuMessage(gText_ThatsYourLastPkmn, FALSE);
         gTasks[taskId].func = Task_HandleChooseMonInput;
         return;
     }
