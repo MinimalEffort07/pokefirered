@@ -256,6 +256,18 @@ ADDR.POKEMON_STRUCT_SIZE      = 100         -- sizeof(struct Pokemon)
 --   offset 4: s16 x
 --   offset 6: s16 y
 
+-- SaveBlock1 struct field offsets.
+-- NOTE: The custom fork expanded registeredItem (u16, 2 bytes) to
+-- registeredItems[REGISTERED_ITEMS_MAX=20] (40 bytes), adding 38 extra bytes
+-- to the struct. Every field that follows in the struct is shifted by 0x26.
+-- The /*0xNNNN*/ comments in include/global.h are stale after this change;
+-- use these constants (derived from offsetof / REGISTERED_ITEMS_MAX) instead.
+ADDR.SB1_FLAGS                = 0x0F08  -- offsetof(SaveBlock1, flags)
+                                         -- Verified from GetFlagAddr disassembly (word at 0x806ea88).
+                                         -- = 0x0EE0 (stale comment) + 0x28: registeredItem grew
+                                         -- from u16 (2B) to u16[REGISTERED_ITEMS_MAX=20] (40B),
+                                         -- adding 38B, plus 2B compiler alignment pad before pcItems.
+
 ADDR.SB1_LOC_MAP_GROUP        = 0x04
 ADDR.SB1_LOC_MAP_NUM          = 0x05
 ADDR.SB1_LOC_X                = 0x08
