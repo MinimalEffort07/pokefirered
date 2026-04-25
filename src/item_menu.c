@@ -678,7 +678,11 @@ static void Bag_BuildListMenuTemplate(u8 pocket)
     gMultiuseListMenuTemplate.moveCursorFunc = BagListMenuMoveCursorFunc;
     gMultiuseListMenuTemplate.itemPrintFunc = BagListMenuItemPrintFunc;
     gMultiuseListMenuTemplate.cursorKind = 0;
-    gMultiuseListMenuTemplate.scrollMultiple = 0;
+    /* L/R buttons page through the item list by maxShowed items at a time.
+     * LIST_MULTIPLE_SCROLL_L_R causes ListMenu_ProcessInput to advance or
+     * retreat the cursor by the full visible page whenever L or R is pressed,
+     * matching how the Pokédex list and similar menus behave. */
+    gMultiuseListMenuTemplate.scrollMultiple = LIST_MULTIPLE_SCROLL_L_R;
 }
 
 static void BagListMenuGetItemNameColored(u8 *dest, u16 itemId)
@@ -1137,20 +1141,26 @@ static void Bag_FillMessageBoxWithPalette(u32 a0)
     ScheduleBgCopyTilemapToVram(1);
 }
 
+/* Determines if the player is switching to a different bag pocket.
+ * Returns 0 (no switch), 1 (switch left / previous pocket), or
+ * 2 (switch right / next pocket).
+ *
+ * L and R are intentionally NOT included here: they are now consumed by
+ * ListMenu_ProcessInput for page-scroll (LIST_MULTIPLE_SCROLL_L_R mode).
+ * DPAD_LEFT / DPAD_RIGHT alone handle pocket navigation, preserving the
+ * same directional feel without conflicting with L/R paging. */
 static u8 ProcessPocketSwitchInput(u8 taskId, u8 pocketId)
 {
-    u8 lrState;
     if (sBagMenuDisplay->pocketSwitchMode != 0)
         return 0;
-    lrState = GetLRKeysPressed();
-    if (JOY_NEW(DPAD_LEFT) || lrState == MENU_L_PRESSED)
+    if (JOY_NEW(DPAD_LEFT))
     {
         if (pocketId == POCKET_ITEMS - 1)
             return 0;
         PlaySE(SE_BAG_POCKET);
         return 1;
     }
-    if (JOY_NEW(DPAD_RIGHT) || lrState == MENU_R_PRESSED)
+    if (JOY_NEW(DPAD_RIGHT))
     {
         if (pocketId >= POCKET_POKE_BALLS - 1)
             return 0;
