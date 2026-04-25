@@ -338,4 +338,12 @@ ADDR.ITEM_MAX_ETHER                  = 35
 ADDR.ITEM_ELIXIR                     = 36
 ADDR.ITEM_MAX_ELIXIR                 = 37
 
+-------------------------------------------------------------------------------
+-- PARTY STATE
+-------------------------------------------------------------------------------
+-- gPlayerPartyCount: number of Pokemon currently in the player's party (0-6).
+-- Extracted from pokefirered_modern.map for the MODERN=1 build.
+
+ADDR.gPlayerPartyCount               = 0x0203a8d5
+
 return ADDR
