@@ -36,16 +36,18 @@
 #include "constants/party_menu.h"
 #include "constants/songs.h"
 #include "event_scripts.h"
+#include "pokemon_storage_system.h"
 
 /* ── Constants ─────────────────────────────────────────────────────────── */
 
 #define NUM_HMS            7
-#define MAX_LIST_ENTRIES   (NUM_HMS + REGISTERED_ITEMS_MAX)
+#define MAX_LIST_ENTRIES   (NUM_HMS + REGISTERED_ITEMS_MAX + 1)
 #define MAX_VISIBLE        8   /* max items shown before scrolling */
 
-/* List item ID encoding: 0-6 = HM, 100+ = registered item slot */
+/* List item ID encoding: 0-6 = HM, 100+ = registered item slot, 200 = PC */
 #define QS_ID_HM_BASE     0
 #define QS_ID_ITEM_BASE   100
+#define QS_ID_PC          200
 
 /* Task states */
 #define STATE_OPEN    0
@@ -74,6 +76,8 @@ static const struct {
     { ITEM_HM07, FIELD_MOVE_WATERFALL,  MOVE_WATERFALL  },
 };
 
+static const u8 sText_BillsPC[] = _("BILL'S PC");
+
 /* ── Static state ──────────────────────────────────────────────────────── */
 
 static EWRAM_DATA struct {
@@ -93,6 +97,7 @@ static void Task_QuickSelectMenu(u8 taskId);
 static void BuildMenuList(void);
 static bool8 ExecuteHmSelection(u8 hmIndex);
 static bool8 ExecuteItemSelection(u8 slot);
+static void ExecutePCSelection(u8 taskId);
 static void CloseQuickSelectMenu(u8 taskId);
 
 /* ── HM helpers ────────────────────────────────────────────────────────── */
@@ -140,6 +145,11 @@ static void BuildMenuList(void)
             sQS.numEntries++;
         }
     }
+
+    /* BILL'S PC — always available in the overworld */
+    sListItems[sQS.numEntries].label = sText_BillsPC;
+    sListItems[sQS.numEntries].index = QS_ID_PC;
+    sQS.numEntries++;
 }
 
 /* ── Execution ─────────────────────────────────────────────────────────── */
@@ -211,6 +221,29 @@ static bool8 ExecuteItemSelection(u8 slot)
     newTaskId = CreateTask(ItemId_GetFieldFunc(itemId), 8);
     gTasks[newTaskId].data[3] = 1;
     return TRUE;
+}
+
+/*
+ * ExecutePCSelection
+ *
+ * Tears down the Quick Select menu and opens the full PC storage screen.
+ * The player and object events are unfrozen/unlocked first (mirroring the
+ * FLY path in ExecuteHmSelection) before handing control to
+ * ShowPokemonStorageSystemPC(), which installs its own callbacks.
+ *
+ * sQS.taskId is the Quick Select task's own ID; taskId passed here is the
+ * same value (the task destroys itself via DestroyTask before returning).
+ */
+static void ExecutePCSelection(u8 taskId)
+{
+    DestroyListMenuTask(sQS.listTaskId, NULL, NULL);
+    ClearStdWindowAndFrameToTransparent(sQS.windowId, TRUE);
+    RemoveWindow(sQS.windowId);
+    ScheduleBgCopyTilemapToVram(0);
+    UnfreezeObjectEvents();
+    UnlockPlayerFieldControls();
+    DestroyTask(taskId);
+    ShowPokemonStorageSystemPC();
 }
 
 /* ── Close ─────────────────────────────────────────────────────────────── */
@@ -323,7 +356,13 @@ static void Task_QuickSelectMenu(u8 taskId)
         {
             PlaySE(SE_SELECT);
 
-            if (input < QS_ID_ITEM_BASE)
+            if (input == QS_ID_PC)
+            {
+                /* PC selection — tear down menu and open Bill's PC storage */
+                ExecutePCSelection(taskId);
+                return; /* task destroyed */
+            }
+            else if (input < QS_ID_ITEM_BASE)
             {
                 /*
                  * HM selection — ExecuteHmSelection always destroys the
