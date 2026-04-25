@@ -64,6 +64,7 @@
 #include "pokemon_icon.h"
 #include "pokemon_jump.h"
 #include "pokemon_special_anim.h"
+#include "pokemon_storage_system.h"
 #include "pokemon_summary_screen.h"
 #include "quest_log.h"
 #include "region_map.h"
@@ -3020,6 +3021,9 @@ static void SetPartyMonFieldSelectionActions(struct Pokemon *mons, u8 slotId)
         AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_MAIL);
     else
         AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_ITEM);
+    /* MOVE TO PC option — deposit selected mon directly to PC box (non-eggs only) */
+    if (!GetMonData(&mons[slotId], MON_DATA_IS_EGG))
+        AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_MOVE_TO_PC);
     AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_CANCEL1);
 }
 
@@ -3433,6 +3437,99 @@ static void CursorCB_Cancel1(u8 taskId)
         DisplayPartyMenuStdMessage(PARTY_MSG_CHOOSE_MON_2);
     else
         DisplayPartyMenuStdMessage(PARTY_MSG_CHOOSE_MON);
+    gTasks[taskId].func = Task_HandleChooseMonInput;
+}
+
+/*
+ * CursorCB_MoveToPC
+ *
+ * Deposits the selected party Pokemon directly into the first available
+ * PC box slot without navigating to the full storage screen.  This is a
+ * convenience option added to the field (overworld) party action menu.
+ *
+ * Guard conditions (checked in order):
+ *   1. Player must have at least two usable mons (CanMovePartyMon returns
+ *      FALSE when only one healthy mon remains).
+ *   2. There must be at least one empty slot across all 14 PC boxes.
+ *
+ * If both conditions are met, the mon is copied into the PC slot,
+ * the party slot is zeroed, and CompactPartySlots() closes any gaps so
+ * the party array stays contiguous.
+ *
+ * Uses goto to break from the nested box/slot search loop — this is the
+ * AGBCC-safe pattern for nested-loop exits (C89 has no labelled breaks).
+ * All local variables are declared at function top per AGBCC rules.
+ */
+static void CursorCB_MoveToPC(u8 taskId)
+{
+    u8 box;
+    u8 pos;
+    struct BoxPokemon *target;
+    struct Pokemon *mon;
+    u8 monName[POKEMON_NAME_LENGTH + 1];
+    struct BoxPokemon *slot;
+
+    PlaySE(SE_SELECT);
+
+    /* Guard: can't deposit last usable mon */
+    if (!CanMovePartyMon())
+    {
+        PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[0]);
+        PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[1]);
+        DisplayPartyMenuMessage(gText_LastPokemon, FALSE);
+        gTasks[taskId].func = Task_HandleChooseMonInput;
+        return;
+    }
+
+    /* Find first empty box slot across all 14 boxes */
+    target = NULL;
+    for (box = 0; box < TOTAL_BOXES_COUNT; box++)
+    {
+        for (pos = 0; pos < IN_BOX_COUNT; pos++)
+        {
+            slot = GetBoxedMonPtr(box, pos);
+            if (GetBoxMonData(slot, MON_DATA_SPECIES, NULL) == SPECIES_NONE)
+            {
+                target = slot;
+                goto found_slot;
+            }
+        }
+    }
+
+    /* All PC boxes are full — show error and return to party menu */
+    PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[0]);
+    PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[1]);
+    DisplayPartyMenuMessage(gText_BoxFull, FALSE);
+    gTasks[taskId].func = Task_HandleChooseMonInput;
+    return;
+
+found_slot:
+    mon = &gPlayerParty[gPartyMenu.slotId];
+
+    /* Copy the mon's nickname into gStringVar1 for the "{STR_VAR_1} was sent to the PC!" message */
+    GetMonData(mon, MON_DATA_NICKNAME, monName);
+    StringCopy(gStringVar1, monName);
+
+    /*
+     * Deposit sequence:
+     *   1. MonRestorePP — writes cached PP back to the mon's moves so the
+     *      stored box data has accurate PP counts.
+     *   2. CopyMon — copies the BoxPokemon portion of the party slot into
+     *      the target PC box cell.
+     *   3. ZeroMonData — clears the party slot so it reads as empty.
+     *   4. CompactPartySlots — shifts remaining party mons left to fill
+     *      the gap, keeping the party array contiguous.
+     */
+    MonRestorePP(mon);
+    CopyMon(target, &mon->box, sizeof(mon->box));
+    ZeroMonData(mon);
+    CompactPartySlots();
+
+    /* Confirm: "[Mon] was sent to the PC!" */
+    StringExpandPlaceholders(gStringVar4, gText_SentToPC);
+    PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[0]);
+    PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[1]);
+    DisplayPartyMenuMessage(gStringVar4, FALSE);
     gTasks[taskId].func = Task_HandleChooseMonInput;
 }
 
