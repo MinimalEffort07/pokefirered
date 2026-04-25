@@ -1051,6 +1051,7 @@ enum
     CURSOR_OPTION_TRADE2,
     CURSOR_OPTION_WALK,
     CURSOR_OPTION_RETURN_MON,
+    CURSOR_OPTION_MOVE_TO_PC,
     CURSOR_OPTION_FIELD_MOVES,
 };
 
@@ -1080,6 +1081,7 @@ static struct
     [CURSOR_OPTION_TRADE2]                               = {gText_Trade4,                 CursorCB_Trade2   },
     [CURSOR_OPTION_WALK]                                 = {gText_Walk,                  CursorCB_Walk     },
     [CURSOR_OPTION_RETURN_MON]                           = {gText_ReturnMon,             CursorCB_ReturnMon},
+    [CURSOR_OPTION_MOVE_TO_PC]                           = {gText_MoveToPC,              CursorCB_MoveToPC },
     [CURSOR_OPTION_FIELD_MOVES + FIELD_MOVE_FLASH]       = {gMoveNames[MOVE_FLASH],       CursorCB_FieldMove},
     [CURSOR_OPTION_FIELD_MOVES + FIELD_MOVE_CUT]         = {gMoveNames[MOVE_CUT],         CursorCB_FieldMove},
     [CURSOR_OPTION_FIELD_MOVES + FIELD_MOVE_FLY]         = {gMoveNames[MOVE_FLY],         CursorCB_FieldMove},

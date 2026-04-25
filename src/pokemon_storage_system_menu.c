@@ -291,7 +291,9 @@ static void Task_PCMainMenu(u8 taskId)
             break;
         case MENU_B_PRESSED:
         case OPTION_EXIT:
-            ClearStdWindowAndFrame(0, TRUE);
+            /* Window 0 was drawn with DrawDialogueFrame (2-tile border), so
+             * we need ClearDialogWindowAndFrame to erase the outer tile ring. */
+            ClearDialogWindowAndFrame(0, TRUE);
             ClearStdWindowAndFrame(task->tWindowId, TRUE);
             UnlockPlayerFieldControls();
             ScriptContext_Enable();

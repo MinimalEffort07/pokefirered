@@ -64,6 +64,7 @@
 #include "pokemon_icon.h"
 #include "pokemon_jump.h"
 #include "pokemon_special_anim.h"
+#include "pokemon_storage_system.h"
 #include "pokemon_summary_screen.h"
 #include "quest_log.h"
 #include "region_map.h"
@@ -188,6 +189,7 @@ static void CursorCB_Trade1(u8 taskId);
 static void CursorCB_Trade2(u8 taskId);
 static void CursorCB_Walk(u8 taskId);
 static void CursorCB_ReturnMon(u8 taskId);
+static void CursorCB_MoveToPC(u8 taskId);
 static void CursorCB_FieldMove(u8 taskId);
 static bool8 SetUpFieldMove_Fly(void);
 static bool8 SetUpFieldMove_Waterfall(void);
@@ -3019,6 +3021,9 @@ static void SetPartyMonFieldSelectionActions(struct Pokemon *mons, u8 slotId)
         AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_MAIL);
     else
         AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_ITEM);
+    /* MOVE TO PC option — deposit selected mon directly to PC box (non-eggs only) */
+    if (!GetMonData(&mons[slotId], MON_DATA_IS_EGG))
+        AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_MOVE_TO_PC);
     AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_CANCEL1);
 }
 
@@ -3433,6 +3438,133 @@ static void CursorCB_Cancel1(u8 taskId)
     else
         DisplayPartyMenuStdMessage(PARTY_MSG_CHOOSE_MON);
     gTasks[taskId].func = Task_HandleChooseMonInput;
+}
+
+/*
+ * CursorCB_MoveToPC
+ *
+ * Deposits the selected party Pokemon directly into the first available
+ * PC box slot without navigating to the full storage screen.  This is a
+ * convenience option added to the field (overworld) party action menu.
+ *
+ * Guard conditions (checked in order):
+ *   1. Player must have at least two usable mons (CanMovePartyMon returns
+ *      FALSE when only one healthy mon remains).
+ *   2. There must be at least one empty slot across all 14 PC boxes.
+ *
+ * If both conditions are met, the mon is copied into the PC slot,
+ * the party slot is zeroed, and CompactPartySlots() closes any gaps so
+ * the party array stays contiguous.
+ *
+ * Uses goto to break from the nested box/slot search loop — this is the
+ * AGBCC-safe pattern for nested-loop exits (C89 has no labelled breaks).
+ * All local variables are declared at function top per AGBCC rules.
+ */
+static void CursorCB_MoveToPC(u8 taskId)
+{
+    u8 box;
+    u8 pos;
+    struct BoxPokemon *target;
+    struct Pokemon *mon;
+    u8 monName[POKEMON_NAME_LENGTH + 1];
+    struct BoxPokemon *slot;
+    u8 usable;
+    u8 i;
+
+    PlaySE(SE_SELECT);
+
+    /* Guard: can't deposit last usable mon.
+     * Count usable (non-egg, non-fainted) mons in all OTHER slots.
+     * CanMovePartyMon() cannot be used here — it reads sCursorArea,
+     * a PC-UI static that is always CURSOR_AREA_IN_BOX outside the PC. */
+    usable = 0;
+    for (i = 0; i < gPlayerPartyCount; i++)
+    {
+        if (i == gPartyMenu.slotId)
+            continue;
+        if (!GetMonData(&gPlayerParty[i], MON_DATA_IS_EGG)
+            && GetMonData(&gPlayerParty[i], MON_DATA_HP) > 0)
+            usable++;
+    }
+    if (usable == 0)
+    {
+        PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[0]);
+        PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[1]);
+        DisplayPartyMenuMessage(gText_ThatsYourLastPkmn, FALSE);
+        gTasks[taskId].func = Task_HandleChooseMonInput;
+        return;
+    }
+
+    /* Find first empty box slot across all 14 boxes */
+    target = NULL;
+    for (box = 0; box < TOTAL_BOXES_COUNT; box++)
+    {
+        for (pos = 0; pos < IN_BOX_COUNT; pos++)
+        {
+            slot = GetBoxedMonPtr(box, pos);
+            if (GetBoxMonData(slot, MON_DATA_SPECIES, NULL) == SPECIES_NONE)
+            {
+                target = slot;
+                goto found_slot;
+            }
+        }
+    }
+
+    /* All PC boxes are full — show error and return to party menu */
+    PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[0]);
+    PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[1]);
+    DisplayPartyMenuMessage(gText_BoxFull, FALSE);
+    gTasks[taskId].func = Task_HandleChooseMonInput;
+    return;
+
+found_slot:
+    mon = &gPlayerParty[gPartyMenu.slotId];
+
+    /* Copy the mon's nickname into gStringVar1 for the "{STR_VAR_1} was sent to the PC!" message */
+    GetMonData(mon, MON_DATA_NICKNAME, monName);
+    StringCopy(gStringVar1, monName);
+
+    /*
+     * Deposit sequence:
+     *   1. MonRestorePP — writes cached PP back to the mon's moves so the
+     *      stored box data has accurate PP counts.
+     *   2. CopyMon — copies the BoxPokemon portion of the party slot into
+     *      the target PC box cell.
+     *   3. ZeroMonData — clears the party slot so it reads as empty.
+     *   4. CompactPartySlots — shifts remaining party mons left to fill
+     *      the gap, keeping the party array contiguous.
+     */
+    MonRestorePP(mon);
+    CopyMon(target, &mon->box, sizeof(mon->box));
+    ZeroMonData(mon);
+    CompactPartySlots();
+
+    /*
+     * Bug fix: CompactPartySlots() reorders the party array in memory
+     * but does not update gPlayerPartyCount.  Call
+     * CalculatePlayerPartyCount() to rescan and correct the count.
+     */
+    CalculatePlayerPartyCount();
+
+    /*
+     * Bug fix: clamp slotId so the cursor doesn't point past the end
+     * of the (now-shorter) party after the deposit.
+     */
+    if (gPartyMenu.slotId >= gPlayerPartyCount)
+        gPartyMenu.slotId = gPlayerPartyCount - 1;
+
+    /* Confirm: "[Mon] was sent to the PC!" then close the party menu.
+     *
+     * keepOpen = TRUE keeps the text window visible while the message
+     * scrolls; Task_ClosePartyMenuAfterText waits for IsPartyMenuTextPrinterActive
+     * to go FALSE and then fades out and returns to the overworld.
+     * This avoids leaving the party screen with stale slot graphics
+     * (the deposited mon still drawn). */
+    StringExpandPlaceholders(gStringVar4, gText_SentToPC);
+    PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[0]);
+    PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[1]);
+    DisplayPartyMenuMessage(gStringVar4, TRUE);
+    gTasks[taskId].func = Task_ClosePartyMenuAfterText;
 }
 
 static void CursorCB_Item(u8 taskId)

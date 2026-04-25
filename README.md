@@ -38,6 +38,10 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![PP Items in Marts](gifs/pp_items_in_marts.gif)
 
+- **PC Access from Anywhere** — "MOVE TO PC" option in the party menu deposits a Pokémon directly to the PC box. "BILL'S PC" in the Quick Select menu (SELECT button) opens the full PC storage system from anywhere outside battle.
+
+  ![PC Access from Anywhere](gifs/pc_anywhere.gif)
+
 - **L/R Page Scroll in Bag and Pokédex** — Press L or R while in the Bag item list or the Pokédex ordered list to page the cursor up or down by a full screen at a time. L clamps at the top of the list (no wrap-around).
 
   ![L/R Page Scroll](gifs/lr_page_scroll.gif)
