@@ -96,6 +96,13 @@ gh issue view <N> --comments | cat
 - Read every referenced file, related code, and relevant test patterns before drafting the plan.
 - Ask the user many clarifying questions to flesh out edge cases, scope limits, and design choices. Do not proceed until the plan is agreed.
 
+**2a. Define the test and demo specification before writing any code**
+Before writing a single line of test or demo code, explicitly propose and get approval for:
+- Every scenario the automated test must cover (happy path, failure modes, edge cases — e.g. "what if the box is full?", "what if party is at minimum?")
+- The exact visual flow the demo GIF must show (which menus, which transitions, what on-screen text confirms success)
+- The pass/fail criteria for each check (what value is read, from which address, expected vs. actual)
+Ask as many questions as needed. Do not start Step 4 until the user has approved the full test and demo specification in writing. Under-specified tests are the single biggest source of rework on this project.
+
 **3. Create a feature branch**
 ```bash
 git checkout -b issue-<N>-<short-slug>
