@@ -342,8 +342,11 @@ ADDR.ITEM_MAX_ELIXIR                 = 37
 -- PARTY STATE
 -------------------------------------------------------------------------------
 -- gPlayerPartyCount: number of Pokemon currently in the player's party (0-6).
--- Extracted from pokefirered_modern.map for the MODERN=1 build.
+-- Extracted from pokefirered.map for the default (AGBCC) build.
+-- NOTE: The MODERN=1 build places this at 0x0203a8d5; only the AGBCC address
+-- below is valid for test/run_test.sh (which runs pokefirered.gba, not
+-- pokefirered_modern.gba).
 
-ADDR.gPlayerPartyCount               = 0x0203a8d5
+ADDR.gPlayerPartyCount               = 0x02024029
 
 return ADDR
