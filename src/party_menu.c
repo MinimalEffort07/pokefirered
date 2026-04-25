@@ -3539,12 +3539,32 @@ found_slot:
     ZeroMonData(mon);
     CompactPartySlots();
 
-    /* Confirm: "[Mon] was sent to the PC!" */
+    /*
+     * Bug fix: CompactPartySlots() reorders the party array in memory
+     * but does not update gPlayerPartyCount.  Call
+     * CalculatePlayerPartyCount() to rescan and correct the count.
+     */
+    CalculatePlayerPartyCount();
+
+    /*
+     * Bug fix: clamp slotId so the cursor doesn't point past the end
+     * of the (now-shorter) party after the deposit.
+     */
+    if (gPartyMenu.slotId >= gPlayerPartyCount)
+        gPartyMenu.slotId = gPlayerPartyCount - 1;
+
+    /* Confirm: "[Mon] was sent to the PC!" then close the party menu.
+     *
+     * keepOpen = TRUE keeps the text window visible while the message
+     * scrolls; Task_ClosePartyMenuAfterText waits for IsPartyMenuTextPrinterActive
+     * to go FALSE and then fades out and returns to the overworld.
+     * This avoids leaving the party screen with stale slot graphics
+     * (the deposited mon still drawn). */
     StringExpandPlaceholders(gStringVar4, gText_SentToPC);
     PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[0]);
     PartyMenuRemoveWindow(&sPartyMenuInternal->windowId[1]);
-    DisplayPartyMenuMessage(gStringVar4, FALSE);
-    gTasks[taskId].func = Task_HandleChooseMonInput;
+    DisplayPartyMenuMessage(gStringVar4, TRUE);
+    gTasks[taskId].func = Task_ClosePartyMenuAfterText;
 }
 
 static void CursorCB_Item(u8 taskId)
