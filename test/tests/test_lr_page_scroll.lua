@@ -1,26 +1,46 @@
 -------------------------------------------------------------------------------
 -- test_lr_page_scroll.lua
--- Verifies that LIST_MULTIPLE_SCROLL_L_R is active in both the Bag and the
--- Pokédex ordered-list menu by checking the scrollMultiple field at runtime.
+-- Verifies that the bag item list is configured for L/R page-scroll.
 --
--- WHAT WE TEST:
+-- WHAT WE TEST (and why the config check is sufficient):
 --
--- The game's list-menu framework (list_menu.c) already implements page-scroll
--- for L/R when scrollMultiple == LIST_MULTIPLE_SCROLL_L_R (= 2).  Our change
--- was to set that field in:
---   1. gMultiuseListMenuTemplate (built at bag-open time in item_menu.c)
---   2. sListMenuTemplate_OrderedListMenu (static const in pokedex_screen.c)
+--   Our change sets scrollMultiple = LIST_MULTIPLE_SCROLL_L_R (= 2) in the
+--   bag's ListMenuTemplate (in item_menu.c, Bag_BuildListMenuTemplate).
 --
--- We verify by reading the field from EWRAM/IWRAM after the bag is open.
--- Reading gMultiuseListMenuTemplate directly is the most precise check
--- because it's the exact struct the bag's list-menu task runs from.
+--   The full verification chain confirmed by source-code review:
 --
--- WHY WE DON'T TEST CURSOR MOVEMENT:
+--   1. ProcessPocketSwitchInput (item_menu.c) explicitly excludes L and R
+--      from its input mask, so those buttons are NOT consumed there.
 --
--- The ListMenuChangeSelection code that actually moves the cursor when L/R
--- are pressed is pre-existing, unmodified code.  Testing it here would be
--- re-testing the framework, not our change.  The scrollMultiple field check
--- is the canonical evidence that our two-line change took effect.
+--   2. Task_BagMenu_HandleInput (item_menu.c) calls ListMenu_ProcessInput
+--      (list_menu.c) with the template.  ListMenu_ProcessInput reaches
+--      case LIST_MULTIPLE_SCROLL_L_R: and reads gMain.newAndRepeatedKeys
+--      & {L_BUTTON, R_BUTTON} to drive page-scroll.
+--
+--   3. ListMenuChangeSelection is called with count=maxShowed (nominally 6
+--      with 20+ items in the Items pocket), advancing or retreating the
+--      cursor by a full page.
+--
+--   Behavioural (cursor-move) assertions are NOT included here because
+--   they depend on item-quantity decryption (gSaveBlock2->encryptionKey XOR
+--   raw_qty) that makes it difficult to produce a canonical non-empty list
+--   in headless mGBA without a real save file.  The config check proves the
+--   routing is wired; the list_menu engine is upstream code (pret/pokefirered)
+--   and is not modified by this feature.
+--
+-- gBagMenuState layout (EWRAM, from include/item_menu.h struct BagStruct):
+--   0x00  MainCallback bagCallback  (4 bytes)
+--   0x04  u8  location
+--   0x05  bool8 bagOpen             -- non-zero while bag screen is active
+--   0x06  u16 pocket                -- index of the currently displayed pocket
+--   0x08  u16 itemsAbove[3]         -- items scrolled above viewport, per pocket
+--   0x0E  u16 cursorPos[3]          -- cursor row within viewport, per pocket
+--
+-- gMultiuseListMenuTemplate lives at 0x03005e80 in IWRAM; scrollMultiple is
+-- packed into bits [7:6] of the byte at template offset 0x16.
+-- LIST_MULTIPLE_SCROLL_L_R = 2  =>  bits[7:6] = 0b10  =>  byte value has
+-- (2 << 6) = 0x80 contributed by scrollMultiple (other bits may hold
+-- itemVerticalPadding).
 --
 -- HOW TO RUN:
 --   Headless: bash test/run_test.sh test/tests/test_lr_page_scroll.lua
@@ -35,61 +55,56 @@ local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 
 -------------------------------------------------------------------------------
--- gMultiuseListMenuTemplate is in IWRAM at 0x03005e80.
--- struct ListMenuTemplate layout (from include/list_menu.h):
---
---   0x00  const struct ListMenuItem *items   (4 bytes)
---   0x04  moveCursorFunc                     (4 bytes)
---   0x08  itemPrintFunc                      (4 bytes)
---   0x0C  u16 totalItems
---   0x0E  u16 maxShowed
---   0x10  u8  windowId
---   0x11  u8  header_X
---   0x12  u8  item_X
---   0x13  u8  cursor_X
---   0x14  u8  upText_Y:4, cursorPal:4
---   0x15  u8  fillValue:4, cursorShadowPal:4
---   0x16  u8  lettersSpacing:3, itemVerticalPadding:3, scrollMultiple:2
---   0x17  u8  fontId:6, cursorKind:2
---
--- scrollMultiple occupies bits [7:6] of byte 0x16.
--- LIST_MULTIPLE_SCROLL_L_R = 2 → bits [7:6] = 10b → (byte >> 6) & 3 == 2.
---
--- ADDRESS NOTE: This is the IWRAM address from pokefirered.map.
--- Update if IWRAM layout changes (rebuild + re-grep for gMultiuseListMenuTemplate).
+-- gBagMenuState field offsets (relative to ADDR.gBagMenuState).
 -------------------------------------------------------------------------------
+local BAG_OFF_BAG_OPEN = 0x05  -- bool8 bagOpen
 
-local TMPL_ADDR          = 0x03005e80  -- gMultiuseListMenuTemplate (IWRAM)
-local TMPL_OFF_SCROLL    = 0x16        -- byte containing scrollMultiple:2 in bits [7:6]
-
-local function read_scroll_multiple()
-    local byte = fw.read8(TMPL_ADDR + TMPL_OFF_SCROLL)
-    -- scrollMultiple is stored in bits [7:6] (most significant 2 bits of the byte).
-    -- Shift right by 6 and mask to get the 2-bit value.
-    return math.floor(byte / 64) % 4
+-- Return true when the bag screen is active.
+local function bag_open()
+    return fw.read8(ADDR.gBagMenuState + BAG_OFF_BAG_OPEN) ~= 0
 end
 
 -------------------------------------------------------------------------------
--- gBagMenuState.bagOpen: non-zero when the bag screen is active.
--- Layout: offset 0x05 from gBagMenuState (see item_menu.h struct BagStruct).
+-- Task scanner constants.
+--
+-- gTasks is at 0x030050a0, 16 entries, 40 bytes each:
+--   offset 0: u32 func pointer (stored as Thumb ptr with bit 0 set)
+--   offset 4: u8 isActive
+--
+-- Task_BagMenu_HandleInput lives at 0x08109404 in this build; Thumb pointers
+-- have bit 0 set, so gTasks stores 0x08109405.
+--
+-- NOTE: This address is ROM-build-specific. If the ROM is rebuilt with a
+-- different code layout this constant must be updated. Cross-check with:
+--   grep Task_BagMenu_HandleInput pokefirered.map
 -------------------------------------------------------------------------------
+local GTASKS_ADDR     = 0x030050a0
+local TASK_SIZE_B     = 40
+local BAG_INPUT_THUMB = 0x08109405  -- Task_BagMenu_HandleInput | 1 (Thumb bit)
 
-local function bag_open()
-    return fw.read8(ADDR.gBagMenuState + 0x05) ~= 0
+local function bag_input_handler_active()
+    for i = 0, 15 do
+        local t_addr   = GTASKS_ADDR + i * TASK_SIZE_B
+        local t_func   = fw.read32(t_addr)
+        local t_active = fw.read8(t_addr + 4)
+        if t_active ~= 0 and t_func == BAG_INPUT_THUMB then
+            return true
+        end
+    end
+    return false
 end
 
 -------------------------------------------------------------------------------
 -- Main test body
 -------------------------------------------------------------------------------
-
 fw.run(function()
-    fw.log("=== L/R Page Scroll Test ===")
+    fw.log("=== L/R Page Scroll Config Test ===")
 
     -- Boot through Oak's speech using the shared character_select helper.
-    fw.log("Booting to overworld (takes ~5000 frames in fast-forward)...")
+    fw.log("Booting to overworld...")
     local sel = cs.find_selection_press()
     if not sel then
-        fw.assert_true(false, "Could not discover Oak-speech selection press — boot failed")
+        fw.assert_true(false, "Could not discover Oak-speech selection press -- boot failed")
         fw.finish()
         return
     end
@@ -98,16 +113,15 @@ fw.run(function()
     cs.confirm_and_enter_overworld()
 
     fw.log("Reached overworld.")
-    fw.wait_frames(60)   -- let overworld settle
+    fw.wait_frames(60)
 
+    -----------------------------------------------------------------------
     -- Open the bag from the Start menu.
-    -- BAG is the first entry (POKEMON and POKEDEX flags are not set yet).
+    -----------------------------------------------------------------------
     fw.log("Opening start menu...")
     fw.press("START")
     fw.wait_frames(30)
 
-    -- Navigate to BAG.  We try pressing A up to 8 times, backing out after
-    -- each non-bag selection, until gBagMenuState.bagOpen becomes true.
     local bag_opened = false
     local attempts = 0
     while not bag_opened and attempts < 8 do
@@ -126,38 +140,59 @@ fw.run(function()
     end
 
     if not bag_opened then
-        fw.assert_true(false, "Could not open the Bag from the start menu")
+        fw.assert_true(false, "Could not open the Bag from the start menu after 8 attempts")
         fw.finish()
         return
     end
 
-    -- Wait for the opening animation and palette fade to complete.
-    -- Task_BagMenu_HandleInput is gated by gPaletteFade.active (the fade-in
-    -- from black takes ~16 frames) and Task_AnimateWin0v (the window-slide
-    -- takes ~12 frames).  60 frames is comfortably past both.
-    fw.wait_frames(60)
+    -- Wait for Task_BagMenu_HandleInput to become active (press B to dismiss
+    -- any incidental sub-menus that may have opened along the way).
+    local escaped = false
+    for _attempt = 1, 15 do
+        if bag_input_handler_active() then
+            escaped = true
+            break
+        end
+        fw.press("B")
+        fw.wait_frames(20)
+    end
+    escaped = escaped or bag_input_handler_active()
 
-    -- Read scrollMultiple from gMultiuseListMenuTemplate.
-    -- Bag_BuildListMenuTemplate (called during bag opening state 12) writes
-    -- scrollMultiple = LIST_MULTIPLE_SCROLL_L_R (2) to gMultiuseListMenuTemplate.
-    local scroll_val = read_scroll_multiple()
-    local tmpl_byte  = fw.read8(TMPL_ADDR + TMPL_OFF_SCROLL)
-    fw.log(string.format(
-        "gMultiuseListMenuTemplate[0x16] = 0x%02X  scrollMultiple = %d",
-        tmpl_byte, scroll_val))
+    if not escaped then
+        fw.assert_true(false, "Could not reach Task_BagMenu_HandleInput after opening bag")
+        fw.finish()
+        return
+    end
+
+    fw.log("Bag input handler is active. Settling...")
+    fw.wait_frames(90)  -- let palette fade and window animations finish
+
+    -----------------------------------------------------------------------
+    -- CONFIG CHECK: gMultiuseListMenuTemplate.scrollMultiple == 2.
+    --
+    -- gMultiuseListMenuTemplate is the IWRAM template used by
+    -- Bag_BuildListMenuTemplate (item_menu.c).  It lives at 0x03005e80.
+    -- The scrollMultiple field occupies bits [7:6] of the byte at +0x16;
+    -- the lower 6 bits are itemVerticalPadding.
+    -- LIST_MULTIPLE_SCROLL_L_R = 2 means bits[7:6] = 0b10.
+    --
+    -- This proves the bag is configured to route L/R to ListMenu_ProcessInput
+    -- as page-scroll keys.  ProcessPocketSwitchInput does NOT consume L/R
+    -- (confirmed by its explicit input mask in item_menu.c).
+    -----------------------------------------------------------------------
+    local tmpl_byte  = fw.read8(0x03005e80 + 0x16)
+    local scroll_val = math.floor(tmpl_byte / 64) % 4
+    fw.log(string.format("[config] scrollMultiple=%d (expect 2)  tmpl_byte=0x%02X",
+        scroll_val, tmpl_byte))
 
     fw.assert_true(scroll_val == 2,
-        string.format("Bag scrollMultiple == LIST_MULTIPLE_SCROLL_L_R (2), got %d", scroll_val))
+        string.format("gMultiuseListMenuTemplate.scrollMultiple == LIST_MULTIPLE_SCROLL_L_R (2), got %d",
+            scroll_val))
 
-    -- Also read maxShowed and totalItems for context.
-    local max_showed = fw.read16(TMPL_ADDR + 0x0E)
-    local total      = fw.read16(TMPL_ADDR + 0x0C)
-    fw.log(string.format("  maxShowed = %d, totalItems = %d", max_showed, total))
-
-    -- Exit the bag.
+    -- Exit bag cleanly.
     fw.press("B")
     fw.wait_frames(60)
 
-    fw.log("=== L/R Page Scroll Test Complete ===")
+    fw.log("=== L/R Page Scroll Config Test Complete ===")
     fw.finish()
 end)
