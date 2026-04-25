@@ -42,6 +42,10 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![PC Access from Anywhere](gifs/pc_anywhere.gif)
 
+- **L/R Page Scroll in Bag and Pokédex** — Press L or R while in the Bag item list or the Pokédex ordered list to page the cursor up or down by a full screen at a time. L clamps at the top of the list (no wrap-around).
+
+  ![L/R Page Scroll](gifs/lr_page_scroll.gif)
+
 
 This is a decompilation of English Pokémon FireRed and LeafGreen.
 

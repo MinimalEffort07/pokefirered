@@ -336,6 +336,24 @@ ADDR.OBJECT_EVENTS_COUNT             = 16   -- sentinel for "no such slot"
 -- after building with the PP items feature applied.
 -- Re-extract if mart scripts.inc changes cause map layout shifts.
 
+-------------------------------------------------------------------------------
+-- BAG MENU STATE (L/R page-scroll feature)
+-------------------------------------------------------------------------------
+-- gBagMenuState: EWRAM struct that tracks the bag cursor and scroll state.
+-- Defined in include/item_menu.h as struct BagStruct.
+--
+-- Layout (extracted from pokefirered.map):
+--   0x00  MainCallback bagCallback (4 bytes)
+--   0x04  u8  location
+--   0x05  bool8 bagOpen            -- non-zero when the bag screen is active
+--   0x06  u16 pocket               -- index of the currently displayed pocket
+--   0x08  u16 itemsAbove[3]        -- items above the viewport, per pocket
+--   0x0E  u16 cursorPos[3]         -- cursor row within the viewport, per pocket
+--
+-- NUM_BAG_POCKETS_NO_CASES = 3 (items=0, key items=1, Poké Balls=2).
+-- Address extracted from pokefirered.map: grep " gBagMenuState$" pokefirered.map
+ADDR.gBagMenuState            = 0x0203ad8c
+
 ADDR.CeruleanCity_Mart_Items         = 0x0816b60c  -- Super Potion tier
 ADDR.CinnabarIsland_Mart_Items       = 0x0816f390  -- Hyper Potion tier
 ADDR.FourIsland_Mart_Items           = 0x08172624  -- Max Potion tier
