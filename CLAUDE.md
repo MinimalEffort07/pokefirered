@@ -133,6 +133,12 @@ gh pr create --title "Fix #<N>: <short description>" --body "..."
 ```
 PR body must reference the issue number, summarise what changed, and list what was tested.
 
+After creating the PR, post the feature recordings link in your response to the user:
+```
+Recordings available at: http://100.116.114.81:8080
+(run: python3 test/serve_recordings.py)
+```
+
 **9. Wait for approval — do not merge until told to**
 After creating the PR, stop. The user will review it. Only run the merge command when the user explicitly says to proceed:
 ```bash
