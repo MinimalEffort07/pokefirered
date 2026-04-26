@@ -510,6 +510,7 @@ fw.run(function()
     -- FireRed ignores A while text is scrolling (~4 frames/char × 57 chars ≈ 260 frames).
     -- Wait generously past that, then press A once the YES/NO cursor is live.
     fw.wait_frames(300)   -- wait for text scroll to complete + YES/NO cursor to appear
+    fw.screenshot("/tmp/mgba-slaveless-b-yesno.png")
     fw.press("A")         -- A2: confirm YES
     fw.wait_frames(800)   -- wait for silhouette animation + cut animation + tree removal
     fw.screenshot("/tmp/mgba-slaveless-b-after-anim.png")

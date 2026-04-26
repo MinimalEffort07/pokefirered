@@ -14,6 +14,10 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![Quick Select Menu](gifs/quickselect.gif)
 
+- **Slaveless HM Obstacles** — HM obstacles (CUT trees, boulders, waterfalls, etc.) can be used without a party Pokémon that knows the move. If the player has the required HM item and badge but no eligible party member, a mysterious Pokémon silhouette appears and offers to use the move.
+
+  ![Slaveless HM Obstacles](gifs/slaveless_hm.gif)
+
 - **Character Select** — Choose your player character at the start of the game.
 
   ![Character Select](gifs/character_select.gif)
