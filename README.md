@@ -26,7 +26,7 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![Type Effectiveness Colors](gifs/ColourizedMoves.gif)
 
-- **Walk With Pokemon** — Your pokemon follows you around in the overworld.
+- **Walk With Pokemon** — Your pokemon follows you around in the overworld. When entering a cave or dungeon, the player automatically steps one tile forward after the transition so the follower spawns at the entrance tile rather than blocking the path ahead.
 
   ![Walk With Pokemon](gifs/WalkWithPokemon.gif)
 

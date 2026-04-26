@@ -176,6 +176,7 @@ void CB1_Overworld(void);
 void CB2_ReturnToFieldContinueScript(void);
 u8 GetLastUsedWarpMapSectionId(void);
 void StoreInitialPlayerAvatarState(void);
+void SetInitialPlayerAvatarStateWithDirection(u8 dirn);
 void UpdateEscapeWarp(s16 x, s16 y);
 bool8 SetDiveWarpEmerge(u16 x, u16 y);
 bool8 SetDiveWarpDive(u16 x, u16 y);
