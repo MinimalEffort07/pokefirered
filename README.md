@@ -26,7 +26,7 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![Cycle Anywhere](gifs/cycleAnywhere.gif)
 
-- **Type Effectiveness Colors in Battle** — Move text in the FIGHT menu is colored by effectiveness: green for super effective, yellow for not very effective, red for no effect.
+- **Type Effectiveness Colors in Battle** — Move text in the FIGHT menu is colored by effectiveness: green for super effective, yellow for not very effective, red for no effect. In double battles, colors correctly reflect the currently targeted (alive) opponent and update in real-time as you move the target cursor between opponents.
 
   ![Type Effectiveness Colors](gifs/ColourizedMoves.gif)
 
