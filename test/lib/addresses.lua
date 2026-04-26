@@ -175,12 +175,17 @@ ADDR.SEEL_LIST_INDEX          = 94   -- Seel's position in the character selecti
 --
 -- Addresses are extracted from pokefirered.map. They MUST be re-extracted
 -- whenever roaming_pokemon.c or anything that affects EWRAM layout changes.
+--
+-- Re-extracted after sFollower struct grew by 4 bytes (added u32 pid in issue-4 fix).
+-- All addresses from roaming_pokemon.o onwards shifted by +4.
+-- Also fixes pre-existing 8-byte drift: gRoamers and related were stale by +8
+-- bytes from a previous feature addition that was never backported to this file.
 
-ADDR.gRoamers                 = 0x0203f890  -- struct RoamingMon[4]
-ADDR.gRoamingFlybySpriteIds   = 0x0203f8a0  -- u8[4], MAX_SPRITES (64) = free
-ADDR.gRoamerCount             = 0x0203f8a4  -- u8: number of active roamers (0..4)
-ADDR.gRoamerNextSpawnTimer    = 0x0203f8a6  -- u16: frames until next spawn attempt
-ADDR.gRoamerNextFlybyTimer    = 0x0203f8a8  -- u16: frames until next flyby attempt
+ADDR.gRoamers                 = 0x0203f89c  -- struct RoamingMon[4]
+ADDR.gRoamingFlybySpriteIds   = 0x0203f8ac  -- u8[4], MAX_SPRITES (64) = free
+ADDR.gRoamerCount             = 0x0203f8b0  -- u8: number of active roamers (0..4)
+ADDR.gRoamerNextSpawnTimer    = 0x0203f8b2  -- u16: frames until next spawn attempt
+ADDR.gRoamerNextFlybyTimer    = 0x0203f8b4  -- u16: frames until next flyby attempt
 
 ADDR.ROAMER_STRUCT_SIZE       = 4
 ADDR.ROAMER_OFF_OBJ_EVENT_ID  = 0
@@ -318,8 +323,8 @@ ADDR.WED_LEAD_MON_HELD_ITEM          = 0x0A
 --   0x01  u8 tableIdx
 --   0x02  u8 level
 --   0x03  u8 pendingBattle -- set by collision check, cleared when battle starts
-ADDR.gRoamers                        = 0x0203f890
-ADDR.gRoamerCount                    = 0x0203f8a4
+ADDR.gRoamers                        = 0x0203f89c
+ADDR.gRoamerCount                    = 0x0203f8b0
 ADDR.ROAMER_CAP_VISIBLE              = 4
 ADDR.ROAMER_SIZE                     = 4
 ADDR.ROAMER_OFF_OBJ_EVENT_ID         = 0x00
@@ -378,5 +383,25 @@ ADDR.ITEM_MAX_ELIXIR                 = 37
 -- pokefirered_modern.gba).
 
 ADDR.gPlayerPartyCount               = 0x02024029
+
+-------------------------------------------------------------------------------
+-- WALKING POKEMON FOLLOWER (pokemon_follower.c)
+-------------------------------------------------------------------------------
+-- sFollower: static EWRAM struct tracking the active follower Pokemon.
+-- Base address from pokefirered.map: grep "ewram_data.*pokemon_follower" pokefirered.map
+-- NOTE: Re-verify after any rebuild that touches EWRAM layout before pokemon_follower.o.
+-- Field offsets (valid both before and after adding u32 pid at +8):
+--   +0  bool8 active
+--   +1  bool8 spriteSpawned
+--   +2  u8    partySlot
+--   +3  (alignment padding)
+--   +4  u16   species
+--   +6  u8    graphicsId
+--   +7  u8    objEventId
+--   +8  u32   pid  (added by issue-4 fix; not present in pre-fix builds)
+ADDR.sFollower               = 0x0203f7a8
+ADDR.FOLLOWER_OFF_ACTIVE     = 0x00
+ADDR.FOLLOWER_OFF_SPECIES    = 0x04
+ADDR.FOLLOWER_OFF_PID        = 0x08
 
 return ADDR
