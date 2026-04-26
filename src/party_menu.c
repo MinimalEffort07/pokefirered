@@ -2997,7 +2997,7 @@ static void SetPartyMonFieldSelectionActions(struct Pokemon *mons, u8 slotId)
         u16 species = GetMonData(&mons[slotId], MON_DATA_SPECIES);
         if (CanSpeciesFollowPlayer(species))
         {
-            if (IsFollowerActive() && slotId == GetFollowerPartySlot())
+            if (IsFollowerPokemon(&mons[slotId]))
                 AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_RETURN_MON);
             else if (!IsFollowerActive())
                 AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_WALK);
