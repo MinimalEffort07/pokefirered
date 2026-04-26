@@ -16,6 +16,7 @@
 #include "constants/battle.h"
 #include "constants/heal_locations.h"
 #include "constants/field_effects.h"
+#include "constants/party_menu.h"
 #include "constants/trainers.h"
 #include "constants/trainer_tower.h"
 #include "constants/fame_checker.h"
