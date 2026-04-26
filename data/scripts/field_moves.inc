@@ -3,7 +3,22 @@ EventScript_CutTree::
 	lockall
 	goto_if_unset FLAG_BADGE02_GET, EventScript_CantCutTree
 	checkpartymove MOVE_CUT
-	goto_if_eq VAR_RESULT, PARTY_SIZE, EventScript_CantCutTree
+	goto_if_ne VAR_RESULT, PARTY_SIZE, EventScript_CutTreePartyMon
+	checkitem ITEM_HM01, 1
+	goto_if_eq VAR_RESULT, FALSE, EventScript_CantCutTree
+	buffermovename STR_VAR_2, MOVE_CUT
+	msgbox Text_SlavelessHmPrompt, MSGBOX_YESNO
+	goto_if_eq VAR_RESULT, NO, EventScript_DontCutTree
+	setvar VAR_0x8004, FIELD_MOVE_CUT
+	special Special_SetSlavelessHmSilhouette
+	setfieldeffectargument 0, 0
+	closemessage
+	dofieldeffect FLDEFF_USE_CUT_ON_TREE
+	waitstate
+	goto EventScript_CutTreeDown
+	end
+
+EventScript_CutTreePartyMon::
 	setfieldeffectargument 0, VAR_RESULT
 	bufferpartymonnick STR_VAR_1, VAR_RESULT
 	buffermovename STR_VAR_2, MOVE_CUT
@@ -56,12 +71,31 @@ Text_TreeCanBeCutDown::
 	.string "This tree looks like it can be CUT\n"
 	.string "down!$"
 
+Text_SlavelessHmPrompt::
+	.string "A mysterious POKéMON appeared!\n"
+	.string "Would you like to use {STR_VAR_2}?$"
+
 EventScript_RockSmash::
 	goto_if_questlog EventScript_ReleaseEnd
 	lockall
 	goto_if_unset FLAG_BADGE06_GET, EventScript_CantSmashRock
 	checkpartymove MOVE_ROCK_SMASH
-	goto_if_eq VAR_RESULT, PARTY_SIZE, EventScript_CantSmashRock
+	goto_if_ne VAR_RESULT, PARTY_SIZE, EventScript_RockSmashPartyMon
+	checkitem ITEM_HM06, 1
+	goto_if_eq VAR_RESULT, FALSE, EventScript_CantSmashRock
+	buffermovename STR_VAR_2, MOVE_ROCK_SMASH
+	msgbox Text_SlavelessHmPrompt, MSGBOX_YESNO
+	goto_if_eq VAR_RESULT, NO, EventScript_DontSmashRock
+	setvar VAR_0x8004, FIELD_MOVE_ROCK_SMASH
+	special Special_SetSlavelessHmSilhouette
+	setfieldeffectargument 0, 0
+	closemessage
+	dofieldeffect FLDEFF_USE_ROCK_SMASH
+	waitstate
+	goto EventScript_UseRockSmash
+	end
+
+EventScript_RockSmashPartyMon::
 	setfieldeffectargument 0, VAR_RESULT
 	bufferpartymonnick STR_VAR_1, VAR_RESULT
 	buffermovename STR_VAR_2, MOVE_ROCK_SMASH
@@ -122,7 +156,22 @@ EventScript_StrengthBoulder::
 	goto_if_unset FLAG_BADGE04_GET, EventScript_CantMoveBoulder
 	goto_if_set FLAG_SYS_USE_STRENGTH, EventScript_AlreadyUsedStrength
 	checkpartymove MOVE_STRENGTH
-	goto_if_eq VAR_RESULT, PARTY_SIZE, EventScript_CantMoveBoulder
+	goto_if_ne VAR_RESULT, PARTY_SIZE, EventScript_StrengthBoulderPartyMon
+	checkitem ITEM_HM04, 1
+	goto_if_eq VAR_RESULT, FALSE, EventScript_CantMoveBoulder
+	buffermovename STR_VAR_2, MOVE_STRENGTH
+	msgbox Text_SlavelessHmPrompt, MSGBOX_YESNO
+	goto_if_eq VAR_RESULT, NO, EventScript_DontUseStrength
+	setvar VAR_0x8004, FIELD_MOVE_STRENGTH
+	special Special_SetSlavelessHmSilhouette
+	setfieldeffectargument 0, 0
+	closemessage
+	dofieldeffect FLDEFF_USE_STRENGTH
+	waitstate
+	goto EventScript_UseStrengthSlaveless
+	end
+
+EventScript_StrengthBoulderPartyMon::
 	setfieldeffectargument 0, VAR_RESULT
 	msgbox Text_UseStrength, MSGBOX_YESNO
 	goto_if_eq VAR_RESULT, NO, EventScript_DontUseStrength
@@ -142,6 +191,11 @@ EventScript_FldEffStrength::
 EventScript_UseStrength::
 	setflag FLAG_SYS_USE_STRENGTH
 	msgbox Text_MonUsedStrengthCanMoveBoulders, MSGBOX_SIGN
+	end
+
+EventScript_UseStrengthSlaveless::
+	setflag FLAG_SYS_USE_STRENGTH
+	msgbox Text_StrengthMadeMovingBouldersPossible, MSGBOX_SIGN
 	end
 
 EventScript_CantMoveBoulder::
@@ -179,7 +233,21 @@ EventScript_Waterfall::
 	goto_if_questlog EventScript_ReleaseEnd
 	lockall
 	checkpartymove MOVE_WATERFALL
-	goto_if_eq VAR_RESULT, PARTY_SIZE, EventScript_WaterCrashingDown
+	goto_if_ne VAR_RESULT, PARTY_SIZE, EventScript_WaterfallPartyMon
+	goto_if_unset FLAG_BADGE07_GET, EventScript_WaterCrashingDown
+	checkitem ITEM_HM07, 1
+	goto_if_eq VAR_RESULT, FALSE, EventScript_WaterCrashingDown
+	buffermovename STR_VAR_2, MOVE_WATERFALL
+	msgbox Text_SlavelessHmPrompt, MSGBOX_YESNO
+	goto_if_eq VAR_RESULT, NO, EventScript_EndWaterfall
+	setvar VAR_0x8004, FIELD_MOVE_WATERFALL
+	special Special_SetSlavelessHmSilhouette
+	setfieldeffectargument 0, 0
+	closemessage
+	dofieldeffect FLDEFF_USE_WATERFALL
+	goto EventScript_EndWaterfall
+
+EventScript_WaterfallPartyMon::
 	bufferpartymonnick STR_VAR_1, VAR_RESULT
 	setfieldeffectargument 0, VAR_RESULT
 	msgbox Text_UseWaterfall, MSGBOX_YESNO
