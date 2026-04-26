@@ -79,7 +79,7 @@ static EWRAM_DATA struct {
     u16 species;            /* Cached species (for change detection) */
     u8 graphicsId;          /* OBJ_EVENT_GFX_* constant for the sprite */
     u8 objEventId;          /* Index into gObjectEvents[] */
-    u32 pid;                /* Personality value — identifies the Pokemon across party rearrangements */
+    u32 pid;                /* Personality value (PID). partySlot goes stale after SWITCH; species+PID uniquely identifies the Pokemon regardless of slot */
 } sFollower = {0};
 
 /*
@@ -158,22 +158,26 @@ u8 GetFollowerObjEventId(void)
     return sFollower.objEventId;
 }
 
+/**
+ * Return the party slot index of the active follower.
+ *
+ * Kept as public API; party_menu.c now uses IsFollowerPokemon() for the
+ * RETURN check, so this slot value is only advisory (it goes stale after
+ * the player uses SWITCH to rearrange the party).
+ */
 u8 GetFollowerPartySlot(void)
 {
     return sFollower.partySlot;
 }
 
 /**
- * FUNCTION: IsFollowerPokemon
+ * Check whether a party Pokemon is the active follower.
  *
- * PURPOSE: Check whether a given Pokemon struct is the current follower.
- *          Uses both species and personality value (PID) so the identity
- *          check survives party SWITCH rearrangements — the slot index in
- *          sFollower.partySlot goes stale after a swap, but species+PID
- *          uniquely identifies the individual Pokemon.
+ * Compares both species and personality value (PID) so that the check
+ * remains correct after the player rearranges their party with SWITCH.
+ * Slot-index comparison would go stale; identity comparison does not.
  *
- * @param mon  Pointer to a struct Pokemon to test (typically &gPlayerParty[i]).
- * @return TRUE if the follower is active and this mon is the follower.
+ * @return TRUE if mon is the currently active follower.
  */
 bool8 IsFollowerPokemon(struct Pokemon *mon)
 {
@@ -225,6 +229,8 @@ void DeactivateFollower(void)
 {
     DespawnFollowerSprite();
     sFollower.active = FALSE;
+    sFollower.spriteSpawned = FALSE;
+    sFollower.objEventId = OBJECT_EVENTS_COUNT;
     sFollower.partySlot = 0;
     sFollower.species = 0;
     sFollower.graphicsId = 0;
