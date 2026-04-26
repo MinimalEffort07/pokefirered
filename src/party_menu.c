@@ -2989,12 +2989,13 @@ static void SetPartyMonSelectionActions(struct Pokemon *mons, u8 slotId, u8 acti
 static void SetPartyMonFieldSelectionActions(struct Pokemon *mons, u8 slotId)
 {
     u8 i, j;
+    u16 species;
 
     sPartyMenuInternal->numActions = 0;
     AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_SUMMARY);
-    // Add WALK or RETURN option for pokemon with overworld walking sprites
+    /* Add WALK or RETURN option for pokemon with overworld walking sprites */
     {
-        u16 species = GetMonData(&mons[slotId], MON_DATA_SPECIES);
+        species = GetMonData(&mons[slotId], MON_DATA_SPECIES);
         if (CanSpeciesFollowPlayer(species))
         {
             if (IsFollowerPokemon(&mons[slotId]))
