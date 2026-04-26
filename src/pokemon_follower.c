@@ -79,6 +79,7 @@ static EWRAM_DATA struct {
     u16 species;            /* Cached species (for change detection) */
     u8 graphicsId;          /* OBJ_EVENT_GFX_* constant for the sprite */
     u8 objEventId;          /* Index into gObjectEvents[] */
+    u32 pid;                /* Personality value — identifies the Pokemon across party rearrangements */
 } sFollower = {0};
 
 /*
@@ -163,6 +164,26 @@ u8 GetFollowerPartySlot(void)
 }
 
 /**
+ * FUNCTION: IsFollowerPokemon
+ *
+ * PURPOSE: Check whether a given Pokemon struct is the current follower.
+ *          Uses both species and personality value (PID) so the identity
+ *          check survives party SWITCH rearrangements — the slot index in
+ *          sFollower.partySlot goes stale after a swap, but species+PID
+ *          uniquely identifies the individual Pokemon.
+ *
+ * @param mon  Pointer to a struct Pokemon to test (typically &gPlayerParty[i]).
+ * @return TRUE if the follower is active and this mon is the follower.
+ */
+bool8 IsFollowerPokemon(struct Pokemon *mon)
+{
+    if (!sFollower.active)
+        return FALSE;
+    return GetMonData(mon, MON_DATA_SPECIES) == sFollower.species
+        && GetMonData(mon, MON_DATA_PERSONALITY) == sFollower.pid;
+}
+
+/**
  * FUNCTION: ActivateFollower
  *
  * PURPOSE: Enable the follower system for the given party slot.
@@ -191,6 +212,7 @@ void ActivateFollower(u8 partySlot)
     sFollower.species = species;
     sFollower.graphicsId = gfxId;
     sFollower.objEventId = OBJECT_EVENTS_COUNT;
+    sFollower.pid = GetMonData(&gPlayerParty[partySlot], MON_DATA_PERSONALITY);
 }
 
 /**
@@ -206,6 +228,7 @@ void DeactivateFollower(void)
     sFollower.partySlot = 0;
     sFollower.species = 0;
     sFollower.graphicsId = 0;
+    sFollower.pid = 0;
 }
 
 /**
