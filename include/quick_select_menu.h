@@ -29,5 +29,6 @@ bool8 QuickSelect_IsItemRegistered(u16 itemId);
 bool8 QuickSelect_HasEmptyItemSlot(void);
 void QuickSelect_RegisterItem(u16 itemId);
 void QuickSelect_UnregisterItem(u16 itemId);
+void Special_SetSlavelessHmSilhouette(void);
 
 #endif /* GUARD_QUICK_SELECT_MENU_H */

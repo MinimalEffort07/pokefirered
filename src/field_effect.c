@@ -60,6 +60,10 @@ extern const struct CompressedSpriteSheet gTrainerFrontPicTable[];
 
 EWRAM_DATA u32 gFieldEffectArguments[8] = {0};
 
+/* Non-zero when the slaveless HM path chose a silhouette species.
+ * Consumed and reset to 0 by FldEff_FieldMoveShowMonInit. */
+static EWRAM_DATA u16 sSlavelessHmSilhouetteSpecies = 0;
+
 static u8 sFieldEffectActiveList[FIELD_EFFECT_COUNT];
 
 static void FieldEffectActiveListAdd(u8 fldeff);
@@ -2607,14 +2611,34 @@ u32 FldEff_FieldMoveShowMon(void)
     return 0;
 }
 
+void SetSlavelessHmSilhouetteSpecies(u16 species)
+{
+    sSlavelessHmSilhouetteSpecies = species;
+}
+
 u32 FldEff_FieldMoveShowMonInit(void)
 {
-    u32 r6 = gFieldEffectArguments[0] & 0x80000000;
-    u8 partyIdx = gFieldEffectArguments[0];
-    gFieldEffectArguments[0] = GetMonData(&gPlayerParty[partyIdx], MON_DATA_SPECIES);
-    gFieldEffectArguments[1] = GetMonData(&gPlayerParty[partyIdx], MON_DATA_OT_ID);
-    gFieldEffectArguments[2] = GetMonData(&gPlayerParty[partyIdx], MON_DATA_PERSONALITY);
-    gFieldEffectArguments[0] |= r6;
+    u32 r6 = gFieldEffectArguments[0] & 0x80000000; /* bit 31: playCry */
+
+    if (sSlavelessHmSilhouetteSpecies != 0)
+    {
+        /* Slaveless path: use a random species as an all-black silhouette.
+         * Bit 30 signals InitFieldMoveMonSprite to apply the black palette.
+         * otId=0 and personality=0 give default form/gender (irrelevant for
+         * a silhouette). */
+        gFieldEffectArguments[0] = (u32)sSlavelessHmSilhouetteSpecies | 0x40000000 | r6;
+        gFieldEffectArguments[1] = 0;
+        gFieldEffectArguments[2] = 0;
+        sSlavelessHmSilhouetteSpecies = 0;
+    }
+    else
+    {
+        u8 partyIdx = gFieldEffectArguments[0];
+        gFieldEffectArguments[0] = GetMonData(&gPlayerParty[partyIdx], MON_DATA_SPECIES);
+        gFieldEffectArguments[1] = GetMonData(&gPlayerParty[partyIdx], MON_DATA_OT_ID);
+        gFieldEffectArguments[2] = GetMonData(&gPlayerParty[partyIdx], MON_DATA_PERSONALITY);
+        gFieldEffectArguments[0] |= r6;
+    }
     FieldEffectStart(FLDEFF_FIELD_MOVE_SHOW_MON);
     FieldEffectActiveListRemove(FLDEFF_FIELD_MOVE_SHOW_MON_INIT);
     return 0;
@@ -2935,16 +2959,20 @@ static bool8 SlideIndoorBannerOffscreen(struct Task *task)
 static u8 InitFieldMoveMonSprite(u32 species, u32 otId, u32 personality)
 {
     bool16 playCry;
+    bool8 isSilhouette;
     u8 monSprite;
     struct Sprite *sprite;
     playCry = (species & 0x80000000) >> 16;
-    species &= 0x7fffffff;
+    isSilhouette = (species >> 30) & 1;
+    species &= 0x3fffffff;
     monSprite = CreateMonSprite_FieldMove(species, otId, personality, 0x140, 0x50, 0);
     sprite = &gSprites[monSprite];
     sprite->callback = SpriteCallbackDummy;
     sprite->oam.priority = 0;
     sprite->data[0] = species;
     sprite->data[6] = playCry;
+    if (isSilhouette)
+        FillPalette(RGB_BLACK, OBJ_PLTT_ID(sprite->oam.paletteNum), PLTT_SIZE_4BPP);
     return monSprite;
 }
 

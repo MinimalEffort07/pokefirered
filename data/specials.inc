@@ -453,4 +453,5 @@ gSpecials::
 	def_special LoopWingFlapSound
 	def_special CreateEnemyEventMon
 	def_special Special_StartMultiplayer
+	def_special Special_SetSlavelessHmSilhouette
 gSpecialsEnd::
