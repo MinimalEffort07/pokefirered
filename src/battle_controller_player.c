@@ -141,7 +141,7 @@ static void PlayerDoMoveAnimation(void);
 static void Task_StartSendOutAnim(u8 taskId);
 static void PreviewDeterminativeMoveTargets(void);
 static u16 GetMoveEffectivenessColor(u16 move, u8 defType1, u8 defType2, u8 defAbility);
-static void MoveSelectionSetEffectivenessColors(void);
+static void MoveSelectionSetEffectivenessColors(u8 defender);
 static void SwitchIn_HandleSoundAndEnd(void);
 static void Task_GiveExpWithExpBar(u8 taskId);
 static void Task_CreateLevelUpVerticalStripes(u8 taskId);
@@ -432,6 +432,8 @@ static void HandleInputChooseTarget(void)
         }
         while (i == 0);
         gSprites[gBattlerSpriteIds[gMultiUsePlayerCursor]].callback = SpriteCB_ShowAsMoveTarget;
+        if (GET_BATTLER_SIDE(gMultiUsePlayerCursor) == B_SIDE_OPPONENT)
+            MoveSelectionSetEffectivenessColors(gMultiUsePlayerCursor);
     }
     else if (JOY_NEW(DPAD_RIGHT | DPAD_DOWN))
     {
@@ -472,6 +474,8 @@ static void HandleInputChooseTarget(void)
         }
         while (i == 0);
         gSprites[gBattlerSpriteIds[gMultiUsePlayerCursor]].callback = SpriteCB_ShowAsMoveTarget;
+        if (GET_BATTLER_SIDE(gMultiUsePlayerCursor) == B_SIDE_OPPONENT)
+            MoveSelectionSetEffectivenessColors(gMultiUsePlayerCursor);
     }
 }
 
@@ -699,7 +703,14 @@ static void HandleMoveSwitching(void)
                 gDisableStructs[gActiveBattler].mimickedMoves &= (~gBitTable[gMoveSelectionCursor[gActiveBattler]]);
                 gDisableStructs[gActiveBattler].mimickedMoves |= gBitTable[gMultiUsePlayerCursor];
             }
-            MoveSelectionSetEffectivenessColors();
+            {
+                u8 dfdr;
+                if (gAbsentBattlerFlags & gBitTable[GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT)])
+                    dfdr = GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT);
+                else
+                    dfdr = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
+                MoveSelectionSetEffectivenessColors(dfdr);
+            }
             MoveSelectionDisplayMoveNames();
             for (i = 0; i < MAX_MON_MOVES; ++i)
                 perMovePPBonuses[i] = (gBattleMons[gActiveBattler].ppBonuses & (3 << (i * 2))) >> (i * 2);
@@ -1508,14 +1519,12 @@ static u16 GetMoveEffectivenessColor(u16 move, u8 defType1, u8 defType2, u8 defA
  * reserved by the animation system (BG_ANIM_PAL_1/2 in battle_anim_mons.c)
  * and must not be touched here.
  */
-static void MoveSelectionSetEffectivenessColors(void)
+static void MoveSelectionSetEffectivenessColors(u8 defender)
 {
     s32 i;
     struct ChooseMoveStruct *moveInfo = (struct ChooseMoveStruct *)(&gBattleBufferA[gActiveBattler][4]);
-    u8 defender;
     u8 defType1, defType2, defAbility;
 
-    defender = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
     defType1 = gBattleMons[defender].type1;
     defType2 = gBattleMons[defender].type2;
     defAbility = gBattleMons[defender].ability;
@@ -2609,7 +2618,14 @@ static void PlayerHandleChooseMove(void)
 
 void InitMoveSelectionsVarsAndStrings(void)
 {
-    MoveSelectionSetEffectivenessColors();
+    {
+        u8 dfdr;
+        if (gAbsentBattlerFlags & gBitTable[GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT)])
+            dfdr = GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT);
+        else
+            dfdr = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
+        MoveSelectionSetEffectivenessColors(dfdr);
+    }
     MoveSelectionDisplayMoveNames();
     gMultiUsePlayerCursor = 0xFF;
     MoveSelectionCreateCursorAt(gMoveSelectionCursor[gActiveBattler], 0);
