@@ -59,6 +59,17 @@
 #include "constants/event_objects.h"
 #include "constants/field_weather.h"
 
+/* Set by TryStartWarpEventScript when entering via MB_CAVE_DOOR (NonAnimDoor
+ * source tile, e.g. a cave entrance on a route). Task_ExitNonDoor reads this
+ * via task->data[1] and queues a step-forward so the player walks into the
+ * cave rather than stopping at the warp landing tile. */
+static bool8 sCaveEntryWarpExit;
+
+void SetCaveEntryWarpExitFlag(void)
+{
+    sCaveEntryWarpExit = TRUE;
+}
+
 static void ExitWarpFadeInScreen(u8 playerNotMoving);
 static void Task_ExitDoor(u8 taskId);
 static void Task_ExitNonAnimDoor(u8 taskId);
@@ -504,7 +515,16 @@ static void SetUpWarpExitTask(bool8 playerNotMoving)
             func = Task_ExitNonDoor;     /* Simple appear-and-fade */
     }
     gExitStairsMovementDisabled = FALSE;
-    CreateTask(func, 10);
+    {
+        /* Consume the cave-entry flag immediately so it can't bleed into
+         * subsequent warps if something goes wrong before the task runs. */
+        bool8 shouldStep = sCaveEntryWarpExit;
+        u8 taskId;
+        sCaveEntryWarpExit = FALSE;
+        taskId = CreateTask(func, 10);
+        if (shouldStep)
+            gTasks[taskId].data[1] = 1;
+    }
 }
 
 /**
@@ -765,27 +785,61 @@ static void Task_ExitNonAnimDoor(u8 taskId)
 /**
  * FUNCTION: Task_ExitNonDoor
  *
- * PURPOSE: Simplest warp exit — just freeze, wait for fade, then unfreeze.
- * Used for cave entrances, ladders, and other non-door warps.
+ * PURPOSE: Warp exit for boundary warps (route transitions) and directional-stair
+ * warps when stair movement is disabled. Waits for the fade-in to finish, then
+ * unfreezes object events and unlocks player controls.
+ *
+ * When data[1] is set (cave-entry warp from a NonAnimDoor source tile), adds two
+ * extra states that walk the player one tile forward in their facing direction.
+ * This ensures the follower spawns behind the player rather than in the path
+ * the player needs to walk.
+ *
+ * State 0: Freeze NPCs and lock player input.
+ * State 1: Wait for fade to finish; start walk if data[1] set, else finish.
+ * State 2 (cave only): Wait for walk to complete.
+ * State 3 (cave only): Unfreeze and unlock.
  *
  * @param taskId — task identifier
  */
 static void Task_ExitNonDoor(u8 taskId)
 {
-    switch (gTasks[taskId].data[0])
+    struct Task *task = &gTasks[taskId];
+    switch (task->data[0])
     {
     case 0:
         FreezeObjectEvents();
         LockPlayerFieldControls();
-        gTasks[taskId].data[0]++;
+        task->data[0]++;
         break;
     case 1:
         if (FieldFadeTransitionBackgroundEffectIsFinished())
         {
-            UnfreezeObjectEvents();
-            UnlockPlayerFieldControls();
-            DestroyTask(taskId);
+            if (task->data[1])
+            {
+                /* Cave entry: step player one tile in their facing direction.
+                 * ObjectEventSetHeldMovement unfreezes the player OE so the walk
+                 * proceeds while all other OEs remain frozen. */
+                ObjectEventSetHeldMovement(
+                    &gObjectEvents[GetObjectEventIdByLocalIdAndMap(LOCALID_PLAYER, 0, 0)],
+                    GetWalkNormalMovementAction(GetPlayerFacingDirection()));
+                task->data[0] = 2;
+            }
+            else
+            {
+                UnfreezeObjectEvents();
+                UnlockPlayerFieldControls();
+                DestroyTask(taskId);
+            }
         }
+        break;
+    case 2:
+        if (walkrun_is_standing_still())
+            task->data[0] = 3;
+        break;
+    case 3:
+        UnfreezeObjectEvents();
+        UnlockPlayerFieldControls();
+        DestroyTask(taskId);
         break;
     }
 }
