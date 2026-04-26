@@ -884,7 +884,20 @@ static bool8 TryStartWarpEventScript(struct MapPosition *position, u16 metatileB
 
     if (warpEventId != -1 && IsWarpMetatileBehavior(metatileBehavior) == TRUE)
     {
-        StoreInitialPlayerAvatarState();
+        if (MetatileBehavior_IsNonAnimDoor(metatileBehavior) == TRUE)
+        {
+            /* Cave entrance (MB_CAVE_DOOR): preserve the player's travel direction
+             * so InitPlayerAvatar faces them into the cave (not back toward the
+             * entrance). hasDirectionSet = TRUE lets GetAdjustedInitialDirection
+             * return this direction instead of the default DIR_SOUTH.
+             * SetCaveEntryWarpExitFlag tells Task_ExitNonDoor to step the player
+             * one tile forward after the fade-in, ensuring the follower spawns
+             * at the entrance tile rather than blocking the player's path. */
+            SetInitialPlayerAvatarStateWithDirection(GetPlayerFacingDirection());
+            SetCaveEntryWarpExitFlag();
+        }
+        else
+            StoreInitialPlayerAvatarState();
         SetupWarp(&gMapHeader, warpEventId, position);
         if (MetatileBehavior_IsEscalator(metatileBehavior) == TRUE)
         {
