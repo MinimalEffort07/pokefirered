@@ -65,6 +65,8 @@
 #include "overworld.h"
 #include "quest_log.h"
 #include "poke_radar.h"
+#include "pokemon_follower.h"
+#include "multiplayer.h"
 
 /*
  * SAVEBLOCK_MOVE_RANGE: The size of the random offset range for ASLR.
@@ -452,6 +454,8 @@ void SaveSerializedGame(void)
 {
     SavePlayerParty();
     SaveObjectEvents();
+    ClearFollowerFromSaveBlock();
+    ClearRemotePlayersFromSaveBlock();
 }
 
 /**
