@@ -396,7 +396,7 @@ ADDR.gPlayerPartyCount               = 0x02024029
 --
 -- NOTE: Verify FOLLOWER_BASE from pokefirered.map after any rebuild that
 -- adds new EWRAM symbols, as the EWRAM layout can shift.
-ADDR.FOLLOWER_BASE             = 0x0203f7ac
+ADDR.FOLLOWER_BASE             = 0x0203f7a8
 ADDR.FOLLOWER_OBJ_EVENT_ID_OFF = 0x07
 
 -- ObjectEvent previousCoords offsets (layout mirrors currentCoords at 0x10/0x12).
