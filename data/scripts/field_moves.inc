@@ -7,10 +7,11 @@ EventScript_CutTree::
 	checkitem ITEM_HM01, 1
 	goto_if_eq VAR_RESULT, FALSE, EventScript_CantCutTree
 	buffermovename STR_VAR_2, MOVE_CUT
-	msgbox Text_SlavelessHmPrompt, MSGBOX_YESNO
+	msgbox Text_SlavelessCutPrompt, MSGBOX_YESNO
 	goto_if_eq VAR_RESULT, NO, EventScript_DontCutTree
 	setvar VAR_0x8004, FIELD_MOVE_CUT
 	special Special_SetSlavelessHmSilhouette
+	msgbox Text_SlavelessHmUsedMove
 	setfieldeffectargument 0, 0
 	closemessage
 	dofieldeffect FLDEFF_USE_CUT_ON_TREE
@@ -71,9 +72,17 @@ Text_TreeCanBeCutDown::
 	.string "This tree looks like it can be CUT\n"
 	.string "down!$"
 
-Text_SlavelessHmPrompt::
-	.string "A mysterious POKéMON appeared!\n"
-	.string "Would you like to use {STR_VAR_2}?$"
+Text_SlavelessCutPrompt::
+	.string "This tree looks like it can be CUT\n"
+	.string "down. Use {STR_VAR_2}?$"
+
+Text_SlavelessStrengthPrompt::
+	.string "It's a big boulder. Use\n"
+	.string "{STR_VAR_2} to move it?$"
+
+Text_SlavelessHmUsedMove::
+	.string "A mysterious POKéMON appeared\n"
+	.string "and used {STR_VAR_2}!$"
 
 EventScript_RockSmash::
 	goto_if_questlog EventScript_ReleaseEnd
@@ -84,10 +93,11 @@ EventScript_RockSmash::
 	checkitem ITEM_HM06, 1
 	goto_if_eq VAR_RESULT, FALSE, EventScript_CantSmashRock
 	buffermovename STR_VAR_2, MOVE_ROCK_SMASH
-	msgbox Text_SlavelessHmPrompt, MSGBOX_YESNO
+	msgbox Text_UseRockSmash, MSGBOX_YESNO
 	goto_if_eq VAR_RESULT, NO, EventScript_DontSmashRock
 	setvar VAR_0x8004, FIELD_MOVE_ROCK_SMASH
 	special Special_SetSlavelessHmSilhouette
+	msgbox Text_SlavelessHmUsedMove
 	setfieldeffectargument 0, 0
 	closemessage
 	dofieldeffect FLDEFF_USE_ROCK_SMASH
@@ -160,10 +170,11 @@ EventScript_StrengthBoulder::
 	checkitem ITEM_HM04, 1
 	goto_if_eq VAR_RESULT, FALSE, EventScript_CantMoveBoulder
 	buffermovename STR_VAR_2, MOVE_STRENGTH
-	msgbox Text_SlavelessHmPrompt, MSGBOX_YESNO
+	msgbox Text_SlavelessStrengthPrompt, MSGBOX_YESNO
 	goto_if_eq VAR_RESULT, NO, EventScript_DontUseStrength
 	setvar VAR_0x8004, FIELD_MOVE_STRENGTH
 	special Special_SetSlavelessHmSilhouette
+	msgbox Text_SlavelessHmUsedMove
 	setfieldeffectargument 0, 0
 	closemessage
 	dofieldeffect FLDEFF_USE_STRENGTH
@@ -238,10 +249,11 @@ EventScript_Waterfall::
 	checkitem ITEM_HM07, 1
 	goto_if_eq VAR_RESULT, FALSE, EventScript_WaterCrashingDown
 	buffermovename STR_VAR_2, MOVE_WATERFALL
-	msgbox Text_SlavelessHmPrompt, MSGBOX_YESNO
+	msgbox Text_UseWaterfall, MSGBOX_YESNO
 	goto_if_eq VAR_RESULT, NO, EventScript_EndWaterfall
 	setvar VAR_0x8004, FIELD_MOVE_WATERFALL
 	special Special_SetSlavelessHmSilhouette
+	msgbox Text_SlavelessHmUsedMove
 	setfieldeffectargument 0, 0
 	closemessage
 	dofieldeffect FLDEFF_USE_WATERFALL

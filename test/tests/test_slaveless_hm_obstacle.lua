@@ -471,9 +471,10 @@ fw.run(function()
     end
 
     -- Interact with tree: press DOWN to face/bump it (player is NORTH of
-    -- tree at tile 11,23; tree is at tile 11,24). Two A presses cover both
-    -- trigger modes: bump-auto-triggers (A1=YES, A2=no-op) and
-    -- A-press-triggers (A1=open YESNO, A2=YES).
+    -- tree at tile 11,23; tree is at tile 11,24). Three A presses:
+    --   A1: open YESNO obstacle description prompt
+    --   A2: confirm YES → "mysterious POKéMON" message shows
+    --   A3: dismiss message → silhouette animation plays
     fw.hold("DOWN", 8)
     do
         local ax, ay = read_pos()
@@ -504,16 +505,23 @@ fw.run(function()
         fw.log(string.format("  badge_byte=0x%02X badge_set=%s capacity=%d oe_flags=0x%08X",
             badge_byte, tostring((badge_byte & badge_bit) ~= 0), bp3_capacity, oe_flags))
     end
-    fw.press("A")         -- A1: open YESNO dialog (tree interaction triggered by A-press)
+    fw.press("A")         -- A1: open YESNO obstacle description
     fw.wait_frames(60)    -- wait for dialog text to start rendering
     fw.screenshot("/tmp/mgba-slaveless-b-post-a1.png")
     -- FireRed ignores A while text is scrolling (~4 frames/char × 57 chars ≈ 260 frames).
     -- Wait generously past that, then press A once the YES/NO cursor is live.
-    fw.wait_frames(300)   -- wait for text scroll to complete + YES/NO cursor to appear
+    fw.wait_frames(300)   -- wait for text scroll + YES/NO cursor
     fw.screenshot("/tmp/mgba-slaveless-b-yesno.png")
-    fw.press("A")         -- A2: confirm YES
-    fw.wait_frames(800)   -- wait for silhouette animation + cut animation + tree removal
+    fw.press("A")         -- A2: confirm YES → "mysterious POKéMON appeared" message shows
+    fw.wait_frames(250)   -- wait for appeared text to scroll
+    fw.screenshot("/tmp/mgba-slaveless-b-appeared.png")
+    fw.slow_down("slaveless HM silhouette animation")
+    fw.press("A")         -- A3: dismiss appeared message → animation starts
+    fw.wait_frames(65)    -- ~54f for silhouette to slide to final position
+    fw.screenshot("/tmp/mgba-slaveless-b-silhouette.png")
+    fw.wait_frames(600)   -- full animation + tree removal
     fw.screenshot("/tmp/mgba-slaveless-b-after-anim.png")
+    fw.speed_up()
 
     sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
     local tree_after_b = read_flag(sb1, TREE_FLAG)

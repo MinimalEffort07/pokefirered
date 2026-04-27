@@ -54,11 +54,15 @@ fw.run(function()
     fw.hold("DOWN", 8)
     fw.wait_frames(80)
 
-    -- Press A to interact with the tree (triggers slaveless HM script).
+    -- Press A to interact with the tree (triggers obstacle YESNO).
     fw.press("A")
     fw.wait_frames(360)   -- wait for text to finish scrolling
 
-    -- Confirm YES.
+    -- Confirm YES → "mysterious POKéMON appeared" message shows.
+    fw.press("A")
+    fw.wait_frames(300)   -- wait for appeared text to scroll
+
+    -- Dismiss appeared message → silhouette animation plays.
     fw.press("A")
     fw.wait_frames(900)   -- wait for silhouette + cut animation + tree removal
 
