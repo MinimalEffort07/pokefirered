@@ -67,6 +67,14 @@
 #define DEVIATE_CHANCE  4
 
 /*
+ * STUCK_FRAMES: how many consecutive blocked catch-up moves before falling
+ * back to teleport. A move is "blocked" if the follower's tile coordinate
+ * does not change after a held movement completes (the ObjectEvent faced the
+ * target direction but geometry prevented the step).
+ */
+#define STUCK_FRAMES    5
+
+/*
  * All follower state lives in EWRAM. Persists across map warps (EWRAM is
  * not cleared between maps) but resets on game load (EWRAM is zeroed at
  * boot). This means the follower is session-only: it does not survive
@@ -76,9 +84,12 @@ static EWRAM_DATA struct {
     bool8 active;           /* Follower is logically enabled */
     bool8 spriteSpawned;    /* Sprite currently exists on screen */
     u8 partySlot;           /* Index into gPlayerParty[] */
+    u8 stuckFrames;         /* Consecutive catch-up moves with no position change */
     u16 species;            /* Cached species (for change detection) */
     u8 graphicsId;          /* OBJ_EVENT_GFX_* constant for the sprite */
     u8 objEventId;          /* Index into gObjectEvents[] */
+    s16 prevX;              /* Follower X before last catch-up move (stuck detection) */
+    s16 prevY;              /* Follower Y before last catch-up move (stuck detection) */
 } sFollower = {0};
 
 /*
@@ -515,7 +526,7 @@ void UpdateFollowerPokemon(void)
 {
     struct ObjectEvent *playerObj;
     struct ObjectEvent *followerObj;
-    s16 dx, dy, dist;
+    s16 dx, dy, dist, absDx, absDy;
     u8 moveDir;
 
     if (!sFollower.active || !sFollower.spriteSpawned)
@@ -540,12 +551,46 @@ void UpdateFollowerPokemon(void)
     dy = playerObj->currentCoords.y - followerObj->currentCoords.y;
     dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
 
-    /* Too far away — teleport to catch up */
+    /* Too far away — catch-up mode: move directly toward player without randomness.
+     * No IDLE_CHANCE skip, no DEVIATE_CHANCE deviation. Uses the run animation
+     * (GetWalkFastMovementAction) so the follower visually hurries.
+     *
+     * Stuck detection: if the follower's position did not change since the last
+     * catch-up move (geometry blocked it), increment stuckFrames. After
+     * STUCK_FRAMES consecutive blocked moves, fall back to teleport so the
+     * follower cannot get permanently trapped. */
     if (dist > TELEPORT_DIST)
     {
-        TeleportFollowerNearPlayer(followerObj, playerObj);
+        if (followerObj->currentCoords.x == sFollower.prevX &&
+            followerObj->currentCoords.y == sFollower.prevY)
+            sFollower.stuckFrames++;
+        else
+            sFollower.stuckFrames = 0;
+
+        if (sFollower.stuckFrames >= STUCK_FRAMES)
+        {
+            TeleportFollowerNearPlayer(followerObj, playerObj);
+            sFollower.stuckFrames = 0;
+            sFollower.prevX = followerObj->currentCoords.x;
+            sFollower.prevY = followerObj->currentCoords.y;
+            return;
+        }
+
+        absDx = dx < 0 ? -dx : dx;
+        absDy = dy < 0 ? -dy : dy;
+        if (absDx > absDy || (absDx == absDy && (Random() & 1)))
+            moveDir = (dx > 0) ? DIR_EAST : DIR_WEST;
+        else
+            moveDir = (dy > 0) ? DIR_SOUTH : DIR_NORTH;
+
+        sFollower.prevX = followerObj->currentCoords.x;
+        sFollower.prevY = followerObj->currentCoords.y;
+        ObjectEventSetHeldMovement(followerObj, GetWalkFastMovementAction(moveDir));
         return;
     }
+
+    /* Back within TELEPORT_DIST — reset catch-up state */
+    sFollower.stuckFrames = 0;
 
     /* Close enough — just idle near the player */
     if (dist <= FOLLOW_DIST)
