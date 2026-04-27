@@ -7,10 +7,11 @@ EventScript_UseSurf::
 	goto_if_eq VAR_RESULT, FALSE, EventScript_UseSurfEnd
 	buffermovename STR_VAR_2, MOVE_SURF
 	lockall
-	msgbox Text_SlavelessHmPrompt, MSGBOX_YESNO
+	msgbox Text_WantToSurf, MSGBOX_YESNO
 	goto_if_eq VAR_RESULT, NO, EventScript_UseSurfRelease
 	setvar VAR_0x8004, FIELD_MOVE_SURF
 	special Special_SetSlavelessHmSilhouette
+	msgbox Text_SlavelessHmUsedMove
 	setfieldeffectargument 0, 0
 	closemessage
 	dofieldeffect FLDEFF_USE_SURF
