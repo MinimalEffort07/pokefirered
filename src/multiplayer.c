@@ -1177,3 +1177,40 @@ void DespawnRemotePlayerSprites(void)
     for (i = 0; i < MP_MAX_REMOTE; i++)
         DespawnRemoteSprite(i);
 }
+
+/**
+ * FUNCTION: ClearRemotePlayersFromSaveBlock
+ *
+ * PURPOSE: Erase remote player ObjectEvent entries from the save block before saving.
+ *
+ * WHY THIS IS NEEDED:
+ * When the game saves, SaveObjectEvents() persists the gObjectEvents[] array
+ * (including active remote player slots) into gSaveBlock1Ptr->objectEvents[].
+ * EWRAM is zeroed on power-on/reset, so sRemotePlayers[] is cleared, but the
+ * stale ObjectEvent entries remain in the save block. On next load, the game
+ * restores those stale entries and creates frozen, unresponsive sprites that
+ * belong to no active remote player. This function clears those entries before
+ * the save is written to prevent the stale data from reaching Flash memory.
+ *
+ * HOW IT WORKS:
+ * Iterates over each remote player slot. If a sprite is currently spawned,
+ * the corresponding save-block ObjectEvent entry at index objEventId is zeroed
+ * out with memset. OBJECT_EVENTS_COUNT (16) guards against an out-of-bounds
+ * index, which would corrupt adjacent save data.
+ *
+ * WHEN TO CALL:
+ * Call immediately after SaveObjectEvents() runs so that the cleared state,
+ * not the remote player state, is what gets written to Flash.
+ */
+void ClearRemotePlayersFromSaveBlock(void)
+{
+    u8 i;
+    u8 id;
+    for (i = 0; i < MP_MAX_REMOTE; i++)
+    {
+        id = sRemotePlayers[i].objEventId;
+        if (sRemotePlayers[i].spriteSpawned && id < OBJECT_EVENTS_COUNT)
+            memset(&gSaveBlock1Ptr->objectEvents[id], 0,
+                   sizeof(gSaveBlock1Ptr->objectEvents[0]));
+    }
+}
