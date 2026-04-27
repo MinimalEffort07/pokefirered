@@ -102,6 +102,7 @@ fw.run(function()
         fw.save_state(STATE_PATH)
     end
     fw.wait_frames(60)
+    fw.slow_down("WALK/SWITCH/RETURN party menu demonstration")
 
     -- ------------------------------------------------------------------ --
     -- Phase 1: WALK Pikachu from slot 0
