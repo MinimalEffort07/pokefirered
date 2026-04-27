@@ -454,6 +454,9 @@ void SaveSerializedGame(void)
 {
     SavePlayerParty();
     SaveObjectEvents();
+    /* Strip session-only ObjectEvent slots (follower, remote players) so they
+     * are not written to Flash -- EWRAM is zeroed on boot, so restoring them
+     * would produce frozen ghost sprites with no driver. */
     ClearFollowerFromSaveBlock();
     ClearRemotePlayersFromSaveBlock();
 }
