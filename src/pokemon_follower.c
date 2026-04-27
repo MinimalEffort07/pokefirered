@@ -209,6 +209,36 @@ void DeactivateFollower(void)
 }
 
 /**
+ * FUNCTION: ClearFollowerFromSaveBlock
+ *
+ * PURPOSE: Zero out the follower's ObjectEvent entry in SaveBlock1 so
+ *          it is not persisted across save/load.
+ *
+ * WHY THIS IS NEEDED:
+ * gSaveBlock1Ptr->objectEvents[] is the on-disk copy of the overworld
+ * ObjectEvent array. When the game saves, any active ObjectEvent slot
+ * (including the follower's) is written to this array. On the next
+ * load, EWRAM is zeroed (wiping the in-memory follower driver state),
+ * but SpawnObjectEventsOnReturnToField() reads from the save block and
+ * recreates every non-zero entry as a sprite -- producing a frozen
+ * follower ghost with no driver.
+ *
+ * This function must be called just before DoSaveData() writes to flash
+ * so the follower slot is clean in the snapshot that gets persisted.
+ *
+ * NOTE: gObjectEvents[] (EWRAM) and gSaveBlock1Ptr->objectEvents[]
+ * (save) are parallel arrays sharing the same index space, so
+ * GetFollowerObjEventId() returns the correct index for both.
+ */
+void ClearFollowerFromSaveBlock(void)
+{
+    u8 id = GetFollowerObjEventId();
+    if (id < OBJECT_EVENTS_COUNT)
+        memset(&gSaveBlock1Ptr->objectEvents[id], 0,
+               sizeof(gSaveBlock1Ptr->objectEvents[0]));
+}
+
+/**
  * Get the tile offset (dx, dy) for a given direction.
  */
 static void GetDirectionOffset(u8 direction, s16 *dx, s16 *dy)
