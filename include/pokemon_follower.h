@@ -28,5 +28,6 @@ u8 GetFollowerPartySlot(void);
 bool8 CanSpeciesFollowPlayer(u16 species);
 void ActivateFollower(u8 partySlot);
 void DeactivateFollower(void);
+void ClearFollowerFromSaveBlock(void);
 
 #endif /* GUARD_POKEMON_FOLLOWER_H */
