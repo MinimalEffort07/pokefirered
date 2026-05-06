@@ -45,7 +45,7 @@ warp.S_WARP_DESTINATION = 0x02031de4
 -- CB2_LOAD_MAP is a ROM code address that SHIFTS with every rebuild; re-extract
 -- it from pokefirered.map after any change that adds/removes code.
 warp.G_MAIN_CB2   = 0x03003104
-warp.CB2_LOAD_MAP = 0x080569d4
+warp.CB2_LOAD_MAP = 0x08056ae4
 
 -- Read the currently-loaded map from SaveBlock1->location as a packed
 -- (mapGroup*256 + mapNum) value, for easy equality checks.
