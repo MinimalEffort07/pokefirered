@@ -431,4 +431,32 @@ ADDR.BATTLER_OPPONENT_RIGHT = 3  -- B_POSITION_OPPONENT_RIGHT
 
 ADDR.gPlayerPartyCount               = 0x02024029
 
+-------------------------------------------------------------------------------
+-- BATTLE STATE (double-battle type-effectiveness color feature)
+-- All addresses extracted from pokefirered.map (AGBCC build).
+-------------------------------------------------------------------------------
+
+ADDR.gBattleMons                     = 0x02023be4
+ADDR.BATTLEMON_SIZE                  = 0x58
+ADDR.BP_TYPE1                        = 0x21
+ADDR.BP_TYPE2                        = 0x22
+ADDR.gAbsentBattlerFlags             = 0x02023d70
+ADDR.gMultiUsePlayerCursor           = 0x03005004
+ADDR.gPlttBufferFaded                = 0x02037688
+ADDR.move_eff_color_addr = function(i)
+    local pal = 10 + i
+    return ADDR.gPlttBufferFaded + (pal * 16 + 13) * 2
+end
+ADDR.EFF_COLOR_SUPER     = 0x0280
+ADDR.EFF_COLOR_NOT_VERY  = 0x035A
+ADDR.EFF_COLOR_NEUTRAL   = 0x2529
+ADDR.EFF_COLOR_IMMUNE    = 0x0018
+ADDR.TYPE_FIRE             = 10
+ADDR.TYPE_WATER            = 11
+ADDR.TYPE_GRASS            = 12
+ADDR.BATTLER_PLAYER_LEFT   = 0
+ADDR.BATTLER_OPPONENT_LEFT = 1
+ADDR.BATTLER_PLAYER_RIGHT  = 2
+ADDR.BATTLER_OPPONENT_RIGHT = 3
+
 return ADDR
