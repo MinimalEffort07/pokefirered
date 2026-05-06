@@ -369,6 +369,58 @@ ADDR.ITEM_ELIXIR                     = 36
 ADDR.ITEM_MAX_ELIXIR                 = 37
 
 -------------------------------------------------------------------------------
+-- BATTLE DISPLAY STATE — Type Effectiveness Colors (issue #7)
+-------------------------------------------------------------------------------
+-- gPlttBufferFaded: the palette buffer the GBA reads each frame.
+-- BG palette n, entry e is at: gPlttBufferFaded + (n * 16 + e) * 2
+-- Move name windows use BG palettes 10-13 (one per move slot).
+-- Entry 13 in each palette is the text foreground color, overwritten by
+-- MoveSelectionSetEffectivenessColors() to reflect type matchup.
+ADDR.gPlttBufferFaded          = 0x02037688
+
+-- Read the text-foreground color for move slot i (0 = top-left move).
+-- BG_PLTT_ID(pal) = pal * 16; entry 13 is text foreground; 2 bytes each.
+ADDR.move_eff_color_addr = function(i)
+    local pal = 10 + i
+    return ADDR.gPlttBufferFaded + (pal * 16 + 13) * 2
+end
+
+-- Expected text-foreground RGB15 values from GetMoveEffectivenessColor:
+ADDR.EFF_COLOR_NEUTRAL   = 0x2529  -- RGB(9,9,9)   neutral gray    (1x)
+ADDR.EFF_COLOR_SUPER     = 0x0280  -- RGB(0,20,0)  dark green      (2x / 4x)
+ADDR.EFF_COLOR_NOT_VERY  = 0x035A  -- RGB(26,26,0) amber           (0.5x / 0.25x)
+ADDR.EFF_COLOR_IMMUNE    = 0x0018  -- RGB(24,0,0)  dark red        (0x)
+
+-- gAbsentBattlerFlags: u8 bitmask — bit N set means battler N has fainted
+-- with no replacement (absent from battle).
+-- Bit 1 (value 0x02) = battler 1 (B_POSITION_OPPONENT_LEFT) is absent.
+ADDR.gAbsentBattlerFlags       = 0x02023d70
+
+-- gBattleMons: array of 4 BattlePokemon structs, one per battler slot.
+-- B_POSITION_OPPONENT_LEFT = battler 1, B_POSITION_OPPONENT_RIGHT = battler 3.
+-- sizeof(struct BattlePokemon) = 0x58 (88 bytes).
+ADDR.gBattleMons               = 0x02023be4
+ADDR.BATTLEMON_SIZE            = 0x58
+ADDR.BP_TYPE1                  = 0x21   -- offsetof(BattlePokemon, type1)
+ADDR.BP_TYPE2                  = 0x22   -- offsetof(BattlePokemon, type2)
+
+-- gMultiUsePlayerCursor: u8 — battler ID of the currently highlighted target
+-- in HandleInputChooseTarget. Set to 0xFF by InitMoveSelectionsVarsAndStrings
+-- when the move selection screen first opens.
+ADDR.gMultiUsePlayerCursor     = 0x03005004
+
+-- Type IDs (from include/constants/pokemon.h):
+ADDR.TYPE_FIRE   = 10
+ADDR.TYPE_WATER  = 11
+ADDR.TYPE_GRASS  = 12
+
+-- Standard battler IDs in a double battle (AGBCC/vanilla layout):
+ADDR.BATTLER_PLAYER_LEFT   = 0
+ADDR.BATTLER_OPPONENT_LEFT = 1   -- B_POSITION_OPPONENT_LEFT
+ADDR.BATTLER_PLAYER_RIGHT  = 2
+ADDR.BATTLER_OPPONENT_RIGHT = 3  -- B_POSITION_OPPONENT_RIGHT
+
+-------------------------------------------------------------------------------
 -- PARTY STATE
 -------------------------------------------------------------------------------
 -- gPlayerPartyCount: number of Pokemon currently in the player's party (0-6).
@@ -378,5 +430,33 @@ ADDR.ITEM_MAX_ELIXIR                 = 37
 -- pokefirered_modern.gba).
 
 ADDR.gPlayerPartyCount               = 0x02024029
+
+-------------------------------------------------------------------------------
+-- BATTLE STATE (double-battle type-effectiveness color feature)
+-- All addresses extracted from pokefirered.map (AGBCC build).
+-------------------------------------------------------------------------------
+
+ADDR.gBattleMons                     = 0x02023be4
+ADDR.BATTLEMON_SIZE                  = 0x58
+ADDR.BP_TYPE1                        = 0x21
+ADDR.BP_TYPE2                        = 0x22
+ADDR.gAbsentBattlerFlags             = 0x02023d70
+ADDR.gMultiUsePlayerCursor           = 0x03005004
+ADDR.gPlttBufferFaded                = 0x02037688
+ADDR.move_eff_color_addr = function(i)
+    local pal = 10 + i
+    return ADDR.gPlttBufferFaded + (pal * 16 + 13) * 2
+end
+ADDR.EFF_COLOR_SUPER     = 0x0280
+ADDR.EFF_COLOR_NOT_VERY  = 0x035A
+ADDR.EFF_COLOR_NEUTRAL   = 0x2529
+ADDR.EFF_COLOR_IMMUNE    = 0x0018
+ADDR.TYPE_FIRE             = 10
+ADDR.TYPE_WATER            = 11
+ADDR.TYPE_GRASS            = 12
+ADDR.BATTLER_PLAYER_LEFT   = 0
+ADDR.BATTLER_OPPONENT_LEFT = 1
+ADDR.BATTLER_PLAYER_RIGHT  = 2
+ADDR.BATTLER_OPPONENT_RIGHT = 3
 
 return ADDR
