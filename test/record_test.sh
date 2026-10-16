@@ -24,6 +24,7 @@ RECORDINGS_DIR="/tmp/mgba-recordings"
 RESULTS_FILE="/tmp/mgba-test-results.json"
 MGBA_QT_INI="$HOME/.config/mgba/qt.ini"
 TIMEOUT=300
+X_DISPLAY="${X_DISPLAY:-:1}"
 
 if [ ! -f "$ROM" ]; then
     echo "ERROR: ROM not found at $ROM"; exit 1
@@ -38,18 +39,18 @@ VIRT_W=1920
 VIRT_H=640
 
 # Restart Xvfb only if dimensions changed or it isn't running
-CURRENT_GEOM=$(DISPLAY=:1 xdpyinfo 2>/dev/null | awk '/dimensions/{print $2}')
+CURRENT_GEOM=$(DISPLAY="$X_DISPLAY" xdpyinfo 2>/dev/null | awk '/dimensions/{print $2}')
 if [ "$CURRENT_GEOM" != "${VIRT_W}x${VIRT_H}" ]; then
-    echo "Starting Xvfb :1 at ${VIRT_W}x${VIRT_H}..."
+    echo "Starting Xvfb $X_DISPLAY at ${VIRT_W}x${VIRT_H}..."
     pkill -x Xvfb 2>/dev/null || true
     pkill -x openbox 2>/dev/null || true
     sleep 1
-    Xvfb :1 -screen 0 "${VIRT_W}x${VIRT_H}x24" &
+    Xvfb "$X_DISPLAY" -screen 0 "${VIRT_W}x${VIRT_H}x24" &
     sleep 1
 fi
 
-if ! DISPLAY=:1 pgrep -x openbox > /dev/null 2>&1; then
-    DISPLAY=:1 openbox &
+if ! DISPLAY="$X_DISPLAY" pgrep -x openbox > /dev/null 2>&1; then
+    DISPLAY="$X_DISPLAY" openbox &
     sleep 1
 fi
 
@@ -122,11 +123,11 @@ with open(path, 'w') as f:
     f.write(content)
 PYEOF
 
-export DISPLAY=:1
+export DISPLAY="$X_DISPLAY"
 
 # Step 1: start recording before mGBA opens so the full boot sequence is captured.
 echo "Recording..."
-ffmpeg -f x11grab -r 30 -s "${VIRT_W}x${VIRT_H}" -i :1 \
+ffmpeg -f x11grab -r 30 -s "${VIRT_W}x${VIRT_H}" -i "$X_DISPLAY" \
     -vf "crop=1324:${VIRT_H}:0:0,scale=1280:-2" \
     -c:v libx264 -profile:v baseline -level 3.1 \
     -preset ultrafast -pix_fmt yuv420p \
@@ -135,7 +136,7 @@ ffmpeg -f x11grab -r 30 -s "${VIRT_W}x${VIRT_H}" -i :1 \
 FFMPEG_PID=$!
 
 # Step 2: launch mGBA with the private config dir.
-DISPLAY=:1 XDG_CONFIG_HOME="$RECORDING_XDG" LD_LIBRARY_PATH="$MGBA_BUILD" \
+DISPLAY="$X_DISPLAY" XDG_CONFIG_HOME="$RECORDING_XDG" LD_LIBRARY_PATH="$MGBA_BUILD" \
     "$MGBA_BUILD/qt/mgba-qt" "$ROM" --script "$TEST_SCRIPT" \
     > /tmp/mgba-gui.log 2>&1 &
 MGBA_PID=$!
@@ -149,9 +150,9 @@ echo "Positioning windows..."
 GAME_WID=""
 SCRIPT_WID=""
 for i in $(seq 1 20); do
-    ALL_WIDS=$(xdotool search --pid "$MGBA_PID" 2>/dev/null || true)
+    ALL_WIDS=$(DISPLAY="$X_DISPLAY" xdotool search --pid "$MGBA_PID" 2>/dev/null || true)
     for wid in $ALL_WIDS; do
-        NAME=$(xdotool getwindowname "$wid" 2>/dev/null || true)
+        NAME=$(DISPLAY="$X_DISPLAY" xdotool getwindowname "$wid" 2>/dev/null || true)
         if echo "$NAME" | grep -q "^mGBA"; then
             GAME_WID=$wid
         elif [ "$NAME" = "Scripting" ]; then
@@ -163,13 +164,13 @@ for i in $(seq 1 20); do
 done
 
 if [ -n "$GAME_WID" ]; then
-    xdotool windowmove "$GAME_WID" 0 0
+    DISPLAY="$X_DISPLAY" xdotool windowmove "$GAME_WID" 0 0
     echo "Game window -> (0, 0)"
 else
     echo "WARNING: game window not found"
 fi
 if [ -n "$SCRIPT_WID" ]; then
-    xdotool windowmove "$SCRIPT_WID" 480 0
+    DISPLAY="$X_DISPLAY" xdotool windowmove "$SCRIPT_WID" 480 0
     echo "Scripting window -> (480, 0)"
 else
     echo "WARNING: scripting window not found"
