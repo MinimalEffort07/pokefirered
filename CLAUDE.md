@@ -8,24 +8,60 @@ Pokemon FireRed decompilation (forked from pret/pokefirered) with custom feature
 
 ## Build Commands
 
+Targets live in `Makefile`; variable defaults live in `config.mk`. Add `-j$(nproc)` to any build.
+
 ```bash
-make firered              # Build FireRed ROM (default, uses legacy AGBCC compiler)
-make firered MODERN=1     # Build with modern GCC instead of AGBCC
-make firered COMPARE=1    # Build and verify SHA1 against original ROM
-make debug                # Build with POKEMON_DEBUG=1 gameplay debug features
-make leafgreen            # Build LeafGreen variant
-make clean                # Remove build artifacts
-make tools                # Build all tools in tools/
-make -j$(nproc) firered   # Parallel build (recommended)
+make -j$(nproc) firered   # Standard build with agbcc → pokefirered.gba (plain `make` does the same)
+make debug                # FireRed with gameplay debug features (POKEMON_DEBUG=1)
+make release              # Normal build again after `make debug` (cleans first, see below)
+make firered MODERN=1     # Modern GCC instead of agbcc → pokefirered_modern.gba
+make syms                 # Symbol table → pokefirered.sym
+make tidy                 # Delete ROMs and build/ only; keeps tools and converted assets (fast rebuild)
+make clean                # tidy + clean-tools + clean-generated + clean-assets (full rebuild)
+make tools                # Build host tools in tools/ (also runs automatically before every build)
 ```
 
-Key build flags: `MODERN=0|1`, `COMPARE=0|1`, `POKEMON_DEBUG=0|1`, `GAME_VERSION=FIRERED|LEAFGREEN`, `GAME_REVISION=0|1`. Configured in `config.mk`.
+Finer-grained cleans: `clean-tools`, `clean-generated` (headers generated from JSON data), `clean-assets` (converted graphics, audio, and map `.inc` files).
+
+**Variant targets.** Each writes `poke<name>.gba` in the repo root, with objects in `build/<name>/`:
+
+| Target | Builds |
+|---|---|
+| `firered`, `leafgreen` | v1.0 |
+| `firered_rev1`, `leafgreen_rev1` | v1.1 (`GAME_REVISION=1`) |
+| `firered_switch`, `leafgreen_switch` | Switch re-release (`GAME_REVISION=10`, uses `ld_script_rev10.ld`) |
+| `<variant>_modern` | Modern GCC; exists for v1.0 and rev1 only |
+| `compare_<variant>` | Build, then SHA1-check against `<variant>.sha1` |
+
+`make modern` and `make compare` are shorthands for FireRed v1.0 that only take effect when they are the sole goal.
+
+**Variables.** Pass them on the command line, e.g. `make firered O_LEVEL=0 DINFO=1`:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `GAME_VERSION` | `FIRERED` | `FIRERED` or `LEAFGREEN` |
+| `GAME_REVISION` | `0` | `0`, `1`, or `10` (Switch) |
+| `MODERN` | `0` | `1` = compile with `arm-none-eabi-gcc` instead of agbcc |
+| `COMPARE` | `0` | `1` = SHA1-check the ROM after building |
+| `POKEMON_DEBUG` | `0` | `1` = define `DEBUG_GAMEPLAY` in C and asm; use `make debug` instead of setting it directly |
+| `O_LEVEL` | `2` | Compiler `-O` level |
+| `DINFO` | unset | `1` = add `-g` debug info to the ELF |
+| `KEEP_TEMPS` | `0` | `1` = keep each C file's preprocessed `.i` and compiler `.s` output in `build/<name>/src/` |
+| `NODEP` | `0` | `1` = skip header dependency scanning (faster, but header edits no longer trigger rebuilds) |
+| `TOOLCHAIN` | `$DEVKITARM` | Directory whose `bin/` holds `arm-none-eabi-*`; prepended to `PATH` |
+
+**Gotchas:**
+- **Flag changes don't trigger rebuilds.** Objects depend only on their sources, so after changing `POKEMON_DEBUG`, `O_LEVEL`, or `DINFO`, run `make tidy` before rebuilding. `make debug` and `make release` handle this themselves: a `.pokemon_debug` marker file makes them run `make clean` when switching modes. Running `make firered` right after `make debug` reuses the debug objects, so switch back with `make release`. Changing `MODERN`, `GAME_VERSION`, or `GAME_REVISION` is safe because each combination gets its own `build/<name>/` directory.
+- **`COMPARE=1` fails on this fork.** The custom code means the ROM no longer matches retail's SHA1. A compare check only means something on an unmodified upstream tree.
+- **Tests only see `pokefirered.gba`.** `test/run_test.sh` and `test/record_test.sh` load whatever `make firered` or `make debug` built last. Modern, rev1, and Switch builds write to other files, so the tests never run against them.
 
 ## Toolchain Requirements
 
-- `arm-none-eabi-gcc` / `arm-none-eabi-binutils` (for MODERN=1)
-- `agbcc` (in `tools/agbcc/`, for MODERN=0 legacy builds)
-- `make`, `perl`, `libpng-dev`
+- `arm-none-eabi-binutils` (`as`, `ld`, `objcopy`): needed by every build, including agbcc builds
+- `agbcc` in `tools/agbcc/` (built from pret/agbcc; gitignored): compiler for `MODERN=0`
+- `arm-none-eabi-gcc`: compiler for `MODERN=1`
+- Host `gcc`, `make`, `perl`, `libpng-dev`: `make` compiles the host tools in `tools/` before every build, and agbcc builds run the C preprocessor through the host `cc -E`
+- If the ARM toolchain is not on `PATH`, pass `TOOLCHAIN=/path/to/toolchain` or set `DEVKITARM`
 - Build tested on Linux / WSL. See `INSTALL.md` for full setup.
 
 ## Architecture
@@ -90,41 +126,17 @@ gh issue view <N> | cat
 gh issue view <N> --comments | cat
 ```
 
-**2. Plan before touching code**
-- If the `superpowers:writing-plans` skill is available, invoke it.
-- Otherwise enter plan mode.
-- Read every referenced file, related code, and relevant test patterns before drafting the plan.
-- Ask the user many clarifying questions to flesh out edge cases, scope limits, and design choices. Do not proceed until the plan is agreed.
-
-**2a. Define the test and demo specification before writing any code**
-Before writing a single line of test or demo code, explicitly propose and get approval for:
+**2. Grill the design**
+Read every referenced file, related code, and relevant test patterns, then invoke the `mattpocock-skills:grilling` skill with a description of the change the issue asks for (`grill-me` is the user-typed alias for the same skill). The grilling is done when the user has agreed, in writing, on:
+- Scope limits and design choices
 - Every scenario the automated test must cover (happy path, failure modes, edge cases — e.g. "what if the box is full?", "what if party is at minimum?")
 - The exact visual flow the demo GIF must show (which menus, which transitions, what on-screen text confirms success)
 - The pass/fail criteria for each check (what value is read, from which address, expected vs. actual)
-Ask as many questions as needed. Do not start Step 4 until the user has approved the full test and demo specification in writing. Under-specified tests are the single biggest source of rework on this project.
 
-**3. Create a feature branch**
-```bash
-git checkout -b issue-<N>-<short-slug>
-```
-Never implement on `master` directly.
+Under-specified tests are the single biggest source of rework on this project.
 
-**4. Implement with TDD**
-- If the `superpowers:test-driven-development` skill is available, invoke it.
-- Write a failing test first, then implement until it passes.
-- Build must be clean: `make -j$(nproc) firered`
-
-**5. Record a test run**
-```bash
-bash test/record_test.sh test/tests/<relevant_test>.lua
-```
-Move the recording to `~/recordings/` as per project convention.
-
-**6. Update the README**
-Add or update the feature description and include a demo GIF if the feature has visible in-game behaviour.
-
-**7. Update the issue with the plan**
-After the spec is approved and before touching code, post the agreed design as a comment on the GitHub issue so the issue history captures what was decided and why:
+**3. Record the design on the issue**
+Post the agreed design as a comment on the issue so its history captures what was decided and why:
 ```bash
 gh issue comment <N> --body "..."
 ```
@@ -133,14 +145,54 @@ Also edit the issue description to include a summary of scope if the original de
 gh issue edit <N> --body "..."
 ```
 
-**8. Create a PR**
+**4. Break the design into ticket issues**
+Turn the grilling result into ticket issues with the `to-tickets` skill (the successor to `to-issues`). It is user-invocable only, so read its `SKILL.md` and follow its process yourself, using the highest version this lists:
+```bash
+ls ~/.claude*/plugins/cache/*/mattpocock-skills/*/skills/engineering/to-tickets/SKILL.md
+```
+Tracker settings for this repo:
+- Publish each ticket as a GitHub issue on `origin` (`MinimalEffort07/pokefirered`) with `gh issue create`.
+- Reference `#<N>` under the ticket's `## Parent` heading and list each blocker as `#<M>` under `## Blocked by`. These body sections are the blocking edges.
+- Leave labels off; this repo has no triage labels.
+- Each ticket's acceptance criteria carry its share of the test scenarios, demo flow, and pass/fail criteria from step 2.
+
+**5. Implement the frontier in parallel**
+The **frontier** is every open ticket whose `## Blocked by` issues are all closed. Launch one subagent per frontier ticket with `isolation: "worktree"`, all in a single message so they run concurrently. Give each subagent its ticket number `<T>` and steps 6–11, and have it report back its PR URL.
+
+**6. Create a feature branch**
+```bash
+git checkout -b issue-<T>-<short-slug>
+```
+Never implement on `master` directly. A fresh worktree lacks the gitignored `tools/agbcc/`, so symlink it from the main checkout before building:
+```bash
+ln -s "$(git worktree list | head -1 | cut -d' ' -f1)/tools/agbcc" tools/agbcc
+```
+
+**7. Implement with TDD**
+- Invoke the `mattpocock-skills:tdd` skill.
+- Write a failing test first, then implement until it passes.
+- Build must be clean: `make -j$(nproc) firered`
+
+**8. Record a test run**
+```bash
+bash test/record_test.sh test/tests/<relevant_test>.lua
+```
+Move the recording to `~/recordings/` as per project convention.
+
+**9. Update the README**
+Add or update the feature description and include a demo GIF if the feature has visible in-game behaviour.
+
+**10. Code review**
+Invoke the `mattpocock-skills:code-review` skill against `master` and address its findings.
+
+**11. Create a PR**
 
 ```bash
-gh pr create --title "Fix #<N>: <short description>" --body "..."
+gh pr create --title "Fix #<T>: <short description>" --body "..."
 ```
-PR body must reference the issue number, summarise what changed, and list what was tested.
+PR body must reference the ticket and parent issue numbers, summarise what changed, and list what was tested.
 
-After creating the PR, post the following in your response to the user:
+Once the frontier's PRs are created, post the following in your response to the user, with one `Branch README` line per branch:
 ```
 Recordings available at: http://100.116.114.81:8080
 (run: python3 test/serve_recordings.py)
@@ -149,26 +201,21 @@ Branch README: https://github.com/MinimalEffort07/pokefirered/blob/<branch-name>
 ```
 Replace `<branch-name>` with the actual feature branch name (e.g. `issue-11-pc-anywhere`).
 
-**9. Wait for approval — do not merge until told to**
-After creating the PR, stop. The user will review it. Only run the merge command when the user explicitly says to proceed:
+**12. Wait for approval — do not merge until told to**
+After creating the PRs, stop. The user will review them. Only run the merge command when the user explicitly says to proceed:
 ```bash
 gh pr merge <PR-number>
 ```
 Do **not** squash commits (`--squash`). Preserve the full commit history from the branch.
 
-**10. After merging — close the issue and sync local master**
-After the PR is merged, close the issue and sync master:
+**13. After merging — close the ticket, sync master, advance the frontier**
+After a PR is merged, close its ticket and sync master:
 ```bash
-gh issue close <N>
+gh issue close <T>
 git checkout master
 git pull
 ```
-
-**11. Code review (if skill available)**
-If `superpowers:requesting-code-review` is available, invoke it before creating the PR.
-
-### Superpowers Priority
-Use superpowers skills wherever they apply — planning, brainstorming, TDD, debugging, code review, finishing a branch. They take precedence over improvised approaches.
+Closing tickets unblocks the ones that depend on them: return to step 5 for the new frontier. Once every ticket is closed, close the parent issue `#<N>`.
 
 ## Coding Conventions
 
