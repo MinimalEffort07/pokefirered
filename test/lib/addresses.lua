@@ -379,4 +379,30 @@ ADDR.ITEM_MAX_ELIXIR                 = 37
 
 ADDR.gPlayerPartyCount               = 0x02024029
 
+-------------------------------------------------------------------------------
+-- FOLLOWER STATE
+-- sFollower is a static EWRAM_DATA struct in src/pokemon_follower.c.
+-- Address from pokefirered.map (ewram_data section of pokemon_follower.o).
+-- Struct layout after patch (12 bytes total):
+--   offset 0: bool8 active
+--   offset 1: bool8 spriteSpawned
+--   offset 2: u8 partySlot
+--   offset 3: u8 stuckFrames  (catch-up stuck counter)
+--   offset 4: u16 species
+--   offset 6: u8 graphicsId
+--   offset 7: u8 objEventId   <- FOLLOWER_OBJ_EVENT_ID_OFF
+--   offset 8: s16 prevX       (position before last catch-up move)
+--   offset 10: s16 prevY
+--
+-- NOTE: Verify FOLLOWER_BASE from pokefirered.map after any rebuild that
+-- adds new EWRAM symbols, as the EWRAM layout can shift.
+ADDR.FOLLOWER_BASE             = 0x0203f7a8
+ADDR.FOLLOWER_OBJ_EVENT_ID_OFF = 0x07
+
+-- ObjectEvent previousCoords offsets (layout mirrors currentCoords at 0x10/0x12).
+-- Used to write both coord fields atomically when repositioning the follower
+-- in tests, preventing the movement system from seeing a stale prev position.
+ADDR.OE_PREV_X = 0x14
+ADDR.OE_PREV_Y = 0x16
+
 return ADDR
