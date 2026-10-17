@@ -29,13 +29,16 @@
 --     Press DPAD_LEFT to move cursor from Charmander to Squirtle.
 --     Colors update immediately: Water = NOT_VERY, Grass = SUPER.
 --
+--   Sub-test D — Cancel, then pick a move again:
+--     B (back to the move menu), then A on move slot 0 again. The target
+--     cursor resets to Charmander, and the colors must follow it at once:
+--     Water = SUPER, Grass = NOT_VERY (not Squirtle's, left over from C).
+--
 --   Sub-test B — Left opponent absent (injected via memory write):
 --     Inject gAbsentBattlerFlags = 2 (battler 1 absent), then navigate
 --     FIGHT menu -> re-open move selection. InitMoveSelectionsVarsAndStrings
 --     must fall back to the right opponent (Squirtle / Water type).
---     gMultiUsePlayerCursor = 0xFF proves the menu really reopened (sub-test
---     C left the colours at the Squirtle values already, so without that
---     check a menu that never reopened would pass).
+--     gMultiUsePlayerCursor = 0xFF proves the menu really reopened.
 --     Water = NOT_VERY, Grass = SUPER.
 --
 -- HOW TO RUN:
@@ -147,6 +150,36 @@ fw.run(function()
     fw.screenshot(fw.out_path("mgba-type-eff-sub-c.png"))
 
     -- ----------------------------------------------------------------
+    -- Sub-test D: cancel, then pick a move again
+    -- Sub-test C left the cursor and the colours on Squirtle. B cancels
+    -- target selection (the move menu keeps Squirtle's colours, which were
+    -- the last ones shown). Picking a move again puts the target cursor back
+    -- on its default, Charmander, so the colours must switch back to
+    -- Charmander's matchups at once, without waiting for a D-pad press.
+    -- ----------------------------------------------------------------
+    fw.log("--- Sub-test D: cancel and pick a move again, colors follow the reset cursor ---")
+
+    fw.press("B")       -- cancel target selection -> move selection
+    fw.wait_frames(20)
+    fw.press("A")       -- pick move slot 0 again -> target selection
+    fw.wait_frames(30)
+
+    local cursor_again = fw.read8(ADDR.gMultiUsePlayerCursor)
+    fw.log(string.format("  cursor after re-picking: battler %d (expect %d = left opp)",
+        cursor_again, ADDR.BATTLER_OPPONENT_LEFT))
+    fw.assert_eq(cursor_again, ADDR.BATTLER_OPPONENT_LEFT,
+        "D: cursor reset to left opponent (battler 1)")
+
+    local d0 = move_color(0)
+    local d1 = move_color(1)
+    fw.log(string.format("  slot 0 = 0x%04X (want SUPER    = 0x%04X)", d0, ADDR.EFF_COLOR_SUPER))
+    fw.log(string.format("  slot 1 = 0x%04X (want NOT_VERY = 0x%04X)", d1, ADDR.EFF_COLOR_NOT_VERY))
+    fw.assert_eq(d0, ADDR.EFF_COLOR_SUPER,    "D: Water move = super-effective vs Fire again (slot 0)")
+    fw.assert_eq(d1, ADDR.EFF_COLOR_NOT_VERY, "D: Grass move = not-very-effective vs Fire again (slot 1)")
+
+    fw.screenshot(fw.out_path("mgba-type-eff-sub-d.png"))
+
+    -- ----------------------------------------------------------------
     -- Sub-test B: absent-opponent fallback
     -- Navigate back to move selection, inject gAbsentBattlerFlags = 0x02
     -- (battler 1 absent), then exit and re-enter the FIGHT menu so that
@@ -170,7 +203,7 @@ fw.run(function()
     fw.wait_frames(120) -- wait for move selection to reopen and InitMoveSelectionsVarsAndStrings to run
 
     -- InitMoveSelectionsVarsAndStrings sets gMultiUsePlayerCursor to 0xFF;
-    -- sub-test C left it at 3 (the target cursor). 0xFF here proves the
+    -- sub-test D left it at 1 (the target cursor). 0xFF here proves the
     -- colours below were recomputed by the reopened menu.
     fw.assert_eq(fw.read8(ADDR.gMultiUsePlayerCursor), 0xFF,
         "B: move selection reopened (InitMoveSelectionsVarsAndStrings ran)")
