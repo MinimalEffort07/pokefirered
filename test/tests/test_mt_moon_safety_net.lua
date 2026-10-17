@@ -8,7 +8,7 @@
 -- seed produces. The generator's safety net then moves the player to the
 -- nearest reachable floor tile.
 --
--- FOR EACH GENERATED FLOOR (1F, then B1F):
+-- FOR EACH GENERATED FLOOR (1F, B1F, then B2F):
 --
 -- A. Player inside a wall (the S9 scenario from the design):
 --   1. Fresh entry with a fixed gRngValue.
@@ -54,8 +54,8 @@ local cs      = dofile(project_dir .. "test/lib/character_select.lua")
 local mm      = dofile(project_dir .. "test/lib/mt_moon.lua")
 local capture = dofile(project_dir .. "test/lib/frame_capture.lua")
 
-local RNG = { ["1F"] = 0x5AFE0001, ["B1F"] = 0x5AFE0002 }
-local OLD_SAVE_RNG = { ["1F"] = 0x01D5A7E1, ["B1F"] = 0x01D5A7E2 }
+local RNG = { ["1F"] = 0x5AFE0001, ["B1F"] = 0x5AFE0002, ["B2F"] = 0x5AFE0003 }
+local OLD_SAVE_RNG = { ["1F"] = 0x01D5A7E1, ["B1F"] = 0x01D5A7E2, ["B2F"] = 0x01D5A7E3 }
 
 local function solid(grid, x, y)
     if x < 0 or y < 0 or x >= grid.w or y >= grid.h then return true end

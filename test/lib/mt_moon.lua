@@ -54,13 +54,66 @@ local mm = {}
 mm.DUNGEON_GROUP = 1
 mm.ROUTE4 = { group = 3, num = 22 }
 
--- The floors the generator currently builds. `arrival_warp` is the warp a
--- fresh entry arrives through (Route 4 west leads to 1F warp 3, Route 4 east
--- leads to B1F warp 7). `exit_warp` is the warp that leads back out.
+-- An untouched vanilla cave, for comparing load times (P9): Rock Tunnel 1F
+-- (map 1.81) is the same size as the Mt. Moon floors, 48 x 40 tiles.
+mm.VANILLA_CAVE = { name = "Rock Tunnel 1F", group = 1, num = 81, arrival_warp = 0 }
+
+-- The generated floors, in the order of the chain they form:
+--
+--   Route 4 west door <-> 1F <-> B1F <-> B2F <-> Route 4 east door
+--
+-- Each floor has exactly two active warps (every other vanilla warp of the
+-- floor is parked at (0,0), a solid wall tile nobody can stand on):
+--
+--   entrance  the warp toward Route 4 WEST. A west-to-east walk arrives here.
+--   exit      the warp toward Route 4 EAST. A west-to-east walk leaves here.
+--
+-- `warp` is the warp's index in the floor's warp table (map.json order),
+-- `to` is where it leads (map group, map number, warp index there), and
+-- `kind` is what the warp tile looks like, following vanilla Mt. Moon:
+--
+--   "door"  1F's doorway at the south edge of the map: walkable metatile
+--           0x287 with the doorframe (0x2c8 0x2c9 0x2ca) below it. Standing
+--           on it and pressing DOWN leaves the cave.
+--   "down"  a down-ladder: a hole (0x285 or 0x2af) in open floor, i.e. all
+--           8 tiles around it are walkable. Stepping onto it warps.
+--   "up"    an up-ladder: the ladder's foot (0x296, walkable) at the foot of
+--           a north wall, with the ladder's top (0x28f or 0x28e, solid) set
+--           into the wall above it. Stepping onto the foot warps.
+--
+-- `arrival_warp` and `exit_warp` are the entrance and exit warp indexes,
+-- kept under the names older tests use: mm.enter_floor() arrives through
+-- `arrival_warp`.
+local ROUTE4_GROUP, ROUTE4_NUM = mm.ROUTE4.group, mm.ROUTE4.num
 mm.FLOORS = {
-    { name = "1F",  group = 1, num = 1, arrival_warp = 3, exit_warp = 0 },
-    { name = "B1F", group = 1, num = 2, arrival_warp = 7, exit_warp = 0 },
+    {
+        name = "1F", group = 1, num = 1,
+        entrance = { warp = 3, kind = "door", to = { group = ROUTE4_GROUP, num = ROUTE4_NUM, warp = 0 } },
+        exit     = { warp = 0, kind = "down", to = { group = 1, num = 2, warp = 0 } },
+    },
+    {
+        name = "B1F", group = 1, num = 2,
+        entrance = { warp = 0, kind = "up",   to = { group = 1, num = 1, warp = 0 } },
+        exit     = { warp = 3, kind = "down", to = { group = 1, num = 3, warp = 0 } },
+    },
+    {
+        name = "B2F", group = 1, num = 3,
+        entrance = { warp = 0, kind = "up",   to = { group = 1, num = 2, warp = 3 } },
+        exit     = { warp = 1, kind = "up",   to = { group = ROUTE4_GROUP, num = ROUTE4_NUM, warp = 1 } },
+    },
 }
+for _, floor in ipairs(mm.FLOORS) do
+    floor.arrival_warp = floor.entrance.warp
+    floor.exit_warp = floor.exit.warp
+end
+
+-- Route 4's two cave doors (warp index -> tile), from data/maps/Route4.
+mm.ROUTE4_WEST_DOOR = { warp = 0, x = 19, y = 5 }  -- leads into 1F
+mm.ROUTE4_EAST_DOOR = { warp = 1, x = 32, y = 5 }  -- leads into B2F
+
+-- The minimum distance between a floor's two ladders, counted as steps east
+-- or west plus steps north or south (Manhattan distance).
+mm.MIN_LADDER_DISTANCE = 24
 
 function mm.floor_by_name(name)
     for _, floor in ipairs(mm.FLOORS) do
@@ -80,6 +133,7 @@ local SB1_POS              = 0x0000  -- struct Coords16 pos: s16 x, s16 y
 local SB1_LOCATION         = 0x0004  -- struct WarpData location
 local SB1_OBJECT_EVENTS    = 0x06c8  -- struct ObjectEvent objectEvents[16]
 local SB1_OBJECT_TEMPLATES = 0x0908  -- struct ObjectEventTemplate [64]
+local SB1_FLAGS            = 0x0F08  -- u8 flags[], one bit per flag, flag 0 first
 local SB1_VARS             = 0x1028  -- u16 vars[VARS_COUNT], var 0x4000 first
 
 -- Game variables 0x4000 and up are stored in SaveBlock1.vars, 2 bytes each.
@@ -164,6 +218,66 @@ end
 -- seeds existed). Takes effect at the next Continue.
 function mm.set_seed(value)
     emu:write16(mm.sb1() + SB1_VARS + (mm.VAR_MT_MOON_MAP_SEED - VARS_START) * 2, value & 0xFFFF)
+end
+
+-- Any game variable 0x4000 and up (include/constants/vars.h).
+function mm.get_var(var)
+    return emu:read16(mm.sb1() + SB1_VARS + (var - VARS_START) * 2)
+end
+
+function mm.set_var(var, value)
+    emu:write16(mm.sb1() + SB1_VARS + (var - VARS_START) * 2, value & 0xFFFF)
+end
+
+-- Any flag (include/constants/flags.h): flag n is bit n % 8 of byte n / 8.
+function mm.get_flag(flag)
+    return (emu:read8(mm.sb1() + SB1_FLAGS + (flag >> 3)) >> (flag & 7)) & 1 == 1
+end
+
+function mm.set_flag(flag)
+    local a = mm.sb1() + SB1_FLAGS + (flag >> 3)
+    emu:write8(a, emu:read8(a) | (1 << (flag & 7)))
+end
+
+-- Reads `#define NAME value` constants from a header in the repo, so tests
+-- use the same numbers as the game instead of copying them.
+-- Returns name -> number for every define whose value is a plain number.
+function mm.read_defines(path)
+    local defines = {}
+    local f = io.open(project_dir .. path, "r")
+    if f == nil then error("can't read " .. path) end
+    for line in f:lines() do
+        local name, value = line:match("^#define%s+([%w_]+)%s+(0?x?%x+)%s*$")
+        if name then defines[name] = tonumber(value) end
+    end
+    f:close()
+    return defines
+end
+
+-- Mark every trainer that battles in Mt. Moon as already defeated, so no
+-- trainer starts a battle when the player walks into their sight line.
+-- The trainers are read from the floors' scripts (every
+-- `trainerbattle_* TRAINER_X` line); a trainer's "defeated" flag is
+-- TRAINER_FLAGS_START + its id (include/constants/flags.h, opponents.h).
+-- Returns the list of trainer names marked.
+function mm.mark_mt_moon_trainers_defeated()
+    local opponents = mm.read_defines("include/constants/opponents.h")
+    local flags_start = 0x500  -- TRAINER_FLAGS_START = FLAG_0x4FF + 1
+    local names = {}
+    for _, map in ipairs({ "MtMoon_1F", "MtMoon_B1F", "MtMoon_B2F" }) do
+        local f = io.open(project_dir .. "data/maps/" .. map .. "/scripts.inc", "r")
+        if f then
+            for line in f:lines() do
+                local name = line:match("trainerbattle_[%w_]+%s+(TRAINER_[%w_]+)")
+                if name and opponents[name] then
+                    mm.set_flag(flags_start + opponents[name])
+                    names[#names + 1] = name
+                end
+            end
+            f:close()
+        end
+    end
+    return names
 end
 
 -- The game's global random number state. Random() advances it with
@@ -324,6 +438,11 @@ function mm.live_objects(saved)
                 map_group = emu:read8(a + OE_MAP_GROUP),
                 x = s16(emu:read16(a + OE_CURRENT)) - mm.MAP_OFFSET,
                 y = s16(emu:read16(a + OE_CURRENT + 2)) - mm.MAP_OFFSET,
+                -- Where it is walking from. During a step an object already
+                -- counts as standing on its destination (x, y) and still
+                -- blocks the tile it left.
+                prev_x = s16(emu:read16(a + OE_PREVIOUS)) - mm.MAP_OFFSET,
+                prev_y = s16(emu:read16(a + OE_PREVIOUS + 2)) - mm.MAP_OFFSET,
             }
         end
     end
@@ -468,29 +587,106 @@ end
 -- How the warp works: write the destination into sWarpDestination and
 -- SaveBlock1.location (what ApplyCurrentWarp() does), then point
 -- gMain.callback2 at CB2_LoadMap. That is the main-loop function that loads a
--- map; when it finishes it switches callback2 to CB2_Overworld.
-function mm.enter_floor(floor, rng)
+-- map; when it finishes it switches callback2 to CB2_Overworld. A real warp
+-- (door, ladder) does exactly this once its fade to black has finished.
+--
+-- `warp_id` picks the destination warp the player arrives on; -1 means "no
+-- warp", and the player is put on tile (x, y) instead.
+--
+-- The warp is only handed over while the game is idle. Each frame, the
+-- game's main loop does that frame's work and then spins in WaitForVBlank
+-- until the next frame starts; the test runs once per frame, at that
+-- frame boundary. Usually the loop is already spinning by then, but the
+-- first frames on a freshly loaded map can take longer than a frame. If
+-- the test wrote the warp mid-frame, the game would start loading one frame
+-- earlier than usual, one fewer per-frame Random() call would happen
+-- before the seed roll, and the same gRngValue would roll a different seed.
+local function wait_until_idle()
+    for _ = 1, 60 do
+        if sym.contains(emu:readRegister("pc"), "WaitForVBlank") then return end
+        fw.yield()
+    end
+end
+
+-- The tile of warp `warp_id` in the ROM's warp table of `map`. The ROM keeps
+-- every map's header in gMapGroups[group][num] (an array of pointers per
+-- map group); the header's `events` (+4) points at struct MapEvents, whose
+-- `warps` pointer is at +8.
+local function rom_warp_tile(map, warp_id)
+    local group_list = emu:read32(sym.addr("gMapGroups") + map.group * 4)
+    local header = emu:read32(group_list + map.num * 4)
+    local events = emu:read32(header + 4)
+    local warp = emu:read32(events + 8) + warp_id * WARP_SIZE
+    return s16(emu:read16(warp + 0)), s16(emu:read16(warp + 2))
+end
+
+local function start_warp(map, warp_id, rng, x, y)
     local dest = sym.addr("sWarpDestination")
     local sb1 = mm.sb1()
+    wait_until_idle()
+    -- A real warp puts the player on the destination tile before the map
+    -- loads (WarpIntoMap -> SetPlayerCoordsFromWarp in src/overworld.c);
+    -- CB2_LoadMap doesn't, so do it here. A generated floor then moves the
+    -- player onto its generated warp tile.
+    if warp_id >= 0 then
+        x, y = rom_warp_tile(map, warp_id)
+    end
+    emu:write16(sb1 + SB1_POS + 0, (x or 0) & 0xFFFF)
+    emu:write16(sb1 + SB1_POS + 2, (y or 0) & 0xFFFF)
     for _, a in ipairs({ dest, sb1 + SB1_LOCATION }) do
-        emu:write8(a + 0, floor.group)
-        emu:write8(a + 1, floor.num)
-        emu:write8(a + 2, floor.arrival_warp)
-        emu:write16(a + 4, 0)
-        emu:write16(a + 6, 0)
+        emu:write8(a + 0, map.group)
+        emu:write8(a + 1, map.num)
+        emu:write8(a + 2, warp_id & 0xFF)
+        emu:write16(a + 4, (x or 0) & 0xFFFF)
+        emu:write16(a + 6, (y or 0) & 0xFFFF)
     end
     if rng ~= nil then mm.set_rng(rng) end
     emu:write32(sym.addr("gMain") + 4, sym.addr("CB2_LoadMap") | 1)
+end
 
+local function wait_for_overworld(map)
     local frames = 0
     repeat
         fw.yield()
         frames = frames + 1
     until mm.in_overworld() or frames > 600
     if not mm.in_overworld() then
-        error(string.format("map %d.%d did not finish loading", floor.group, floor.num))
+        error(string.format("map %d.%d did not finish loading", map.group, map.num))
     end
+    return frames
+end
+
+function mm.enter_floor(floor, rng)
+    start_warp(floor, floor.arrival_warp, rng)
+    local frames = wait_for_overworld(floor)
     return mm.snapshot(), frames
+end
+
+-- Put the player on tile (x, y) of `map` (any map, e.g. mm.ROUTE4) through
+-- the same map load a warp uses, and wait until they have control.
+function mm.warp_to_tile(map, x, y)
+    start_warp(map, -1, nil, x, y)
+    wait_for_overworld(map)
+    return fw.wait_until(mm.player_has_control, 600,
+        string.format("control after warping to %d.%d (%d,%d)", map.group, map.num, x, y))
+end
+
+-- Load time (P9): enter `map` through its warp `warp_id`, with the game's
+-- random state set to `rng`, and count frames from handing the game the warp
+-- (the moment a real warp's fade to black ends) until the player can move
+-- again on the new map (map loaded, fade-in finished, controls unlocked).
+-- Returns the frame count, or nil if control never came back in 900 frames.
+function mm.timed_entry(map, warp_id, rng)
+    start_warp(map, warp_id, rng)
+    for frames = 1, 900 do
+        fw.yield()
+        local group, num = mm.current_map()
+        if mm.in_overworld() and group == map.group and num == map.num
+            and mm.player_has_control() then
+            return frames
+        end
+    end
+    return nil
 end
 
 -------------------------------------------------------------------------------
@@ -544,14 +740,16 @@ end
 
 -- Returns a gRngValue different from `rng` that rolls the same `seed`, or nil
 -- if the seed can't be traced back to `rng` within 4096 Random() calls.
-function mm.rng_with_same_seed(rng, seed)
+-- `bump` (default 1) is how much state_k moves; any small bump keeps the
+-- top 16 bits unless it carries past them, which this checks (nil then).
+function mm.rng_with_same_seed(rng, seed, bump)
     local k, state = mm.rng_steps(rng, seed)
     if k == nil then return nil end
-    -- Bump state_k by +1, or by -1 if +1 would carry into the top 16 bits.
-    local bump = ((state & 0xFFFF) == 0xFFFF) and MASK32 or 1
+    bump = bump or 1
+    if (((state + bump) & MASK32) >> 16) ~= seed then return nil end
     local a_pow_k = 1
     for _ = 1, k do a_pow_k = mul32(a_pow_k, LCG_A) end
-    return (rng + mul32(inverse32(a_pow_k), bump)) & MASK32
+    return (rng + mul32(inverse32(a_pow_k), bump & MASK32)) & MASK32
 end
 
 -- A gRngValue that rolls `seed` when the seed is the k-th Random() call
@@ -714,10 +912,17 @@ end
 --           return true                        -- pass
 --           return false, "what went wrong"    -- fail
 --       end,
+--       summary = function(floor)  -- optional: a line for the log after
+--           return "..."           -- the floor's seeds (e.g. P9's timings)
+--       end,
 --   }
 --
--- A check may re-enter the floor (P8 does). It must judge `snap`, which was
--- taken before any check ran, so the order checks run in doesn't matter.
+-- A check may re-enter the floor (P8 and P9 do); its last entry must be a
+-- plain mm.enter_floor() of the same floor, so the next check or seed
+-- leaves the same map in the same just-loaded state (that state affects how
+-- many Random() calls run before the next seed is rolled). It must judge
+-- `snap`, which was taken before any check ran, so the order checks run in
+-- doesn't matter.
 
 function mm.load_checks(dir)
     local checks = {}

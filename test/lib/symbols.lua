@@ -57,20 +57,30 @@ symbols.ELF_PATH = project_dir .. "pokefirered.elf"
 -- Libraries load each other with dofile(), which re-runs this file each
 -- time, so the parsed table is kept in a global to read the ELF only once
 -- per test run.
+-- `nm -S` also prints each symbol's size in bytes, when the ELF records one
+-- (functions and variables do), as a second hex column:
+--     08000890 00000030 t WaitForVBlank
+-- Sizes go in a second table, read by symbols.contains().
 local function load()
     local table_cache = _G.__pokefirered_symbol_table
     if table_cache then return table_cache end
     table_cache = {}
+    local sizes = {}
     _G.__pokefirered_symbol_table = table_cache
-    local pipe = io.popen("arm-none-eabi-nm '" .. symbols.ELF_PATH .. "' 2>/dev/null")
+    _G.__pokefirered_symbol_sizes = sizes
+    local pipe = io.popen("arm-none-eabi-nm -S '" .. symbols.ELF_PATH .. "' 2>/dev/null")
     if pipe == nil then return table_cache end
     for line in pipe:lines() do
-        local hex, name = line:match("^(%x+) %a (%S+)$")
+        local hex, size, name = line:match("^(%x+) (%x+) %a (%S+)$")
+        if hex == nil then
+            hex, name = line:match("^(%x+) %a (%S+)$")
+        end
         if hex then
             local addr = tonumber(hex, 16)
             local seen = table_cache[name]
             if seen == nil then
                 table_cache[name] = addr
+                sizes[name] = size and tonumber(size, 16) or nil
             elseif seen ~= addr then
                 table_cache[name] = false
             end
@@ -105,6 +115,15 @@ end
 -- Bit 0 is the Thumb-mode flag described above, so it is ignored.
 function symbols.is_func(pointer, name)
     return (pointer & ~1) == symbols.addr(name)
+end
+
+-- True when `address` lies inside symbol `name` (from its start up to its
+-- size), e.g. whether the CPU's program counter is inside a function.
+function symbols.contains(address, name)
+    local start = symbols.addr(name)
+    local size = _G.__pokefirered_symbol_sizes[name]
+    if size == nil then error("no size recorded for symbol " .. name) end
+    return address >= start and address < start + size
 end
 
 return symbols
