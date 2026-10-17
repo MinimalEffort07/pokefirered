@@ -539,6 +539,4 @@ static u16 PickCellularTile(const struct MtMoonCave *cave, s32 x, s32 y)
 
 const struct MtMoonStyle gMtMoonStyle1F = { BuildCellularShape, PickCellularTile };
 
-const struct MtMoonStyle gMtMoonStyleB1F = { BuildCellularShape, PickCellularTile };
-
 const struct MtMoonStyle gMtMoonStyleB2F = { BuildCellularShape, PickCellularTile };
