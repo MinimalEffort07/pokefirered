@@ -127,20 +127,14 @@ end
 -- Save, Continue and compare. (tx, ty) is where the player must be.
 -- `want_npcs`: at least one live NPC must be compared tile-for-tile.
 local function save_and_continue(floor, label, tx, ty, want_npcs)
-    capture.caption(floor.name .. ": saving the game")
-    local saved_ok = mm.save_game()
-    fw.assert_true(saved_ok, label .. ": game saved")
-    if not saved_ok then return false end
-    local saved = mm.snapshot(true)  -- player/objects as written to the save
+    capture.caption(floor.name .. ": save, reset, then CONTINUE")
+    local saved, loaded = mm.save_and_continue()
+    fw.assert_true(loaded ~= nil, label .. ": saved and Continued back to the overworld")
+    if loaded == nil then return false end
+    capture.caption(floor.name .. ": back in the same cave after CONTINUE")
     fw.assert_true(saved.player_x == tx and saved.player_y == ty, string.format(
         "%s: save holds the player at (%d,%d), got (%s,%s)",
         label, tx, ty, tostring(saved.player_x), tostring(saved.player_y)))
-
-    capture.caption(floor.name .. ": reset, then CONTINUE")
-    local loaded = mm.continue_game()
-    fw.assert_true(loaded ~= nil, label .. ": Continue reached the overworld")
-    if loaded == nil then return false end
-    capture.caption(floor.name .. ": back in the same cave after CONTINUE")
 
     fw.assert_true(loaded.group == floor.group and loaded.num == floor.num,
         label .. ": Continue loaded the same floor")

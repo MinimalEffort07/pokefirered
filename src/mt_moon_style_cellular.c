@@ -58,16 +58,26 @@
 #define TILE_WALL_FLOOR_S       0x0699
 #define TILE_WALL_FLOOR_SE      0x069a
 #define TILE_WALL_FLOOR_SW      0x0698
-#define TILE_WALL_FLOOR_NEW     0x069f
+#define TILE_WALL_FLOOR_N_E_W   0x069f
 #define TILE_WALL_SOLID         0x06c6
 #define TILE_WALL_SOLID_TOP_ROW 0x06c4
 
 /* Share of cells that start as floor before smoothing, in percent. */
 #define INITIAL_FLOOR_PERCENT 30
 
+/* Short names for the core's grid functions, to keep the dense cell loops
+ * below readable. */
 #define IS_FLOOR(x, y) MtMoonGen_IsFloor((x), (y))
 #define CELL(x, y) MtMoonGen_GetCell((x), (y))
 #define SET_CELL(x, y, v) MtMoonGen_SetCell((x), (y), (v))
+
+/* How many of the 4 cells N, S, W and E of (x, y) are wall (off-grid
+ * counts as wall). */
+static u8 CountCardinalWalls(s32 x, s32 y)
+{
+    return (!IS_FLOOR(x, y - 1)) + (!IS_FLOOR(x, y + 1))
+         + (!IS_FLOOR(x - 1, y)) + (!IS_FLOOR(x + 1, y));
+}
 
 /* Make every cell in the rectangle floor, staying clear of the border. */
 static void ForceFloorRect(const struct MtMoonCave *cave, s32 x1, s32 y1, s32 x2, s32 y2)
@@ -121,6 +131,9 @@ static void InitRandomGrid(const struct MtMoonCave *cave)
             SET_CELL(x, y, (MtMoonGen_Random() % 100) < INITIAL_FLOOR_PERCENT
                 ? MT_MOON_CELL_FLOOR : MT_MOON_CELL_WALL);
 
+    /* Like ReinforceKeyAreas, but the starting corridors are one cell
+     * longer (6 instead of 5) to give smoothing more open space to grow
+     * from. */
     EnforceBorders(cave);
     ForceFloorRect(cave, cave->entranceX - 1, cave->entranceY - 6, cave->entranceX + 1, cave->entranceY);
     ForceFloorRect(cave, cave->exitX - 1, cave->exitY, cave->exitX + 1, cave->exitY + 6);
@@ -151,8 +164,7 @@ static void SmoothWallEdges(const struct MtMoonCave *cave)
 {
     s32 x, y, iter;
     bool8 changed;
-    bool8 fA, fB, fL, fR;
-    u8 walls;
+    bool8 floorN, floorS, floorW, floorE;
 
     for (iter = 0; iter < 3; iter++)
     {
@@ -162,14 +174,14 @@ static void SmoothWallEdges(const struct MtMoonCave *cave)
             {
                 if (CELL(x, y) != MT_MOON_CELL_WALL)
                     continue;
-                fA = IS_FLOOR(x,     y - 1);
-                fB = IS_FLOOR(x,     y + 1);
-                fL = IS_FLOOR(x - 1, y);
-                fR = IS_FLOOR(x + 1, y);
-                if ((fA && fR && IS_FLOOR(x + 1, y - 1))
-                    || (fA && fL && IS_FLOOR(x - 1, y - 1))
-                    || (fB && fR && IS_FLOOR(x + 1, y + 1))
-                    || (fB && fL && IS_FLOOR(x - 1, y + 1)))
+                floorN = IS_FLOOR(x,     y - 1);
+                floorS = IS_FLOOR(x,     y + 1);
+                floorW = IS_FLOOR(x - 1, y);
+                floorE = IS_FLOOR(x + 1, y);
+                if ((floorN && floorE && IS_FLOOR(x + 1, y - 1))
+                    || (floorN && floorW && IS_FLOOR(x - 1, y - 1))
+                    || (floorS && floorE && IS_FLOOR(x + 1, y + 1))
+                    || (floorS && floorW && IS_FLOOR(x - 1, y + 1)))
                 {
                     SET_CELL(x, y, MT_MOON_CELL_FLOOR);
                     changed = TRUE;
@@ -187,11 +199,7 @@ static void SmoothWallEdges(const struct MtMoonCave *cave)
             {
                 if (CELL(x, y) == MT_MOON_CELL_WALL)
                     continue;
-                walls = (!IS_FLOOR(x, y - 1))
-                      + (!IS_FLOOR(x, y + 1))
-                      + (!IS_FLOOR(x - 1, y))
-                      + (!IS_FLOOR(x + 1, y));
-                if (walls >= 3)
+                if (CountCardinalWalls(x, y) >= 3)
                 {
                     SET_CELL(x, y, MT_MOON_CELL_WALL);
                     changed = TRUE;
@@ -223,11 +231,12 @@ static void FillDiagonalCorners(const struct MtMoonCave *cave)
         for (y = 2; y < cave->height - 3; y++)
             for (x = 2; x < cave->width - 3; x++)
             {
-                bool8 a = !IS_FLOOR(x,     y);
-                bool8 b = !IS_FLOOR(x + 1, y);
-                bool8 c = !IS_FLOOR(x,     y + 1);
-                bool8 d = !IS_FLOOR(x + 1, y + 1);
-                if (a && d && !b && !c)
+                /* The 2x2 block with (x, y) at its top-left corner. */
+                bool8 wallTopLeft     = !IS_FLOOR(x,     y);
+                bool8 wallTopRight    = !IS_FLOOR(x + 1, y);
+                bool8 wallBottomLeft  = !IS_FLOOR(x,     y + 1);
+                bool8 wallBottomRight = !IS_FLOOR(x + 1, y + 1);
+                if (wallTopLeft && wallBottomRight && !wallTopRight && !wallBottomLeft)
                 {
                     if (MtMoonGen_CountWallNeighbors(x + 1, y) >= MtMoonGen_CountWallNeighbors(x, y + 1))
                         SET_CELL(x + 1, y, MT_MOON_CELL_WALL);
@@ -235,7 +244,7 @@ static void FillDiagonalCorners(const struct MtMoonCave *cave)
                         SET_CELL(x, y + 1, MT_MOON_CELL_WALL);
                     changed = TRUE;
                 }
-                else if (!a && !d && b && c)
+                else if (!wallTopLeft && !wallBottomRight && wallTopRight && wallBottomLeft)
                 {
                     if (MtMoonGen_CountWallNeighbors(x, y) >= MtMoonGen_CountWallNeighbors(x + 1, y + 1))
                         SET_CELL(x, y, MT_MOON_CELL_WALL);
@@ -257,7 +266,6 @@ static void FillDiagonalCorners(const struct MtMoonCave *cave)
 static void RemoveThinWalls(const struct MtMoonCave *cave)
 {
     s32 x, y, iter;
-    u8 cardinalWalls;
     bool8 changed;
 
     for (iter = 0; iter < 4; iter++)
@@ -275,11 +283,7 @@ static void RemoveThinWalls(const struct MtMoonCave *cave)
                     changed = TRUE;
                     continue;
                 }
-                cardinalWalls = (!IS_FLOOR(x, y - 1))
-                              + (!IS_FLOOR(x, y + 1))
-                              + (!IS_FLOOR(x - 1, y))
-                              + (!IS_FLOOR(x + 1, y));
-                if (cardinalWalls <= 1)
+                if (CountCardinalWalls(x, y) <= 1)
                 {
                     SET_CELL(x, y, MT_MOON_CELL_FLOOR);
                     changed = TRUE;
@@ -379,7 +383,7 @@ static u16 GetWallTile(s32 x, s32 y)
     case 0x5: return TILE_WALL_FLOOR_SE;
     case 0x6: return TILE_WALL_FLOOR_SW;
     case 0x7: return TILE_WALL_FLOOR_S;
-    case 0xB: return TILE_WALL_FLOOR_NEW;
+    case 0xB: return TILE_WALL_FLOOR_N_E_W;
     case 0xC: return TILE_WALL_THIN;
     default:  return TILE_WALL_SOLID;
     }

@@ -42,7 +42,7 @@
  * THE GRID
  *
  * The generator works on an abstract grid with one cell per map tile, the
- * size of the floor's layout (B1F is 49 x 40; 1F and B2F are 48 x 40). Each
+ * size of the floor's layout (1F is 48 x 40, B1F is 49 x 40). Each
  * cell holds one of the MT_MOON_CELL_* values. Coordinates are map tile
  * coordinates: (0,0) is the top-left tile, x grows east, y grows south.
  * Reading outside the grid returns MT_MOON_CELL_WALL.

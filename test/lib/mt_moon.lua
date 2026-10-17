@@ -96,14 +96,23 @@ local OE_INITIAL    = 0x0C  -- initialCoords  (s16 x, s16 y)
 local OE_CURRENT    = 0x10  -- currentCoords
 local OE_PREVIOUS   = 0x14  -- previousCoords
 
--- struct ObjectEventTemplate, 0x18 bytes each.
+-- struct ObjectEventTemplate (include/global.fieldmap.h), 0x18 bytes each:
+--   +0x00 u8 localId     +0x01 u8 graphicsId   +0x02 u8 kind
+--   +0x04 s16 x          +0x06 s16 y
+--   +0x08 u8 elevation   +0x09 u8 movementType
+--   +0x0A u16 with movementRangeX in bits 0-3 and movementRangeY in bits 4-7
+--   +0x10 script pointer +0x14 u16 flagId (object hidden while the flag is set)
+-- read_templates() below reads these offsets in this order.
 local TEMPLATE_SIZE = 0x18
 
 -- struct MapHeader: mapLayout at +0, events at +4, mapLayoutId (u16) at +0x12.
 -- struct MapLayout: s32 width at +0, s32 height at +4.
 -- struct MapEvents: four u8 counts (objects, warps, coord events, bg events)
 -- followed by four pointers to the matching arrays.
--- struct WarpEvent is 8 bytes; struct BgEvent is 12 bytes.
+-- struct WarpEvent, 8 bytes: s16 x, s16 y, u8 elevation, u8 warpId (the
+-- destination map's warp), u8 mapNum, u8 mapGroup (the destination map).
+-- struct BgEvent, 12 bytes: u16 x, u16 y, u8 elevation, u8 kind, 2 bytes of
+-- padding, then a u32 (script pointer, or packed hidden-item data).
 local WARP_SIZE = 8
 local BG_EVENT_SIZE = 12
 
@@ -675,6 +684,17 @@ function mm.continue_game()
     end
     fw.log_error("Continue never reached the overworld with control")
     return nil
+end
+
+-- Save, then Continue. Returns two snapshots: `saved`, with the player and
+-- objects as written to the save, and `loaded`, from the first overworld
+-- frame after Continue. Returns nil (after logging why) if either step fails.
+function mm.save_and_continue()
+    if not mm.save_game() then return nil end
+    local saved = mm.snapshot(true)
+    local loaded = mm.continue_game()
+    if loaded == nil then return nil end
+    return saved, loaded
 end
 
 -------------------------------------------------------------------------------

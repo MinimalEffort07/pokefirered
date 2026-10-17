@@ -84,17 +84,12 @@ end
 local function save_and_continue(label, x, y)
     mm.poke_player(x, y)
     fw.wait_frames(10)
-    local saved_ok = mm.save_game()
-    fw.assert_true(saved_ok, label .. ": game saved")
-    if not saved_ok then return nil end
-    local saved = mm.snapshot(true)
+    capture.caption(label .. ": save, reset, then CONTINUE")
+    local saved, loaded = mm.save_and_continue()
+    fw.assert_true(loaded ~= nil, label .. ": saved and Continued back to the overworld")
+    if loaded == nil then return nil end
     fw.assert_true(saved.player_x == x and saved.player_y == y, string.format(
         "%s: the save holds the player at (%d,%d)", label, x, y))
-
-    capture.caption(label .. ": reset, then CONTINUE")
-    local loaded = mm.continue_game()
-    fw.assert_true(loaded ~= nil, label .. ": Continue reached the overworld")
-    if loaded == nil then return nil end
     return saved, loaded
 end
 

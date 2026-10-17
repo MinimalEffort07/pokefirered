@@ -63,6 +63,7 @@
 #include "fieldmap.h"
 #include "malloc.h"
 #include "overworld.h"
+#include "quest_log.h"
 #include "random.h"
 #include "mt_moon_gen.h"
 #include "mt_moon_gen_style.h"
@@ -144,7 +145,7 @@ static u32 sRngState;           /* MtMoonGen_Random's state */
 
 /*
  * The cave grid, one cell per map tile, at the floor layout's own size
- * (B1F is 49 x 40; 1F and B2F are 48 x 40). Each cell is 2 bits, 4 cells per
+ * (1F is 48 x 40, B1F is 49 x 40). Each cell is 2 bits, 4 cells per
  * byte: cell i (i = y * width + x) is byte i / 4, bits (i % 4) * 2 and up,
  * holding one of the MT_MOON_CELL_* values.
  *
@@ -369,6 +370,8 @@ static void SetUpWarps(const struct MtMoonFloor *floor)
 
     sMtMoonWarps[floor->exitWarpId].x = sCave.exitX;
     sMtMoonWarps[floor->exitWarpId].y = sCave.exitY;
+    /* A warp only fires for a player at the same elevation (height layer)
+     * as the warp. The cave floor and the ladder tile are elevation 3. */
     sMtMoonWarps[floor->exitWarpId].elevation = 3;
     sMtMoonWarps[floor->exitWarpId].warpId = floor->exitDestWarpId;
     sMtMoonWarps[floor->exitWarpId].mapNum = MAP_NUM(MAP_ROUTE4);
@@ -425,8 +428,11 @@ static void PlaceObjects(void)
         bool8 overlap;
         bool8 isItemBall;
         s16 moveRangeX, moveRangeY;
-        u8 movType;
+        u8 movementType;
 
+        /* A clone template stands in for an object of a neighbouring map,
+         * and its fields hold that map's ids instead of a movement type.
+         * Mt. Moon has none, but leave any alone rather than overwrite them. */
         if (templates[i].kind != OBJ_KIND_CLONE)
         {
             templates[i].x = rom[i].x;
@@ -436,7 +442,7 @@ static void PlaceObjects(void)
             templates[i].objUnion.normal.movementRangeY = rom[i].objUnion.normal.movementRangeY;
         }
         isItemBall = (templates[i].graphicsId == OBJ_EVENT_GFX_ITEM_BALL);
-        movType = templates[i].objUnion.normal.movementType;
+        movementType = templates[i].objUnion.normal.movementType;
 
         if (isItemBall)
         {
@@ -450,9 +456,9 @@ static void PlaceObjects(void)
         }
 
         /* Wanderers and walk-sequence NPCs become 1-tile-range wanderers. */
-        if (movType == MOVEMENT_TYPE_WALK_SEQUENCE_LEFT_DOWN_RIGHT_UP
-            || movType == MOVEMENT_TYPE_WANDER_AROUND
-            || movType == MOVEMENT_TYPE_WANDER_AROUND_SLOWER)
+        if (movementType == MOVEMENT_TYPE_WALK_SEQUENCE_LEFT_DOWN_RIGHT_UP
+            || movementType == MOVEMENT_TYPE_WANDER_AROUND
+            || movementType == MOVEMENT_TYPE_WANDER_AROUND_SLOWER)
         {
             templates[i].objUnion.normal.movementType = MOVEMENT_TYPE_WANDER_AROUND;
             templates[i].objUnion.normal.movementRangeX = 1;
@@ -461,8 +467,8 @@ static void PlaceObjects(void)
 
         moveRangeX = templates[i].objUnion.normal.movementRangeX;
         moveRangeY = templates[i].objUnion.normal.movementRangeY;
-        if (movType == MOVEMENT_TYPE_FACE_DOWN
-            || movType == MOVEMENT_TYPE_FACE_DOWN_AND_LEFT)
+        if (movementType == MOVEMENT_TYPE_FACE_DOWN
+            || movementType == MOVEMENT_TYPE_FACE_DOWN_AND_LEFT)
         {
             moveRangeX = 0;
             moveRangeY = 0;
@@ -470,6 +476,10 @@ static void PlaceObjects(void)
 
         do
         {
+            /* Random candidate: x in [4, width - 5], y in [5, height - 6].
+             * The margins keep a 1-tile roaming box clear of the solid
+             * border (2 tiles thick at the sides and top, 3 at the bottom)
+             * with a tile to spare. */
             x = (MtMoonGen_Random() % (sCave.width - 8)) + 4;
             y = (MtMoonGen_Random() % (sCave.height - 10)) + 5;
             attempts++;
@@ -527,7 +537,11 @@ static const struct MtMoonFloor *GetCurrentFloor(void)
  * grid allocated for the caller's follow-up step; the caller must call
  * FreeCaveGrid(). Returns FALSE, changing nothing, if the heap can't lend
  * the grid; the floor then simply stays the vanilla map from the ROM, with
- * its vanilla warps and objects, which is fully playable.
+ * its vanilla warps and objects, which is fully playable. (On Continue the
+ * player would keep coordinates from the generated cave, which may be wall
+ * in the vanilla map, and the safety net can't run without the grid. The
+ * grid is under 500 bytes of a 112 KB heap, so this is a should-never-
+ * happen fallback, not an expected path.)
  */
 static bool8 GenerateFloor(const struct MtMoonFloor *floor, u16 seed)
 {
@@ -641,6 +655,11 @@ static void MovePlayerOntoReachableFloor(void)
     if (bestX < 0)
         return;
 
+    /* The fields are written directly instead of with
+     * MoveObjectEventToMapCoords(): that function also moves the object's
+     * sprite, and at this point of a Continue no sprites exist yet (the
+     * saved spriteId is stale). The sprite is created later from these
+     * coordinates. */
     gSaveBlock1Ptr->pos.x = bestX;
     gSaveBlock1Ptr->pos.y = bestY;
     for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
@@ -669,7 +688,16 @@ void MtMoonGen_GenerateOnFreshEntry(void)
 
     if (floor == NULL)
         return;
-    VarSet(VAR_MT_MOON_MAP_SEED, Random());
+    /*
+     * The quest-log replay ("Previously on your quest...") restores the game
+     * variables as they were when each replayed scene was recorded, then
+     * loads the scene's map through this fresh-entry path. Keep the restored
+     * seed instead of rolling, so the replay shows the cave the scene was
+     * recorded in. (The replay's variables are thrown away afterwards: the
+     * save is reloaded before the real Continue.)
+     */
+    if (!QL_IS_PLAYBACK_STATE)
+        VarSet(VAR_MT_MOON_MAP_SEED, Random());
     if (GenerateFloor(floor, VarGet(VAR_MT_MOON_MAP_SEED)))
         PutPlayerOnArrivalWarp();
     FreeCaveGrid();
