@@ -187,7 +187,7 @@ const struct MapHeader * GetMapHeaderFromConnection(const struct MapConnection *
 void InitMap(void)
 {
     InitMapLayoutData(&gMapHeader);
-    if (gMapHeader.mapLayoutId == LAYOUT_MT_MOON_1F || gMapHeader.mapLayoutId == LAYOUT_MT_MOON_B1F)
+    if (MtMoonGen_IsGeneratedMap())
         MtMoonGen_GenerateOnFreshEntry();
     RunOnLoadMapScript();
 }
@@ -202,12 +202,12 @@ void InitMap(void)
 void InitMapFromSavedGame(void)
 {
     InitMapLayoutData(&gMapHeader);
-    /* Regenerate Mt. Moon cave on save reload. Without this, the map reverts
-     * to the original ROM layout but NPC positions and the player's saved
-     * coordinates still reflect the procedurally generated layout, causing
-     * NPCs to be stuck in walls and the player to spawn inside terrain. */
-    if (gMapHeader.mapLayoutId == LAYOUT_MT_MOON_1F || gMapHeader.mapLayoutId == LAYOUT_MT_MOON_B1F)
-        GenerateMtMoonCave();
+    /* Rebuild a generated Mt. Moon floor from the seed stored in the save.
+     * Without this, the map would revert to the original ROM layout while
+     * the NPC positions and the player's saved coordinates still belong to
+     * the generated cave. */
+    if (MtMoonGen_IsGeneratedMap())
+        MtMoonGen_RegenerateFromSave();
     LoadSavedMapView();
     RunOnLoadMapScript();
 }
