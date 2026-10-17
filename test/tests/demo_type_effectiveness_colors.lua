@@ -2,12 +2,9 @@
 -- demo_type_effectiveness_colors.lua
 -------------------------------------------------------------------------------
 -- Visual demonstration of the double-battle type effectiveness color fix.
--- Loads the same fixture used by test_type_effectiveness_colors.lua and
--- plays through the three scenarios slowly so they are clearly visible
--- in the recorded GIF.
---
--- REQUIRES: /tmp/pokefirered-route14-double.ss
--- See test/tools/save_route14_battle_state.lua to create the fixture.
+-- Starts the same Kiri & Jan double battle as test_type_effectiveness_colors.lua
+-- (test/lib/route14_battle.lua, fast-forwarded) and plays through the three
+-- scenarios slowly so they are clearly visible in the recorded GIF.
 --
 -- HOW TO RECORD:
 --   bash test/record_test.sh test/tests/demo_type_effectiveness_colors.lua
@@ -22,24 +19,20 @@ local project_dir = script_dir .. "../../"
 
 local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
-
-local STATE_PATH = "/tmp/pokefirered-route14-double.ss"
+local r14  = dofile(project_dir .. "test/lib/route14_battle.lua")
 
 fw.run(function()
     fw.log("=== Demo: Type Effectiveness Colors Fix (issue #7) ===")
 
-    -- Run at real-time throughout so the viewer sees everything clearly.
-    fw.slow_down("demo — entire script at real-time")
-    fw.wait_frames(30)
-
-    if not fw.try_load_state(STATE_PATH) then
-        fw.log_error("FIXTURE MISSING: " .. STATE_PATH)
-        fw.log_error("Run test/tools/save_route14_battle_state.lua to create it.")
+    -- Boot and start the battle fast-forwarded.
+    if not r14.reach_move_selection() then
         fw.finish()
         return
     end
 
-    fw.wait_frames(60)  -- 1 second at 60fps — let viewer see the loaded state
+    -- Real-time from here on so the viewer sees everything clearly.
+    fw.slow_down("demo — scenes at real-time")
+    fw.wait_frames(60)  -- 1 second at 60fps — let viewer see the move menu
 
     -- ----------------------------------------------------------------
     -- Scene 1: Both opponents alive — move menu shows Fire effectiveness
@@ -48,7 +41,7 @@ fw.run(function()
     fw.log(">>> Scene 1: Both opponents alive — colors reflect Charmander (Fire)")
     fw.wait_frames(120)  -- 2 seconds to observe the initial colors
 
-    fw.screenshot("/tmp/mgba-demo-eff-scene1.png")
+    fw.screenshot(fw.out_path("mgba-demo-eff-scene1.png"))
 
     -- ----------------------------------------------------------------
     -- Scene 2: Move cursor to right opponent (Squirtle / Water type)
@@ -63,12 +56,13 @@ fw.run(function()
     fw.press("LEFT")      -- cursor: battler 1 → battler 3
     fw.wait_frames(120)   -- 2 seconds to observe the updated colors
 
-    fw.screenshot("/tmp/mgba-demo-eff-scene2.png")
+    fw.screenshot(fw.out_path("mgba-demo-eff-scene2.png"))
 
-    -- Move cursor back to left opponent to reset state
-    fw.press("RIGHT")     -- cursor back to battler 1... actually goes to player partner
+    -- Move the cursor back: RIGHT goes to Charmander (battler 1, colours
+    -- switch back to the Fire matchups), RIGHT again to the player's partner
+    -- (an ally: the colours stay as they are).
+    fw.press("RIGHT")
     fw.wait_frames(30)
-    -- Keep pressing RIGHT until we wrap back to OPPONENT_LEFT
     fw.press("RIGHT")
     fw.wait_frames(30)
 
@@ -93,7 +87,7 @@ fw.run(function()
     fw.log("  Move menu re-opened. Colors should now reflect Squirtle (Water type).")
     fw.wait_frames(120)   -- 2 seconds to observe
 
-    fw.screenshot("/tmp/mgba-demo-eff-scene3.png")
+    fw.screenshot(fw.out_path("mgba-demo-eff-scene3.png"))
 
     fw.log("=== Demo complete ===")
     fw.finish()

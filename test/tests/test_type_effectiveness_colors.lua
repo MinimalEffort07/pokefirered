@@ -4,30 +4,21 @@
 -- Verifies that MoveSelectionSetEffectivenessColors correctly reflects the
 -- alive opponent in a double battle (issue #7).
 --
--- *** ONE-TIME MANUAL SETUP REQUIRED ***
+-- SETUP (automatic, every run):
+--   test/lib/route14_battle.lua boots a new game, gives the player two
+--   Pikachu (the lead knows Water Gun in move slot 0 and Vine Whip in move
+--   slot 1), and starts the Kiri & Jan double battle on Route 14 (east of
+--   Fuchsia City): Charmander (Fire, battler 1, opponent left) and Squirtle
+--   (Water, battler 3, opponent right), both level 29. It stops with the
+--   move-selection screen open on turn 1 and the cursor on move slot 0.
+--   No saved state is involved, so the test always matches the ROM it runs.
 --
--- This test requires a save state captured inside the Kiri & Jan double
--- battle on Route 14 (east of Fuchsia City, two sisters with Charmander +
--- Squirtle, both level 29). The state must be captured with the MOVE
--- SELECTION screen open on TURN 1 (both opponents alive).
---
--- Your lead Pokemon MUST have:
---   Move slot 0 — any Water-type move  (e.g., Water Gun, Surf)
---   Move slot 1 — any Grass-type move  (e.g., Absorb, Vine Whip)
---   Move slot 0's cursor must be selected (default)
---
--- HOW TO CREATE THE FIXTURE (do this once):
---   1. Open the ROM in mgba-qt:
---        mgba-qt pokefirered.gba
---   2. Set up a party lead with Water (slot 0) and Grass (slot 1) moves.
---   3. Walk to Route 14 and trigger the Kiri & Jan double battle.
---   4. When the MOVE SELECTION screen appears for YOUR FIRST TURN,
---      open the scripting console and run:
---        Tools > Scripting > File > Open >
---          test/tools/save_route14_battle_state.lua
---      That script saves the emulator state to
---        /tmp/pokefirered-route14-double.ss
---   5. Re-run this test; it will load the state and execute.
+-- WHERE THE COLOURS ARE READ:
+--   Each move name has its own BG palette (10..13 for move slots 0..3), and
+--   entry 13 of that palette is the text colour. The test reads it from
+--   gPlttBufferFaded, the copy the game sends to the GBA's palette memory
+--   every frame, and compares it with the RGB15 values
+--   GetMoveEffectivenessColor returns (ADDR.EFF_COLOR_*).
 --
 -- WHAT THIS TESTS:
 --   Sub-test A — Both opponents alive (default):
@@ -42,6 +33,9 @@
 --     Inject gAbsentBattlerFlags = 2 (battler 1 absent), then navigate
 --     FIGHT menu -> re-open move selection. InitMoveSelectionsVarsAndStrings
 --     must fall back to the right opponent (Squirtle / Water type).
+--     gMultiUsePlayerCursor = 0xFF proves the menu really reopened (sub-test
+--     C left the colours at the Squirtle values already, so without that
+--     check a menu that never reopened would pass).
 --     Water = NOT_VERY, Grass = SUPER.
 --
 -- HOW TO RUN:
@@ -54,8 +48,7 @@ local project_dir = script_dir .. "../../"
 
 local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
-
-local STATE_PATH = "/tmp/pokefirered-route14-double.ss"
+local r14  = dofile(project_dir .. "test/lib/route14_battle.lua")
 
 -- Read the GBA palette text-foreground color for move slot i (0=first move).
 local function move_color(slot)
@@ -74,31 +67,19 @@ end
 fw.run(function()
     fw.log("=== Test: Type Effectiveness Colors in Double Battle (issue #7) ===")
 
-    -- This test is visual — run at real-time so a human watching the GUI
-    -- can see the move menu colors changing as the cursor moves.
-    fw.slow_down("visual battle test — runs at real-time")
-    fw.wait_frames(10)
-
     -- ----------------------------------------------------------------
-    -- Load fixture
+    -- Reach move selection in the Kiri & Jan double battle
     -- ----------------------------------------------------------------
-    if not fw.try_load_state(STATE_PATH) then
-        fw.log_error("===")
-        fw.log_error("FIXTURE MISSING: " .. STATE_PATH)
-        fw.log_error("This test requires a one-time manual setup.")
-        fw.log_error("See the comment block at the top of this file for instructions.")
-        fw.log_error("Short version:")
-        fw.log_error("  1. Set up lead with Water move (slot 0) + Grass move (slot 1)")
-        fw.log_error("  2. Trigger Kiri & Jan double battle on Route 14")
-        fw.log_error("  3. When move selection opens (turn 1), run:")
-        fw.log_error("       test/tools/save_route14_battle_state.lua")
-        fw.log_error("===")
-        fw.assert_true(false, "fixture exists at " .. STATE_PATH)
+    if not r14.reach_move_selection() then
+        fw.assert_true(false, "reached move selection in the Kiri & Jan double battle")
         fw.finish()
         return
     end
 
-    fw.wait_frames(30)  -- let renderer settle after state load
+    -- From here on the test is visual: run at real-time in the GUI so a
+    -- human watching can see the move menu colours change.
+    fw.slow_down("visual battle test — runs at real-time")
+    fw.wait_frames(30)  -- let the move menu finish drawing
 
     -- ----------------------------------------------------------------
     -- Sanity-check: confirm we are facing Fire-type and Water-type opponents
@@ -113,8 +94,8 @@ fw.run(function()
 
     -- ----------------------------------------------------------------
     -- Sub-test A: both opponents alive — colors target left (Fire) opp
-    -- InitMoveSelectionsVarsAndStrings set these colors when the state was
-    -- saved. Both battlers are alive, so B_POSITION_OPPONENT_LEFT (battler 1)
+    -- InitMoveSelectionsVarsAndStrings set these colors when the move menu
+    -- opened. Both battlers are alive, so B_POSITION_OPPONENT_LEFT (battler 1)
     -- is used. Water vs Fire = SUPER, Grass vs Fire = NOT_VERY.
     -- ----------------------------------------------------------------
     fw.log("--- Sub-test A: both alive — colors reflect left opponent (Fire) ---")
@@ -125,7 +106,7 @@ fw.run(function()
     fw.assert_eq(a0, ADDR.EFF_COLOR_SUPER,    "A: Water move = super-effective vs Fire (slot 0)")
     fw.assert_eq(a1, ADDR.EFF_COLOR_NOT_VERY, "A: Grass move = not-very-effective vs Fire (slot 1)")
 
-    fw.screenshot("/tmp/mgba-type-eff-sub-a.png")
+    fw.screenshot(fw.out_path("mgba-type-eff-sub-a.png"))
 
     -- ----------------------------------------------------------------
     -- Sub-test C: real-time color update when cursor moves targets
@@ -163,7 +144,7 @@ fw.run(function()
     fw.assert_eq(c0, ADDR.EFF_COLOR_NOT_VERY, "C: Water move = not-very-effective vs Water (slot 0)")
     fw.assert_eq(c1, ADDR.EFF_COLOR_SUPER,    "C: Grass move = super-effective vs Water (slot 1)")
 
-    fw.screenshot("/tmp/mgba-type-eff-sub-c.png")
+    fw.screenshot(fw.out_path("mgba-type-eff-sub-c.png"))
 
     -- ----------------------------------------------------------------
     -- Sub-test B: absent-opponent fallback
@@ -188,6 +169,12 @@ fw.run(function()
     fw.press("A")       -- select FIGHT
     fw.wait_frames(120) -- wait for move selection to reopen and InitMoveSelectionsVarsAndStrings to run
 
+    -- InitMoveSelectionsVarsAndStrings sets gMultiUsePlayerCursor to 0xFF;
+    -- sub-test C left it at 3 (the target cursor). 0xFF here proves the
+    -- colours below were recomputed by the reopened menu.
+    fw.assert_eq(fw.read8(ADDR.gMultiUsePlayerCursor), 0xFF,
+        "B: move selection reopened (InitMoveSelectionsVarsAndStrings ran)")
+
     local b0 = move_color(0)
     local b1 = move_color(1)
     fw.log(string.format("  slot 0 = 0x%04X (want NOT_VERY = 0x%04X)", b0, ADDR.EFF_COLOR_NOT_VERY))
@@ -195,7 +182,7 @@ fw.run(function()
     fw.assert_eq(b0, ADDR.EFF_COLOR_NOT_VERY, "B: Water move = not-very-effective vs absent-left / Water-right (slot 0)")
     fw.assert_eq(b1, ADDR.EFF_COLOR_SUPER,    "B: Grass move = super-effective vs absent-left / Water-right (slot 1)")
 
-    fw.screenshot("/tmp/mgba-type-eff-sub-b.png")
+    fw.screenshot(fw.out_path("mgba-type-eff-sub-b.png"))
 
     fw.log("=== All sub-tests complete ===")
     fw.finish()
