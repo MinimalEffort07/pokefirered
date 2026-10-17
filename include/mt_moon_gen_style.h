@@ -63,11 +63,11 @@
  * coordinates: (0,0) is the top-left tile, x grows east, y grows south.
  * Reading outside the grid returns MT_MOON_CELL_WALL.
  *
- * buildShape works with WALL and FLOOR (and VISITED while one of the
- * core's flood fills runs). BLOCKED cells appear where a solid one-tile
- * prefab is stamped onto the floor (see ONE-TILE PREFABS below): by the
- * core after buildShape, or by a style at the very end of its buildShape
- * (B1F's junction rubble). A style's pickTile counts a BLOCKED cell as
+ * buildShape works with WALL and FLOOR only (VISITED is the core's mark
+ * inside its own flood fills, which never run during buildShape). BLOCKED
+ * cells appear where a solid one-tile prefab is stamped onto the floor (see
+ * ONE-TILE PREFABS below): by the core after buildShape, or by a style at
+ * the very end of its buildShape (B1F's junction rubble). A style's pickTile counts a BLOCKED cell as
  * floor (it is not WALL), so the tiles around a boulder are drawn as open
  * floor, the way vanilla draws them. The core draws the floor while its
  * content placement still marks the tiles objects stand on with a value of
@@ -388,9 +388,6 @@ void MtMoonGen_SetCell(s32 x, s32 y, u8 value);
  * BLOCKED); FALSE off the grid. */
 bool8 MtMoonGen_IsFloor(s32 x, s32 y);
 
-/* How many of the 8 cells around (x, y) are wall; off-grid counts as wall. */
-u8 MtMoonGen_CountWallNeighbors(s32 x, s32 y);
-
 /*
  * Which of the 8 cells around (x, y) are floor, as one byte with a bit per
  * neighbour (off-grid counts as wall). Reading all 8 in one call is much
@@ -422,9 +419,6 @@ u8 MtMoonGen_GetFloorMask(s32 x, s32 y);
  * which keeps the floor's load time down (test P9).
  */
 const u8 *MtMoonGen_GetRow(s32 y);
-
-/* TRUE if floor connects (fromX, fromY) to (toX, toY) in N/S/E/W steps. */
-bool8 MtMoonGen_FloodFillReaches(s32 fromX, s32 fromY, s32 toX, s32 toY);
 
 /*
  * The generator's private random number generator, seeded from the visit's
