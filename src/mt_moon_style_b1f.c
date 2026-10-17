@@ -711,29 +711,43 @@ static bool8 IsLadderSpot(const struct MtMoonCave *cave, const struct MtMoonLadd
  * MT_MOON_LADDER_MIN_DISTANCE from `other` if `other` isn't NULL. Every spot
  * gets an equal chance ("reservoir sampling": the k-th suitable spot found
  * replaces the choice so far with probability 1/k), in one pass over the
- * shape. Returns FALSE if there is no such spot.
+ * layout's floor. Returns FALSE if there is no such spot.
+ *
+ * LOAD TIME: the passes over the shape (here, HasRoomForContent and
+ * StampRubble) only visit the layout's rectangles, about a fifth of the
+ * map, instead of every map cell. The rectangles never overlap, so each
+ * floor cell is visited once. An up-ladder's cell has wall above it, so it
+ * is on the top row of its rectangle (any lower row has floor above it, in
+ * the same rectangle): only top rows are visited for one.
  */
-static bool8 PlaceLadder(const struct MtMoonCave *cave, struct MtMoonLadder *ladder, const struct MtMoonLadder *other)
+static bool8 PlaceLadder(const struct MtMoonCave *cave, const struct Layout *layout,
+                         struct MtMoonLadder *ladder, const struct MtMoonLadder *other)
 {
     struct MtMoonLadder spot = *ladder;
     s32 found = 0;
-    s32 x, y;
+    s32 i, x, y, lastRow;
 
-    for (y = MIN_Y; y <= MAX_Y(cave); y++)
+    for (i = 0; i < layout->rectCount; i++)
     {
-        for (x = MIN_X; x <= MAX_X(cave); x++)
+        const struct Rect *r = &layout->rects[i];
+
+        lastRow = (ladder->kind == MT_MOON_LADDER_UP) ? r->y1 : r->y2;
+        for (y = r->y1; y <= lastRow; y++)
         {
-            if (!IsLadderSpot(cave, ladder, x, y))
-                continue;
-            spot.x = x;
-            spot.y = y;
-            if (other != NULL && MtMoonGen_LadderDistance(&spot, other) < MT_MOON_LADDER_MIN_DISTANCE)
-                continue;
-            found++;
-            if (MtMoonGen_RandomBelow(found) == 0)
+            for (x = r->x1; x <= r->x2; x++)
             {
-                ladder->x = x;
-                ladder->y = y;
+                if (!IsLadderSpot(cave, ladder, x, y))
+                    continue;
+                spot.x = x;
+                spot.y = y;
+                if (other != NULL && MtMoonGen_LadderDistance(&spot, other) < MT_MOON_LADDER_MIN_DISTANCE)
+                    continue;
+                found++;
+                if (MtMoonGen_RandomBelow(found) == 0)
+                {
+                    ladder->x = x;
+                    ladder->y = y;
+                }
             }
         }
     }
@@ -749,15 +763,15 @@ static bool8 PlaceLadder(const struct MtMoonCave *cave, struct MtMoonLadder *lad
  * enough from it. If no exit spot is far enough, try another entrance.
  * B1F's two ladders are never fixed (see sFloors in the core).
  */
-static bool8 PlaceLadders(struct MtMoonCave *cave)
+static bool8 PlaceLadders(struct MtMoonCave *cave, const struct Layout *layout)
 {
     s32 i;
 
     for (i = 0; i < ENTRANCE_TRIES; i++)
     {
-        if (!PlaceLadder(cave, &cave->entrance, NULL))
+        if (!PlaceLadder(cave, layout, &cave->entrance, NULL))
             return FALSE;
-        if (PlaceLadder(cave, &cave->exit, &cave->entrance))
+        if (PlaceLadder(cave, layout, &cave->exit, &cave->entrance))
             return TRUE;
     }
     return FALSE;
@@ -793,31 +807,36 @@ static s32 KingDistance(s32 x1, s32 y1, s32 x2, s32 y2)
     return max(dx, dy);
 }
 
-static bool8 HasRoomForContent(const struct MtMoonCave *cave)
+static bool8 HasRoomForContent(const struct MtMoonCave *cave, const struct Layout *layout)
 {
     struct { u8 x, y; } spots[MIN_OPEN_SPOTS];
     s32 count = 0;
-    s32 x, y, i;
+    s32 x, y, i, j;
 
-    for (y = MIN_Y + 1; y < MAX_Y(cave); y++)
+    for (j = 0; j < layout->rectCount; j++)
     {
-        for (x = MIN_X + 1; x < MAX_X(cave); x++)
+        const struct Rect *r = &layout->rects[j];
+
+        for (y = r->y1; y <= r->y2; y++)
         {
-            if (KingDistance(x, y, cave->entrance.x, cave->entrance.y) < 3
-                || KingDistance(x, y, cave->exit.x, cave->exit.y) < 3
-                || !IsOpenSpot(cave, x, y))
-                continue;
-            for (i = 0; i < count; i++)
+            for (x = r->x1; x <= r->x2; x++)
             {
-                if (KingDistance(x, y, spots[i].x, spots[i].y) < 2)
-                    break;
+                if (KingDistance(x, y, cave->entrance.x, cave->entrance.y) < 3
+                    || KingDistance(x, y, cave->exit.x, cave->exit.y) < 3
+                    || !IsOpenSpot(cave, x, y))
+                    continue;
+                for (i = 0; i < count; i++)
+                {
+                    if (KingDistance(x, y, spots[i].x, spots[i].y) < 2)
+                        break;
+                }
+                if (i < count)
+                    continue;
+                spots[count].x = x;
+                spots[count].y = y;
+                if (++count == MIN_OPEN_SPOTS)
+                    return TRUE;
             }
-            if (i < count)
-                continue;
-            spots[count].x = x;
-            spots[count].y = y;
-            if (++count == MIN_OPEN_SPOTS)
-                return TRUE;
         }
     }
     return FALSE;
@@ -827,20 +846,21 @@ static bool8 HasRoomForContent(const struct MtMoonCave *cave)
 /* Putting it together                                                       */
 /* ------------------------------------------------------------------------- */
 
-/* Stamp every junction's rubble (see JUNCTIONS) onto the grid. */
-static void StampRubble(const struct MtMoonCave *cave)
+/* Stamp every junction's rubble (see JUNCTIONS) onto the grid. Rubble is
+ * floor with wall to its west, so it is always in the west column of its
+ * rectangle: only those columns are looked at. */
+static void StampRubble(const struct MtMoonCave *cave, const struct Layout *layout)
 {
-    s32 x, y;
+    s32 i, y;
 
-    for (y = MIN_Y; y <= MAX_Y(cave); y++)
+    for (i = 0; i < layout->rectCount; i++)
     {
-        struct RowWindow rows;
+        const struct Rect *r = &layout->rects[i];
 
-        ReadRows(cave, y, &rows);
-        for (x = MIN_X; x <= MAX_X(cave); x++)
+        for (y = r->y1; y <= r->y2; y++)
         {
-            if (RoleAt(&rows, x) == ROLE_RUBBLE)
-                MtMoonGen_StampTile(x, y, sRoleTiles[ROLE_RUBBLE]);
+            if (GetRole(cave, r->x1, y) == ROLE_RUBBLE)
+                MtMoonGen_StampTile(r->x1, y, sRoleTiles[ROLE_RUBBLE]);
         }
     }
 }
@@ -863,9 +883,9 @@ static void BuildB1FShape(struct MtMoonCave *cave)
             UseFallbackLayout(&layout);
         }
         CarveLayout(&layout, MT_MOON_CELL_FLOOR);
-        if (IsDrawable(cave) && PlaceLadders(cave) && HasRoomForContent(cave))
+        if (IsDrawable(cave) && PlaceLadders(cave, &layout) && HasRoomForContent(cave, &layout))
         {
-            StampRubble(cave);
+            StampRubble(cave, &layout);
             return;
         }
         CarveLayout(&layout, MT_MOON_CELL_WALL); /* back to all wall */
