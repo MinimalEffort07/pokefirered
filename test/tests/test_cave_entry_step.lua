@@ -18,11 +18,12 @@
 -- Part B — Pikachu follower via WALK menu: confirms follower spawns at the
 --   entrance tile (18, 37) and is NOT stacked on the player after the step.
 --
--- FIXTURE STATE (self-healing):
---   Boots through Oak's speech to the overworld, warps to Route 4 warpId=0
---   (the cave entrance tile at (19,5)) via warp_to. Saved to
---   /tmp/pokefirered-cave-entry-step.ss. Delete to recreate after a ROM
---   rebuild that shifts EWRAM symbol addresses.
+-- FIXTURE STATE:
+--   Boots through Oak's speech to the overworld, then puts the player on
+--   Route 4 at (19,6), one tile south of the cave entrance at (19,5), via
+--   warp_to_pos. Saved to this run's output directory (fw.out_path), so
+--   Part B reloads the same start and no run ever loads a state another
+--   build saved.
 --
 -- Run:    bash test/run_test.sh  test/tests/test_cave_entry_step.lua
 -- Record: bash test/record_test.sh test/tests/test_cave_entry_step.lua
@@ -35,8 +36,10 @@ local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 local warp = dofile(project_dir .. "test/lib/warp.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 
-local STATE_PATH  = "/tmp/pokefirered-cave-entry-step.ss"
-local PARTY_BASE  = 0x02024284   -- gPlayerParty
+local sym  = dofile(project_dir .. "test/lib/symbols.lua")
+
+local STATE_PATH  = fw.out_path("pokefirered-cave-entry-step.ss")
+local PARTY_BASE  = sym.addr("gPlayerParty")
 local POKEMON_SIZE = 100
 
 -- MAP_MT_MOON_1F = (1 | (1 << 8)) → mapGroup=1, mapNum=1
@@ -136,10 +139,13 @@ local function enter_cave()
     fw.wait_frames(120)
 end
 
+-- Every check also goes through fw.assert_true, so a failure reaches the
+-- results file and test/run_test.sh exits 1. (The local `results` list only
+-- feeds the summary line at the end.)
 local results = {}
 local function check(name, cond)
     results[#results + 1] = {name = name, pass = cond}
-    fw.log((cond and "[PASS] " or "[FAIL] ") .. name)
+    fw.assert_true(cond, name)
 end
 
 -- ------------------------------------------------------------------ --
@@ -271,9 +277,8 @@ fw.run(function()
         check("Part B: follower not stacked on player after step",
               not (fx == px2 and fy == py2))
     else
-        fw.log("[FAIL] Part B: follower ObjectEvent not found")
-        results[#results + 1] = {name = "Part B: follower spawned", pass = false}
-        results[#results + 1] = {name = "Part B: follower not stacked on player", pass = false}
+        check("Part B: follower spawned", false)
+        check("Part B: follower not stacked on player", false)
     end
 
     -- ================================================================== --
