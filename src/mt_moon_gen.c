@@ -53,18 +53,24 @@
  *   1. Seed the private random generator.
  *   2. Borrow an all-wall grid the size of the floor's layout, propose a
  *      position for each ladder the floor table doesn't fix
- *      (ProposeLadders), and let the floor's style carve the shape around
- *      the ladders, moving them first if it wants.
- *   3. Check the ladders (CheckLadders).
+ *      (ProposeLadders) and, on B2F, for the fossil chamber
+ *      (ProposeChamber), and let the floor's style carve the shape around
+ *      them, moving them first if it wants.
+ *   3. Check the ladders (CheckLadders). On B2F, stamp the fossil chamber,
+ *      a prefab copied from vanilla, and carve corridors so that both
+ *      ladders connect around it and its foot connects to them
+ *      (PlaceChamber; see FOSSIL CHAMBER below).
  *   4. Fill pockets (FillPockets): floor the player can't walk to becomes
  *      wall, so 100% of the floor is reachable.
  *   5. Rewrite the floor's event tables (SetUpEvents): the entrance and exit
  *      warps move onto the generated ladders, every other vanilla warp is
- *      parked at (0,0), a solid tile nobody can stand on, and the hidden
- *      items and signs get a RAM copy whose positions step 6 fills in.
- *   6. Place ALL of the floor's vanilla content (PlaceContent): trainers,
- *      NPCs and item balls on open floor, hidden items on a stamped
- *      boulder and signs on a stamped signpost. Every spot keeps the floor
+ *      parked at (0,0), a solid tile nobody can stand on, the hidden items
+ *      and signs get a RAM copy whose positions step 6 fills in, and
+ *      Miguel's trigger tile moves with the fossil chamber.
+ *   6. Place ALL of the floor's vanilla content (PlaceContent): Miguel and
+ *      the fossils in their places in the chamber; trainers, NPCs and item
+ *      balls on open floor, hidden items on a stamped boulder and signs on
+ *      a stamped signpost. Every spot keeps the floor
  *      connected and leaves a tile next to the piece for the player to
  *      stand on, facing it, carving open floor where nothing fits; a final
  *      flood fill checks the result (IsContentReachable). See CONTENT
@@ -75,7 +81,8 @@
  *   7. Turn each stationary trainer toward its longest straight run of
  *      open floor (FaceStationaryTrainers).
  *   8. Draw every map cell with the style's tile picker, then the stamped
- *      one-tile prefabs on top.
+ *      one-tile prefabs on top, and the fossil chamber's vanilla tiles
+ *      over everything.
  * Then, on a fresh entry, the player is put on the generated tile of the
  * warp they came through (PutPlayerOnArrivalWarp); on Continue, the safety
  * net makes sure the player stands on reachable floor
@@ -112,6 +119,7 @@
 #include "constants/event_bg.h"
 #include "constants/event_objects.h"
 #include "constants/event_object_movement.h"
+#include "constants/flags.h"
 #include "constants/layouts.h"
 #include "constants/trainer_types.h"
 #include "constants/vars.h"
@@ -123,6 +131,11 @@
  * items). Each costs 12 bytes of EWRAM (sMtMoonBgEvents, a static array, so
  * the 72 bytes are reserved for good). */
 #define MAX_BG_EVENTS 6
+
+/* Coordinate events (trigger tiles) kept per floor: B2F has one, Super Nerd
+ * Miguel's battle trigger; 1F and B1F have none. 16 bytes of EWRAM each
+ * (sMtMoonCoordEvents). */
+#define MAX_COORD_EVENTS 1
 
 /* One-tile prefabs per floor (see MtMoonGen_StampTile). They are kept in
  * the heap block borrowed for the grid, 4 bytes each, so room for many
@@ -179,6 +192,7 @@ struct MtMoonFloor
 {
     u16 layoutId;
     u8 floorNumber;     /* mixed into the seed, so floors get different caves */
+    bool8 hasChamber;   /* TRUE: the floor gets the fossil chamber prefab */
     struct MtMoonFloorLadder entrance;  /* toward Route 4 west */
     struct MtMoonFloorLadder exit;      /* toward Route 4 east */
     const struct MtMoonStyle *style;
@@ -214,6 +228,7 @@ static const struct MtMoonFloor sFloors[] =
     {
         .layoutId = LAYOUT_MT_MOON_B2F,
         .floorNumber = 3,
+        .hasChamber = TRUE,
         .entrance = LADDER_ANYWHERE(0, MT_MOON_LADDER_UP),
         .exit = LADDER_ANYWHERE(1, MT_MOON_LADDER_UP),
         .style = &gMtMoonStyleB2F,
@@ -269,9 +284,10 @@ static EWRAM_DATA u8 *sCaveGrid = NULL;
  * game reads them every time the player steps on a warp or presses A in
  * front of a hidden item or sign, so they must last as long as the floor
  * is loaded (unlike the grid). They are rebuilt from the seed on Continue.
- * (sMtMoonBgEvents' 72 bytes come out of the ~480 bytes of EWRAM that
- * moving the grid to the heap freed.) */
+ * (sMtMoonBgEvents' 72 bytes and sMtMoonCoordEvents' 16 come out of the
+ * ~480 bytes of EWRAM that moving the grid to the heap freed.) */
 static EWRAM_DATA struct WarpEvent sMtMoonWarps[MAX_WARPS] = {0};
+static EWRAM_DATA struct CoordEvent sMtMoonCoordEvents[MAX_COORD_EVENTS] = {0};
 static EWRAM_DATA struct BgEvent sMtMoonBgEvents[MAX_BG_EVENTS] = {0};
 static EWRAM_DATA struct MapEvents sMtMoonEvents = {0};
 
@@ -299,6 +315,25 @@ struct Box
     s16 y2;
 };
 
+/*
+ * TRUE if two boxes are fewer than `gap` king moves apart (steps in any of
+ * the 8 directions; 0 when they overlap). The gap between the boxes along x
+ * is the larger of (b.x1 - a.x2) and (a.x1 - b.x2), and they are closer
+ * than `gap` exactly when the gaps along both x and y are.
+ */
+#define BOXES_CLOSER_THAN(a, b, gap)                         \
+    ((b)->x1 - (a)->x2 < (gap) && (a)->x1 - (b)->x2 < (gap)  \
+  && (b)->y1 - (a)->y2 < (gap) && (a)->y1 - (b)->y2 < (gap))
+
+static bool8 IsNearLadder(const struct Box *box, const struct MtMoonLadder *ladder, s32 clearance)
+{
+    struct Box tile;
+
+    tile.x1 = tile.x2 = ladder->x;
+    tile.y1 = tile.y2 = ladder->y;
+    return BOXES_CLOSER_THAN(box, &tile, clearance);
+}
+
 /* At most 64 objects (the save block's template array) and the bg events:
  * every PIECE of content (see CONTENT PLACEMENT). */
 #define MAX_PIECES (OBJECT_EVENT_TEMPLATES_COUNT + MAX_BG_EVENTS)
@@ -314,6 +349,10 @@ struct Placement
     /* The boxes of every piece placed so far (rule 3). */
     s32 count;
     struct Box boxes[MAX_PIECES];
+    /* The fossil chamber's box (GetChamberBox), which nothing else may come
+     * near, if the floor has a chamber (rule 5). */
+    bool8 hasChamber;
+    struct Box chamberBox;
 };
 
 /*
@@ -327,6 +366,8 @@ struct GenerationWork
 {
     struct StampList stamps;
     struct Placement placement;
+    bool8 hasChamber;              /* the floor table's hasChamber */
+    struct MtMoonChamber chamber;  /* where the fossil chamber goes */
 };
 
 /* ------------------------------------------------------------------------- */
@@ -927,6 +968,392 @@ static bool8 CheckLadders(const struct MtMoonFloor *floor)
 }
 
 /* ------------------------------------------------------------------------- */
+/* Fossil chamber                                                            */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * FOSSIL CHAMBER
+ *
+ * B2F's fossil chamber is a prefab: a 13 x 9 block of vanilla B2F's own
+ * tiles, copied tile for tile to wherever the chamber goes on the generated
+ * B2F. Super Nerd Miguel, the Dome and Helix Fossils and Miguel's battle
+ * trigger tile all stand inside that block in vanilla, and they move with
+ * it, keeping their vanilla places in it: after the player takes a fossil,
+ * Miguel's script walks him to the other one with fixed steps (walk_right,
+ * walk_up x3 to the Helix Fossil; walk_up x3 to the Dome Fossil), which
+ * only end in front of the right fossil if nothing inside moved. The
+ * chamber's layout, its rules and what a style may do with it are in
+ * include/mt_moon_gen_style.h (THE FOSSIL CHAMBER).
+ *
+ * The tiles are read straight from the floor's own vanilla layout in ROM
+ * (gMapHeader.mapLayout->map, the map.bin the game was built with), so no
+ * copy of them is kept here and they can't drift from vanilla.
+ *
+ * In GenerateFloor, for a floor that has a chamber:
+ *   1. ProposeChamber, before buildShape: a random position that follows
+ *      the rules (IsChamberSpotAllowed).
+ *   2. PlaceChamber, after buildShape: check the (possibly moved) position,
+ *      stamp the chamber's cells into the grid, then carve corridors so
+ *      that both ladders still connect without going through the chamber
+ *      and the chamber's foot connects to them (CarveCorridorToEntrance).
+ *   3. SetUpEvents and PlaceContent move Miguel's trigger, Miguel and the
+ *      fossils to their places in it, and keep everything else out.
+ *   4. DrawCave draws its vanilla tiles last, over the style's.
+ */
+
+/* The chamber's top-left tile in vanilla B2F (see THE FOSSIL CHAMBER in
+ * mt_moon_gen_style.h for its size and layout). */
+#define CHAMBER_SRC_X 8
+#define CHAMBER_SRC_Y 7
+
+/* The chamber's foot, relative to its top-left tile: the landing cell in
+ * front of its stairs. */
+#define CHAMBER_FOOT_DX 5
+#define CHAMBER_FOOT_DY 6
+
+/* How far the chamber's box (GetChamberBox) stays from each ladder, in king
+ * moves. A ladder's footprint reaches 2 cells out from it, so this leaves
+ * at least one free cell between a footprint and the chamber. */
+#define CHAMBER_LADDER_CLEARANCE 4
+
+/* How many random positions ProposeChamber tries before scanning for one. */
+#define CHAMBER_RANDOM_TRIES 64
+
+struct MtMoonChamber *MtMoonGen_GetChamber(void)
+{
+    if (sCaveGrid == NULL || !Work()->hasChamber)
+        return NULL;
+    return &Work()->chamber;
+}
+
+static bool8 HasChamber(void)
+{
+    return MtMoonGen_GetChamber() != NULL;
+}
+
+/* The vanilla map cell value of the chamber's tile (dx, dy), counted from
+ * its top-left tile. */
+static u16 GetChamberTile(s32 dx, s32 dy)
+{
+    const struct MapLayout *layout = gMapHeader.mapLayout;
+
+    return layout->map[(CHAMBER_SRC_Y + dy) * layout->width + CHAMBER_SRC_X + dx];
+}
+
+/*
+ * The box nothing else may come into: the chamber itself plus the row above
+ * it (which holds the 2 cells behind the fossils). Content placement keeps
+ * every piece a free tile away from it, and no carving ever reaches it.
+ */
+static void GetChamberBox(struct Box *box)
+{
+    const struct MtMoonChamber *chamber = &Work()->chamber;
+
+    box->x1 = chamber->x;
+    box->y1 = chamber->y - 1;
+    box->x2 = chamber->x + MT_MOON_CHAMBER_WIDTH - 1;
+    box->y2 = chamber->y + MT_MOON_CHAMBER_HEIGHT - 1;
+}
+
+/* TRUE if vanilla tile (x, y) of the floor lies in the chamber's vanilla
+ * block, so whatever vanilla put there moves with the chamber. */
+static bool8 IsInChamberSource(s32 x, s32 y)
+{
+    return x >= CHAMBER_SRC_X && x < CHAMBER_SRC_X + MT_MOON_CHAMBER_WIDTH
+        && y >= CHAMBER_SRC_Y && y < CHAMBER_SRC_Y + MT_MOON_CHAMBER_HEIGHT;
+}
+
+void MtMoonGen_MarkChamberSite(void)
+{
+    const struct MtMoonChamber *chamber = MtMoonGen_GetChamber();
+    s32 dx, dy;
+
+    if (chamber == NULL)
+        return;
+    for (dy = 0; dy < MT_MOON_CHAMBER_HEIGHT; dy++)
+    {
+        for (dx = 0; dx < MT_MOON_CHAMBER_WIDTH; dx++)
+            MtMoonGen_SetCell(chamber->x + dx, chamber->y + dy,
+                IS_SOLID_TILE(GetChamberTile(dx, dy)) ? MT_MOON_CELL_WALL : MT_MOON_CELL_FLOOR);
+    }
+    /* The fossils stand on the walkable tiles of the top row; the cells
+     * above them must be wall, or a fossil could be taken from outside,
+     * without passing Miguel's trigger. */
+    for (dx = 0; dx < MT_MOON_CHAMBER_WIDTH; dx++)
+    {
+        if (!IS_SOLID_TILE(GetChamberTile(dx, 0)))
+            MtMoonGen_SetCell(chamber->x + dx, chamber->y - 1, MT_MOON_CELL_WALL);
+    }
+}
+
+void MtMoonGen_GetChamberFoot(s32 *x, s32 *y)
+{
+    *x = Work()->chamber.x + CHAMBER_FOOT_DX;
+    *y = Work()->chamber.y + CHAMBER_FOOT_DY;
+}
+
+/* Turn every `from` cell of the chamber into `to`. */
+static void ReplaceChamberCells(u8 from, u8 to)
+{
+    const struct MtMoonChamber *chamber = &Work()->chamber;
+    s32 x, y;
+
+    for (y = chamber->y; y < chamber->y + MT_MOON_CHAMBER_HEIGHT; y++)
+    {
+        u8 *row = &sCaveGrid[CELL_INDEX(0, y)];
+
+        for (x = chamber->x; x < chamber->x + MT_MOON_CHAMBER_WIDTH; x++)
+        {
+            if (row[x] == from)
+                row[x] = to;
+        }
+    }
+}
+
+/*
+ * Rule 1 of THE FOSSIL CHAMBER (mt_moon_gen_style.h): with its top-left
+ * tile at (x, y), the chamber lies inside the 2-cell border (3 at the
+ * bottom) with the row below it inside too (its landing opens south), and
+ * its box is CHAMBER_LADDER_CLEARANCE from both ladders.
+ */
+static bool8 IsChamberSpotAllowed(s32 x, s32 y)
+{
+    struct Box box;
+
+    if (x < 2 || y < 2 || x + MT_MOON_CHAMBER_WIDTH > sCave.width - 2
+        || y + MT_MOON_CHAMBER_HEIGHT > sCave.height - 4)
+        return FALSE;
+    box.x1 = x;
+    box.y1 = y - 1;
+    box.x2 = x + MT_MOON_CHAMBER_WIDTH - 1;
+    box.y2 = y + MT_MOON_CHAMBER_HEIGHT - 1;
+    return !IsNearLadder(&box, &sCave.entrance, CHAMBER_LADDER_CLEARANCE)
+        && !IsNearLadder(&box, &sCave.exit, CHAMBER_LADDER_CLEARANCE);
+}
+
+/*
+ * The core's proposal (rule 1): random positions until one is allowed,
+ * then, if none of CHAMBER_RANDOM_TRIES was (practically never: on a
+ * 48 x 40 floor most positions are), the first allowed one in reading
+ * order. If there is none at all, the last random one stays and
+ * PlaceChamber rejects the shape.
+ */
+static void ProposeChamber(void)
+{
+    struct MtMoonChamber *chamber = &Work()->chamber;
+    /* x runs from 2 to width - 15, y from 2 to height - 13 (see
+     * IsChamberSpotAllowed). */
+    s32 xCount = sCave.width - MT_MOON_CHAMBER_WIDTH - 3;
+    s32 yCount = sCave.height - MT_MOON_CHAMBER_HEIGHT - 5;
+    s32 i, x, y;
+
+    for (i = 0; i < CHAMBER_RANDOM_TRIES; i++)
+    {
+        chamber->x = MtMoonGen_RandomBelow(xCount) + 2;
+        chamber->y = MtMoonGen_RandomBelow(yCount) + 2;
+        if (IsChamberSpotAllowed(chamber->x, chamber->y))
+            return;
+    }
+    for (y = 2; y < yCount + 2; y++)
+    {
+        for (x = 2; x < xCount + 2; x++)
+        {
+            if (IsChamberSpotAllowed(x, y))
+            {
+                chamber->x = x;
+                chamber->y = y;
+                return;
+            }
+        }
+    }
+}
+
+/*
+ * CORRIDORS
+ *
+ * Stamping the chamber turns a 13 x 9 block into its own walls and floor,
+ * whatever the style made there, so it can cut the style's cave apart.
+ * CarveCorridorToEntrance repairs that: it makes floor cell (x, y)
+ * reachable on foot from the entrance (without stepping on a ladder),
+ * carving the shortest corridor of wall cells if it isn't already.
+ *
+ * It is a breadth-first search, like MarkReachableFrom, but starting from
+ * (x, y) and allowed to step into wall cells it may carve: inside the
+ * 2-cell border (3 at the bottom, the border every style keeps), outside
+ * the chamber's box and away from both ladders' footprints (NEAR_LADDER).
+ * It may also cross floor the entrance can't reach yet (a pocket). It ends
+ * at the first cell next to floor the entrance reaches. That cell and the
+ * search's way back to (x, y) become floor: every cell the search enters
+ * remembers which step entered it (north, south, west or east), so the way
+ * back is followed one remembered step at a time.
+ *
+ * The search keeps its notes in the grid itself, as values that exist only
+ * while it runs (no extra memory is needed): CELL_SEARCHED_WALL + step for
+ * a wall cell, CELL_SEARCHED_FLOOR + step for an unreached floor cell. At
+ * the end every cell gets its old value back, apart from the corridor.
+ * Cells the chamber hides (ReplaceChamberCells to BLOCKED) can't be crossed.
+ */
+#define CELL_SEARCHED_WALL  8   /* + step, 0-3 */
+#define CELL_SEARCHED_FLOOR 12  /* + step, 0-3 */
+
+/* The steps: north, south, west, east. */
+static const s8 sStepDx[4] = { 0, 0, -1, 1 };
+static const s8 sStepDy[4] = { -1, 1, 0, 0 };
+
+/* TRUE if the search may carve through wall cell (x, y), which is inside
+ * the grid or on its wall frame. */
+static bool8 IsCarvableWall(s32 x, s32 y, const struct Box *chamberBox)
+{
+    if (x < 2 || y < 2 || x > sCave.width - 3 || y > sCave.height - 4)
+        return FALSE;
+    if (NEAR_LADDER(sCave.entrance, x, y) || NEAR_LADDER(sCave.exit, x, y))
+        return FALSE;
+    return chamberBox == NULL
+        || x < chamberBox->x1 || x > chamberBox->x2 || y < chamberBox->y1 || y > chamberBox->y2;
+}
+
+static bool8 CarveCorridorToEntrance(s32 x, s32 y)
+{
+    u16 *queue = FloodQueue();
+    s32 head = 0, tail = 0;
+    s32 i, step, cx = 0, cy = 0;
+    s32 count = (sCave.width + 2) * (sCave.height + 2);
+    s32 marked = MarkWalkableFromEntrance();
+    bool8 found = FALSE;
+    struct Box box;
+    const struct Box *chamberBox = NULL;
+    u8 start = MtMoonGen_GetCell(x, y);
+
+    if (start != MT_MOON_CELL_FLOOR)
+    {
+        ClearWalkableMarks(marked);
+        return start == MT_MOON_CELL_VISITED; /* already reachable */
+    }
+    if (HasChamber())
+    {
+        GetChamberBox(&box);
+        chamberBox = &box;
+    }
+
+    /* The queue now holds the search's cells (packed x | y << 8), so the
+     * marks are undone by the sweep at the end instead of ClearVisited. */
+    sCaveGrid[CELL_INDEX(x, y)] = CELL_SEARCHED_FLOOR;
+    queue[tail++] = x | (y << 8);
+    while (head < tail && !found)
+    {
+        cx = queue[head] & 0xFF;
+        cy = queue[head] >> 8;
+        head++;
+        for (step = 0; step < 4; step++)
+        {
+            s32 nx = cx + sStepDx[step];
+            s32 ny = cy + sStepDy[step];
+            u8 *cell = &sCaveGrid[CELL_INDEX(nx, ny)]; /* the wall frame keeps it in the array */
+
+            if (*cell == MT_MOON_CELL_VISITED)
+            {
+                found = TRUE;
+                break;
+            }
+            if (*cell == MT_MOON_CELL_FLOOR)
+                *cell = CELL_SEARCHED_FLOOR + step;
+            else if (*cell == MT_MOON_CELL_WALL && IsCarvableWall(nx, ny, chamberBox))
+                *cell = CELL_SEARCHED_WALL + step;
+            else
+                continue;
+            queue[tail++] = nx | (ny << 8);
+        }
+    }
+
+    /* Carve the way back from (cx, cy), the cell next to reachable floor. */
+    if (found)
+    {
+        while (cx != x || cy != y)
+        {
+            u8 *cell = &sCaveGrid[CELL_INDEX(cx, cy)];
+
+            step = *cell & 3;
+            *cell = MT_MOON_CELL_FLOOR;
+            cx -= sStepDx[step];
+            cy -= sStepDy[step];
+        }
+    }
+
+    /* Give every other cell its value back (the wall frame is wall). */
+    for (i = 0; i < count; i++)
+    {
+        u8 value = sCaveGrid[i];
+
+        if (value == MT_MOON_CELL_VISITED || value >= CELL_SEARCHED_FLOOR)
+            sCaveGrid[i] = MT_MOON_CELL_FLOOR;
+        else if (value >= CELL_SEARCHED_WALL)
+            sCaveGrid[i] = MT_MOON_CELL_WALL;
+    }
+    sCaveGrid[CELL_INDEX(sCave.entrance.x, sCave.entrance.y)] = MT_MOON_CELL_FLOOR;
+    sCaveGrid[CELL_INDEX(sCave.exit.x, sCave.exit.y)] = MT_MOON_CELL_FLOOR;
+    return found;
+}
+
+/* Make every floor cell of `ladder`'s footprint (apart from the ladder
+ * itself) reachable from the entrance. */
+static bool8 ConnectFootprint(const struct MtMoonLadder *ladder)
+{
+    const struct LadderKind *kind = &sLadderKinds[ladder->kind];
+    s32 i;
+
+    for (i = 0; i < kind->cellCount; i++)
+    {
+        if (IsFootprintFloor(&kind->cells[i])
+            && !CarveCorridorToEntrance(ladder->x + kind->cells[i].dx, ladder->y + kind->cells[i].dy))
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/*
+ * Rule 2 of THE FOSSIL CHAMBER (mt_moon_gen_style.h): check where the style
+ * left the chamber, stamp its cells and carve the corridors. While the
+ * ladders are reconnected, the chamber's floor is BLOCKED, so they connect
+ * around it, never through it: the chamber stays a side room, never the
+ * only way across the floor. Then the chamber's foot is connected too.
+ * Returns FALSE if the shape can't take the chamber (GenerateFloor then
+ * asks the style for a new one).
+ */
+static bool8 PlaceChamber(void)
+{
+    const struct MtMoonChamber *chamber = &Work()->chamber;
+    bool8 connected;
+    s32 footX, footY;
+
+    if (!IsChamberSpotAllowed(chamber->x, chamber->y))
+        return FALSE;
+    MtMoonGen_MarkChamberSite();
+    ReplaceChamberCells(MT_MOON_CELL_FLOOR, MT_MOON_CELL_BLOCKED);
+    connected = ConnectFootprint(&sCave.entrance) && ConnectFootprint(&sCave.exit);
+    ReplaceChamberCells(MT_MOON_CELL_BLOCKED, MT_MOON_CELL_FLOOR);
+    if (!connected)
+        return FALSE;
+    MtMoonGen_GetChamberFoot(&footX, &footY);
+    return CarveCorridorToEntrance(footX, footY);
+}
+
+/* Draw the chamber's vanilla tiles over whatever the style drew there,
+ * straight into the map buffer (see DrawCave). */
+static void DrawChamber(void)
+{
+    const struct MtMoonChamber *chamber = &Work()->chamber;
+    s32 dx, dy;
+
+    for (dy = 0; dy < MT_MOON_CHAMBER_HEIGHT; dy++)
+    {
+        u16 *dest = &VMap.map[(chamber->y + dy + MAP_OFFSET) * VMap.Xsize + chamber->x + MAP_OFFSET];
+
+        for (dx = 0; dx < MT_MOON_CHAMBER_WIDTH; dx++)
+            dest[dx] = GetChamberTile(dx, dy);
+    }
+}
+
+/* ------------------------------------------------------------------------- */
 /* Pockets                                                                   */
 /* ------------------------------------------------------------------------- */
 
@@ -938,6 +1365,10 @@ static bool8 CheckLadders(const struct MtMoonFloor *floor)
  * After this, the floor without the two ladder cells is one connected
  * piece, and every floor cell next to a ladder belongs to it. Content
  * placement (PlaceContent) keeps it that way.
+ *
+ * The fossil chamber is never touched (PlaceChamber has connected it, so
+ * none of it is a pocket anyway): its unreached floor, if there were any,
+ * is hidden as BLOCKED while the pockets are filled.
  */
 static void FillPockets(void)
 {
@@ -945,6 +1376,8 @@ static void FillPockets(void)
     s32 count = (sCave.width + 2) * (sCave.height + 2);
     s32 marked = MarkWalkableFromEntrance();
 
+    if (HasChamber())
+        ReplaceChamberCells(MT_MOON_CELL_FLOOR, MT_MOON_CELL_BLOCKED);
     /* The reached cells are VISITED now, so the FLOOR ones left are the
      * pockets. (The wall frame is wall, so the loop can run over it.) */
     for (i = 0; i < count; i++)
@@ -953,6 +1386,8 @@ static void FillPockets(void)
             sCaveGrid[i] = MT_MOON_CELL_WALL;
     }
     ClearWalkableMarks(marked);
+    if (HasChamber())
+        ReplaceChamberCells(MT_MOON_CELL_BLOCKED, MT_MOON_CELL_FLOOR);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -994,8 +1429,9 @@ bool8 MtMoonGen_StampTile(s32 x, s32 y, u16 tile)
  * (InitMapLayoutData in src/fieldmap.c sizes it so), so map tile (x, y) is
  * always inside it at (x + MAP_OFFSET, y + MAP_OFFSET).
  *
- * The stamped one-tile prefabs (MtMoonGen_StampTile) are written last, on
- * top of whatever the style drew there.
+ * The stamped one-tile prefabs (MtMoonGen_StampTile) are written on top of
+ * whatever the style drew there, and the fossil chamber (DrawChamber) last
+ * of all.
  */
 static void DrawCave(const struct MtMoonFloor *floor)
 {
@@ -1018,6 +1454,8 @@ static void DrawCave(const struct MtMoonFloor *floor)
 
         VMap.map[(stamp->y + MAP_OFFSET) * VMap.Xsize + stamp->x + MAP_OFFSET] = stamp->tile;
     }
+    if (HasChamber())
+        DrawChamber();
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1032,21 +1470,28 @@ static void DrawCave(const struct MtMoonFloor *floor)
  *     parked at (0,0), which is always solid wall, so it can never fire;
  *   - hidden items and signs: copied whole (which item, which flag, which
  *     script); PlaceContent then gives each one its generated position;
- *   - objects and coordinate triggers keep pointing at the ROM. Objects
- *     get their generated positions in the save block's templates instead
- *     (PlaceContent), and B2F's one trigger, Miguel's, stays at its vanilla
- *     tile (14,11) until the fossil chamber is built around it.
+ *   - coordinate events (trigger tiles): copied whole. B2F's one trigger,
+ *     Miguel's, lies in the fossil chamber's vanilla block, so it moves
+ *     with the chamber, keeping its place right next to Miguel. (Mt. Moon
+ *     has no other trigger; one outside a chamber would keep its vanilla
+ *     tile.)
+ *   - objects keep pointing at the ROM; they get their generated positions
+ *     in the save block's templates instead (PlaceContent).
  */
 static void SetUpEvents(const struct MtMoonFloor *floor, const struct MapEvents *rom)
 {
     s32 i;
     s32 warpCount = rom->warpCount;
+    s32 coordCount = rom->coordEventCount;
     s32 bgCount = rom->bgEventCount;
 
-    /* Never true on Mt. Moon (B1F has the most of both); just a guard
-     * against overrunning the RAM tables if the maps ever change. */
+    /* Never true on Mt. Moon (B1F has the most warps and bg events, B2F
+     * the one trigger); just a guard against overrunning the RAM tables if
+     * the maps ever change. */
     if (warpCount > MAX_WARPS)
         warpCount = MAX_WARPS;
+    if (coordCount > MAX_COORD_EVENTS)
+        coordCount = MAX_COORD_EVENTS;
     if (bgCount > MAX_BG_EVENTS)
         bgCount = MAX_BG_EVENTS;
 
@@ -1061,11 +1506,22 @@ static void SetUpEvents(const struct MtMoonFloor *floor, const struct MapEvents 
     sMtMoonWarps[floor->entrance.warpId].y = sCave.entrance.y;
     sMtMoonWarps[floor->exit.warpId].x = sCave.exit.x;
     sMtMoonWarps[floor->exit.warpId].y = sCave.exit.y;
+    for (i = 0; i < coordCount; i++)
+    {
+        sMtMoonCoordEvents[i] = rom->coordEvents[i];
+        if (HasChamber() && IsInChamberSource(rom->coordEvents[i].x, rom->coordEvents[i].y))
+        {
+            sMtMoonCoordEvents[i].x = Work()->chamber.x + rom->coordEvents[i].x - CHAMBER_SRC_X;
+            sMtMoonCoordEvents[i].y = Work()->chamber.y + rom->coordEvents[i].y - CHAMBER_SRC_Y;
+        }
+    }
     for (i = 0; i < bgCount; i++)
         sMtMoonBgEvents[i] = rom->bgEvents[i];
 
     sMtMoonEvents.warps = sMtMoonWarps;
     sMtMoonEvents.warpCount = warpCount;
+    sMtMoonEvents.coordEvents = sMtMoonCoordEvents;
+    sMtMoonEvents.coordEventCount = coordCount;
     sMtMoonEvents.bgEvents = sMtMoonBgEvents;
     sMtMoonEvents.bgEventCount = bgCount;
     gMapHeader.events = &sMtMoonEvents;
@@ -1110,11 +1566,22 @@ static void SetUpEvents(const struct MtMoonFloor *floor, const struct MapEvents 
  *      exist: it is where the player stands to face the piece.
  *      Hidden items and signs are stricter: their whole ring must be free
  *      floor, so the boulder or signpost stands alone in open floor (as
- *      vanilla's sign does).
+ *      vanilla's sign does);
+ *   5. on a floor with the fossil chamber, the box is at least 2 tiles from
+ *      the chamber's box (GetChamberBox), so nothing is placed in the
+ *      chamber, and nothing in the free tile around it, the tile in front
+ *      of its landing included. Because the box's ring then lies outside
+ *      the chamber too, rule 4's way around a piece never goes through the
+ *      chamber: the ladders stay connected without it (PlaceChamber).
  * Since every placement keeps the floor in one piece (rule 4) and no later
  * piece can take a tile next to an earlier one (rule 3), every rule above
  * still holds once the last piece is placed. IsContentReachable then checks
  * the result with one flood fill anyway.
+ *
+ * The fossil chamber's own content comes first and isn't placed by these
+ * rules: Miguel and the two fossils simply go to their places in the
+ * chamber (PlaceChamberObjects), the vanilla ones moved by the chamber's
+ * offset, and their tiles are taken like any piece's.
  *
  * Finding a spot (FindSpot) looks at the CANDIDATES (the tiles that were
  * free floor when placement started, plus any floor carved since), trying
@@ -1157,6 +1624,7 @@ static void SetUpEvents(const struct MtMoonFloor *floor, const struct MapEvents 
 
 #define LADDER_CLEARANCE 3   /* rule 2 */
 #define PIECE_SPACING    2   /* rule 3 */
+#define CHAMBER_SPACING  2   /* rule 5 */
 #define RANDOM_TRIES     64  /* way a */
 
 /* The biggest ring: around a 31 x 31 box, the largest a movement range
@@ -1237,31 +1705,14 @@ static void GetPieceBox(const struct PieceShape *shape, s32 x, s32 y, struct Box
     }
 }
 
-/*
- * TRUE if two boxes are fewer than `gap` king moves apart (steps in any of
- * the 8 directions; 0 when they overlap). The gap between the boxes along x
- * is the larger of (b.x1 - a.x2) and (a.x1 - b.x2), and they are closer
- * than `gap` exactly when the gaps along both x and y are.
- */
-#define BOXES_CLOSER_THAN(a, b, gap)                         \
-    ((b)->x1 - (a)->x2 < (gap) && (a)->x1 - (b)->x2 < (gap)  \
-  && (b)->y1 - (a)->y2 < (gap) && (a)->y1 - (b)->y2 < (gap))
-
-static bool8 IsNearLadder(const struct Box *box, const struct MtMoonLadder *ladder, s32 clearance)
-{
-    struct Box tile;
-
-    tile.x1 = tile.x2 = ladder->x;
-    tile.y1 = tile.y2 = ladder->y;
-    return BOXES_CLOSER_THAN(box, &tile, clearance);
-}
-
-/* Rules 2 and 3, with the given clearance from the ladders. */
+/* Rules 2, 3 and 5, with the given clearance from the ladders. */
 static bool8 IsClearOfLaddersAndPieces(const struct Box *box, s32 ladderClearance, const struct Placement *placement)
 {
     s32 i;
 
     if (IsNearLadder(box, &sCave.entrance, ladderClearance) || IsNearLadder(box, &sCave.exit, ladderClearance))
+        return FALSE;
+    if (placement->hasChamber && BOXES_CLOSER_THAN(box, &placement->chamberBox, CHAMBER_SPACING))
         return FALSE;
     for (i = 0; i < placement->count; i++)
     {
@@ -1388,7 +1839,8 @@ static bool8 IsGoodSpot(const struct Box *box, const struct PieceShape *shape, c
  * floor? They must stay inside a 2-tile border (3 at the bottom, the border
  * every style keeps solid), the ring must stay 3+ tiles from the ladders
  * (their footprints reach 2 tiles out), the usual spacing from placed
- * pieces must hold, nothing stamped or occupied may be inside, and at
+ * pieces and the fossil chamber must hold (so the carving never reaches
+ * the chamber), nothing stamped or occupied may be inside, and at
  * least one tile inside must already be free floor: that tile joins the
  * carved area to the rest of the cave (all free floor is connected).
  */
@@ -1593,10 +2045,13 @@ static bool8 PlaceBgEvent(struct BgEvent *bgEvent, struct Placement *placement)
     return TRUE;
 }
 
-/* List every free floor tile as a candidate (see struct Placement). */
+/* List every free floor tile as a candidate (see struct Placement), apart
+ * from those rule 5 rules out for any piece: the tiles in or right next to
+ * the fossil chamber. */
 static void ListCandidates(struct Placement *placement)
 {
     s32 x, y;
+    struct Box tile;
 
     placement->candidates = FloodQueue();
     placement->candidateCount = 0;
@@ -1606,9 +2061,50 @@ static void ListCandidates(struct Placement *placement)
 
         for (x = 0; x < sCave.width; x++)
         {
-            if (row[x] == MT_MOON_CELL_FLOOR)
-                placement->candidates[placement->candidateCount++] = x | (y << 8);
+            if (row[x] != MT_MOON_CELL_FLOOR)
+                continue;
+            tile.x1 = tile.x2 = x;
+            tile.y1 = tile.y2 = y;
+            if (placement->hasChamber && BOXES_CLOSER_THAN(&tile, &placement->chamberBox, CHAMBER_SPACING))
+                continue;
+            placement->candidates[placement->candidateCount++] = x | (y << 8);
         }
+    }
+}
+
+/* TRUE if object i of the floor stands inside the fossil chamber's vanilla
+ * block (Miguel and the two fossils on B2F), so it moves with the chamber.
+ * Decided by its vanilla (ROM) position. */
+static bool8 IsChamberObject(s32 i)
+{
+    const struct ObjectEventTemplate *rom = &sMtMoonEvents.objectEvents[i];
+
+    return HasChamber() && rom->kind != OBJ_KIND_CLONE && IsInChamberSource(rom->x, rom->y);
+}
+
+/* Put the fossil chamber's objects in their places in the chamber: their
+ * vanilla positions, moved by the chamber's offset from vanilla. Their
+ * tiles are taken like any piece's, so the final check (IsContentReachable)
+ * makes sure the player can stand next to each of them. */
+static void PlaceChamberObjects(struct Placement *placement)
+{
+    struct ObjectEventTemplate *templates = gSaveBlock1Ptr->objectEventTemplates;
+    const struct MtMoonChamber *chamber = &Work()->chamber;
+    struct PieceShape shape;
+    struct Box box;
+    s32 i;
+
+    for (i = 0; i < sMtMoonEvents.objectEventCount; i++)
+    {
+        if (!IsChamberObject(i))
+            continue;
+        templates[i].x = chamber->x + sMtMoonEvents.objectEvents[i].x - CHAMBER_SRC_X;
+        templates[i].y = chamber->y + sMtMoonEvents.objectEvents[i].y - CHAMBER_SRC_Y;
+        shape.movementType = templates[i].objUnion.normal.movementType;
+        shape.rangeX = templates[i].objUnion.normal.movementRangeX;
+        shape.rangeY = templates[i].objUnion.normal.movementRangeY;
+        GetPieceBox(&shape, templates[i].x, templates[i].y, &box);
+        TakeBox(placement, &box, CELL_OCCUPIED);
     }
 }
 
@@ -1641,8 +2137,10 @@ static void ResetObjectTemplates(const struct MapEvents *rom)
 
 /*
  * Place all of the floor's content (see CONTENT PLACEMENT above), objects
- * keeping their vanilla movement types and ranges. Returns FALSE if some
- * piece found no spot; GenerateFloor then tries a new shape.
+ * keeping their vanilla movement types and ranges: first the fossil
+ * chamber's objects in their places in it, then the movers, the hidden
+ * items and signs, and everything else. Returns FALSE if some piece found
+ * no spot; GenerateFloor then tries a new shape.
  */
 static bool8 PlaceContent(void)
 {
@@ -1653,11 +2151,16 @@ static bool8 PlaceContent(void)
 
     ResetObjectTemplates(&sMtMoonEvents);
     placement->count = 0;
+    placement->hasChamber = HasChamber();
+    if (placement->hasChamber)
+        GetChamberBox(&placement->chamberBox);
+    PlaceChamberObjects(placement);
     ListCandidates(placement);
 
     for (i = 0; i < objectCount; i++)
     {
-        if (templates[i].kind != OBJ_KIND_CLONE && IsMovingType(templates[i].objUnion.normal.movementType)
+        if (templates[i].kind != OBJ_KIND_CLONE && !IsChamberObject(i)
+            && IsMovingType(templates[i].objUnion.normal.movementType)
             && !PlaceObject(&templates[i], placement))
             return FALSE;
     }
@@ -1668,7 +2171,8 @@ static bool8 PlaceContent(void)
     }
     for (i = 0; i < objectCount; i++)
     {
-        if (templates[i].kind != OBJ_KIND_CLONE && !IsMovingType(templates[i].objUnion.normal.movementType)
+        if (templates[i].kind != OBJ_KIND_CLONE && !IsChamberObject(i)
+            && !IsMovingType(templates[i].objUnion.normal.movementType)
             && !PlaceObject(&templates[i], placement))
             return FALSE;
     }
@@ -1850,6 +2354,7 @@ static bool8 GenerateFloor(const struct MtMoonFloor *floor, u16 seed)
 
     if (!AllocCaveGrid(gMapHeader.mapLayout->width, gMapHeader.mapLayout->height))
         return FALSE;
+    Work()->hasChamber = floor->hasChamber;
 
     SeedCaveRng(seed, floor->floorNumber);
     for (attempt = 0; attempt < MAX_SHAPE_ATTEMPTS; attempt++)
@@ -1858,8 +2363,12 @@ static bool8 GenerateFloor(const struct MtMoonFloor *floor, u16 seed)
         InitLadder(&sCave.entrance, &floor->entrance);
         InitLadder(&sCave.exit, &floor->exit);
         ProposeLadders();
+        if (floor->hasChamber)
+            ProposeChamber();
         floor->style->buildShape(&sCave);
         if (!CheckLadders(floor))
+            continue;
+        if (floor->hasChamber && !PlaceChamber())
             continue;
         FillPockets();
         SetUpEvents(floor, rom);
@@ -2025,13 +2534,88 @@ void MtMoonGen_GenerateOnFreshEntry(void)
     FreeCaveGrid();
 }
 
+/*
+ * MIGUEL AFTER CONTINUE
+ *
+ * After the player takes a fossil, Miguel's script walks him to the other
+ * one and ends with `copyobjectxytoperm`, which writes the tile he walked
+ * to into his object template, the position he is drawn at whenever he is
+ * (re)spawned. The save keeps that template, and vanilla keeps him there
+ * until the player leaves the floor (a fresh entry starts him at his
+ * chamber position again). Generation resets every template to vanilla,
+ * so on Continue the chamber's objects get their saved position back,
+ * once a fossil has been taken (FLAG_GOT_FOSSIL_FROM_MT_MOON). Only then:
+ * both fossils are gone by that point, so wherever Miguel stands in the
+ * chamber he can't keep the player from anything. And only to a walkable
+ * tile of the chamber, the only place his script can take him (a save from
+ * before the chamber existed may hold any position).
+ *
+ * The saved positions are read before generation resets them, for the
+ * first MAX_CHAMBER_OBJECTS chamber objects (B2F has 3: Miguel and the two
+ * fossils).
+ */
+#define MAX_CHAMBER_OBJECTS 4
+
+/* Remember the saved template position of each chamber object of `floor`,
+ * in the order of the floor's object events. Call before GenerateFloor. */
+static void RememberChamberObjects(const struct MtMoonFloor *floor, struct Coords16 *saved)
+{
+    const struct MapEvents *rom = gMapHeader.events;
+    s32 i, n = 0;
+
+    if (!floor->hasChamber)
+        return;
+    for (i = 0; i < rom->objectEventCount && n < MAX_CHAMBER_OBJECTS; i++)
+    {
+        if (rom->objectEvents[i].kind != OBJ_KIND_CLONE && IsInChamberSource(rom->objectEvents[i].x, rom->objectEvents[i].y))
+        {
+            saved[n].x = gSaveBlock1Ptr->objectEventTemplates[i].x;
+            saved[n].y = gSaveBlock1Ptr->objectEventTemplates[i].y;
+            n++;
+        }
+    }
+}
+
+/* Put the chamber objects back on their saved positions (see MIGUEL AFTER
+ * CONTINUE). Call after GenerateFloor, before the grid is freed. */
+static void RestoreChamberObjects(const struct Coords16 *saved)
+{
+    struct ObjectEventTemplate *templates = gSaveBlock1Ptr->objectEventTemplates;
+    const struct MtMoonChamber *chamber = MtMoonGen_GetChamber();
+    s32 i, n = 0;
+
+    if (chamber == NULL || !FlagGet(FLAG_GOT_FOSSIL_FROM_MT_MOON))
+        return;
+    for (i = 0; i < sMtMoonEvents.objectEventCount && n < MAX_CHAMBER_OBJECTS; i++)
+    {
+        s32 dx, dy;
+
+        if (!IsChamberObject(i))
+            continue;
+        dx = saved[n].x - chamber->x;
+        dy = saved[n].y - chamber->y;
+        n++;
+        if (dx >= 0 && dx < MT_MOON_CHAMBER_WIDTH && dy >= 0 && dy < MT_MOON_CHAMBER_HEIGHT
+            && !IS_SOLID_TILE(GetChamberTile(dx, dy)))
+        {
+            templates[i].x = chamber->x + dx;
+            templates[i].y = chamber->y + dy;
+        }
+    }
+}
+
 void MtMoonGen_RegenerateFromSave(void)
 {
     const struct MtMoonFloor *floor = GetCurrentFloor();
+    struct Coords16 saved[MAX_CHAMBER_OBJECTS];
 
     if (floor == NULL)
         return;
+    RememberChamberObjects(floor, saved);
     if (GenerateFloor(floor, VarGet(VAR_MT_MOON_MAP_SEED)))
+    {
+        RestoreChamberObjects(saved);
         MovePlayerOntoReachableFloor();
+    }
     FreeCaveGrid();
 }

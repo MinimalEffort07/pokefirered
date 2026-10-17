@@ -9,7 +9,8 @@
  *
  * The core does everything that is the same on every floor: the per-visit
  * seed and the private random number generator, the cave grid, proposing
- * and checking the ladders, filling sealed-off pockets of floor, placing
+ * and checking the ladders, stamping B2F's fossil chamber (a prefab copied
+ * from vanilla), filling sealed-off pockets of floor, placing
  * the floor's vanilla content (trainers, NPCs, item balls, hidden items and
  * signs) where the player can reach all of it, writing the finished map
  * into the game's map buffer, the warps, and the Continue safety net.
@@ -135,13 +136,84 @@
  * moved on, so it comes out different), up to 4 times, then gives up and
  * leaves the floor's vanilla map in place.
  *
+ * THE FOSSIL CHAMBER (B2F only)
+ *
+ * Vanilla B2F's fossil chamber is a PREFAB: a 13 x 9 block of vanilla
+ * B2F's own tiles (x 8..20, y 7..15 of data/layouts/MtMoon_B2F/map.bin),
+ * copied tile for tile onto the generated B2F. Super Nerd Miguel, the Dome
+ * and Helix Fossils and Miguel's battle trigger tile move with it, keeping
+ * their vanilla places inside it. They have to: after the player takes one
+ * fossil, Miguel's script walks him to the other with fixed steps
+ * (walk_right, walk_up x3 to the Helix Fossil; walk_up x3 to the Dome
+ * Fossil). Its collision, relative to the chamber's top-left tile:
+ *
+ *        dx  0 1 2 3 4 5 6 7 8 9 10 11 12
+ *    dy -1   ? ? ? ? ? W W ? ? ? ?  ?  ?    the 2 cells behind the fossils
+ *        0   W W W W W D H W W W W  W  W    D, H  the Dome and Helix Fossils,
+ *        1   W . . . . . . . . . .  .  W          on walkable tiles in a gap
+ *        2   W . . . . . . . . . .  .  W          of the room's north wall
+ *        3   W . . . . . . . . . .  .  W
+ *        4   W . . . . M T . . . .  .  W    M  Miguel, T  his trigger tile
+ *        5   W W W W W S S W W W .  .  W    S  stairs (walkable)
+ *        6   W . . . . F . . . W .  .  W    F  the chamber's FOOT
+ *        7   . . . . . . . . . W .  .  W
+ *        8   . . . . . . . . . W W  W  W    . walkable, W solid, ? the style's
+ *
+ * The room (rows 1-4, with an alcove down the east side) is closed except
+ * for its stairs, and Miguel and his trigger stand right inside them, so
+ * every way in steps on the trigger: the battle can't be skipped. The two
+ * cells behind the fossils (row -1) are always wall, so nobody can reach a
+ * fossil from outside either. Below the stairs lies the LANDING (rows 6-8,
+ * dx 0-8), open floor whose west side (dx 0, rows 7-8) and south side
+ * (row 8) are open: that is where the chamber joins the cave. The foot (5,6)
+ * is the landing cell in front of the stairs, the cell a corridor should
+ * join (MtMoonGen_GetChamberFoot).
+ *
+ * The chamber works like the ladders (rules 1-3 above):
+ *
+ *   1. Before buildShape, on a floor that has a chamber, the core PROPOSES
+ *      its position, MtMoonGen_GetChamber()->x and ->y (its top-left tile):
+ *      random, with the chamber inside the 2-cell border (3 at the bottom),
+ *      the row below it still inside the border (so its landing can open
+ *      south), and at least 4 cells (any direction, diagonals included)
+ *      from both proposed ladders. The style ACCEPTS it or MOVES the
+ *      chamber, keeping those rules (for example to make it one of its
+ *      rooms). A style that builds around the chamber may write its cells
+ *      into the grid with MtMoonGen_MarkChamberSite() first, the way
+ *      MtMoonGen_MarkLadderSite() writes a ladder's footprint. The
+ *      cellular style ignores the chamber, which leaves everything to the
+ *      core.
+ *   2. After buildShape, the core checks the rules of rule 1 against the
+ *      final ladders (a broken one throws the shape away, as for broken
+ *      ladders) and STAMPS the chamber: its cells become FLOOR or WALL as
+ *      the diagram says, whatever the style carved there. Stamping can cut
+ *      through the style's floor, so the core then CARVES CORRIDORS (wall
+ *      cells become floor, the shortest way) wherever needed so that:
+ *        - every floor cell of both ladders' footprints connects to the
+ *          entrance WITHOUT going through the chamber (so the chamber is
+ *          never the only way across the floor: reachable, not forced);
+ *        - the chamber's foot connects to the entrance.
+ *      Corridors never touch the chamber, the cells behind the fossils,
+ *      a ladder's footprint or the border. A shape where no corridor fits
+ *      is thrown away.
+ *   3. The core draws the chamber: after pickTile has drawn every cell and
+ *      the one-tile prefabs are on top, the chamber's 13 x 9 vanilla tiles
+ *      replace whatever was drawn there. pickTile sees the chamber's cells
+ *      as plain FLOOR and WALL, so it can draw the tiles around it.
+ *
+ * Nothing else ever changes the chamber: pocket filling skips it, content
+ * placement puts nothing inside it or within 1 cell of it (or of the cells
+ * behind the fossils), and repair carving never reaches into it.
+ *
  * WHAT THE CORE DOES TO THE SHAPE AFTERWARDS
  *
  *   1. Pockets. Every floor cell the player can't walk to from the
  *      entrance (without stepping on a ladder) becomes wall. A style that
  *      would rather CONNECT a pocket (because filling it would leave a
  *      shape its tiles can't draw) must connect it in buildShape.
- *   2. Content. Every trainer, NPC and item ball is put on open floor, and
+ *   2. Content. On B2F, Miguel, the two fossils and Miguel's trigger tile
+ *      go to their places in the fossil chamber. Every other trainer, NPC
+ *      and item ball is put on open floor, and
  *      every hidden item and sign is stamped onto open floor as a one-tile
  *      prefab (a boulder 0x282, the signpost 0x2cd). Objects that move
  *      (wanderers) count as standing on every tile of their roaming box.
@@ -325,6 +397,37 @@ u16 MtMoonGen_GetLadderTile(const struct MtMoonCave *cave, s32 x, s32 y);
  * stamps (room for 128 per floor) is full.
  */
 bool8 MtMoonGen_StampTile(s32 x, s32 y, u16 tile);
+
+/* --- The fossil chamber (provided by the core) ---------------------------- */
+
+/* The chamber's size in map tiles (see THE FOSSIL CHAMBER above). */
+#define MT_MOON_CHAMBER_WIDTH  13
+#define MT_MOON_CHAMBER_HEIGHT 9
+
+/*
+ * Where the floor's fossil chamber goes. It isn't part of struct
+ * MtMoonCave because the core keeps that struct in IWRAM, which has no
+ * room to spare; the core keeps this one with its other work areas.
+ */
+struct MtMoonChamber
+{
+    u8 x;  /* map tile of the chamber's top-left corner */
+    u8 y;
+};
+
+/* The floor's fossil chamber, or NULL on a floor that has none (only B2F
+ * has one). Valid during buildShape and pickTile; buildShape may change
+ * x and y (rule 1 of THE FOSSIL CHAMBER). */
+struct MtMoonChamber *MtMoonGen_GetChamber(void);
+
+/* Write the chamber's cells, and the 2 wall cells behind its fossils, into
+ * the grid at its current position (cells off the grid are skipped). Does
+ * nothing on a floor without a chamber. */
+void MtMoonGen_MarkChamberSite(void);
+
+/* The chamber's foot: the landing cell in front of its stairs, where a
+ * corridor should join it. */
+void MtMoonGen_GetChamberFoot(s32 *x, s32 *y);
 
 /* --- One style object per generated floor --------------------------------- */
 
