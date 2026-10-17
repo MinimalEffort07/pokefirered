@@ -19,11 +19,7 @@ return {
     title = "no pockets",
     run = function(h, floor, rng, snap)
         local grid = snap.grid
-        local ladders = h.ladder_warps(floor, snap)
-        for _, arrival in ipairs({ "entrance", "exit" }) do
-            local from = ladders[arrival]
-            local to = ladders[arrival == "entrance" and "exit" or "entrance"]
-            local dist, objects = h.reach_from_warp(snap, from, to)
+        return h.check_each_arrival(floor, snap, function(label, dist, objects)
             local missed, first = 0, nil
             for y = 0, grid.h - 1 do
                 for x = 0, grid.w - 1 do
@@ -35,10 +31,9 @@ return {
                 end
             end
             if missed > 0 then
-                return false, string.format("arriving at the %s (%d,%d): %d walkable tiles can't be reached, first %s",
-                    arrival, from.x, from.y, missed, first)
+                return false, string.format("%s: %d walkable tiles can't be reached, first %s", label, missed, first)
             end
-        end
-        return true
+            return true
+        end)
     end,
 }

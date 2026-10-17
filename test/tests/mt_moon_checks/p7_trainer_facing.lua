@@ -3,16 +3,18 @@
 -------------------------------------------------------------------------------
 --
 -- A trainer standing still only spots the player along the direction it
--- faces (src/trainer_see.c walks the sight line tile by tile). In a
--- generated cave, a trainer keeping its vanilla facing could be staring
--- into a wall. So each STATIONARY trainer (an object with a trainer type,
--- whose movement type is MOVEMENT_TYPE_FACE_UP, _DOWN, _LEFT or _RIGHT)
--- must face the direction with the longest straight run of floor.
+-- faces (src/trainer_see.c walks the sight line tile by tile and stops at
+-- anything solid, objects included). In a generated cave, a trainer keeping
+-- its vanilla facing could be staring into a wall. So each STATIONARY
+-- trainer (an object with a trainer type, whose movement type is
+-- MOVEMENT_TYPE_FACE_UP, _DOWN, _LEFT or _RIGHT) must face the direction
+-- with the longest straight run of open floor.
 --
 -- The run in a direction counts the walkable tiles in a straight line from
--- the trainer, starting with its neighbour, until the first solid tile.
--- Objects don't end a run (only the map's tiles do). When two directions
--- tie for longest, either one passes.
+-- the trainer, starting with its neighbour, until the first tile that is
+-- solid or that an object could stand on (an object's tile, or any tile of
+-- a wanderer's roaming box: mt_moon.object_tiles). When two directions tie
+-- for longest, either one passes.
 --
 -- Every other object keeps its vanilla movement: look-around trainers keep
 -- looking around, and wanderers keep their movement type and range. So:
@@ -22,10 +24,11 @@
 --   2. every other object has its vanilla movement type and movement range.
 -------------------------------------------------------------------------------
 
-local function run_length(h, grid, x, y, dx, dy)
+local function run_length(h, grid, objects, x, y, dx, dy)
     local n = 0
     x, y = x + dx, y + dy
-    while x >= 0 and y >= 0 and x < grid.w and y < grid.h and h.passable(grid.cells[h.key(x, y)]) do
+    while x >= 0 and y >= 0 and x < grid.w and y < grid.h and h.passable(grid.cells[h.key(x, y)])
+        and not objects[h.key(x, y)] do
         n = n + 1
         x, y = x + dx, y + dy
     end
@@ -44,6 +47,7 @@ return {
             [M.MOVEMENT_TYPE_FACE_RIGHT] = { name = "right", dx = 1,  dy = 0 },
         }
         local rom = h.rom_events(floor).objects
+        local objects = h.object_tiles(snap)
         for i, t in ipairs(snap.templates) do
             local v = rom[i]
             local stationary_trainer = v.trainer_type ~= 0 and facing[v.movement_type] ~= nil
@@ -55,7 +59,7 @@ return {
                 end
                 local runs, best = {}, 0
                 for _, d in pairs(facing) do
-                    runs[d.name] = run_length(h, snap.grid, t.x, t.y, d.dx, d.dy)
+                    runs[d.name] = run_length(h, snap.grid, objects, t.x, t.y, d.dx, d.dy)
                     if runs[d.name] > best then best = runs[d.name] end
                 end
                 if runs[dir.name] ~= best then

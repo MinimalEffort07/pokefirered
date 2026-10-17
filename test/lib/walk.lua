@@ -125,17 +125,24 @@ end
 -- (tx, ty), or nil if there is no route right now, plus the route length.
 -- Searches backwards from the target, then takes the player's neighbour
 -- closest to it.
+-- What the planner must not walk onto, as blocked(x, y), plus the object
+-- tile set itself: object tiles (see the header) and warp tiles, apart from
+-- the player's own tile.
+local function planner_blocked(px, py)
+    local objects = object_tiles()
+    local warps = {}
+    for _, w in ipairs(mm.read_warps()) do warps[mm.key(w.x, w.y)] = true end
+    return function(x, y)
+        if x == px and y == py then return false end
+        return objects[mm.key(x, y)] or warps[mm.key(x, y)]
+    end, objects
+end
+
 function walk.plan(tx, ty)
     local px, py = mm.player_tile()
     if px == nil then return nil end
     local grid = mm.read_grid()
-    local objects = object_tiles()
-    local warps = {}
-    for _, w in ipairs(mm.read_warps()) do warps[mm.key(w.x, w.y)] = true end
-    local function blocked(x, y)
-        if x == px and y == py then return false end
-        return objects[mm.key(x, y)] or warps[mm.key(x, y)]
-    end
+    local blocked, objects = planner_blocked(px, py)
     local dist = mm.bfs(grid, tx, ty, blocked)
     local best, best_d = nil, nil
     for _, d in ipairs(DIRS) do
@@ -285,10 +292,9 @@ end
 -- Talking to things
 -------------------------------------------------------------------------------
 
--- struct ObjectEvent (include/global.fieldmap.h): facingDirection is the low
--- 4 bits of the byte at +0x18. Direction values from include/constants/
--- global.h: DIR_SOUTH 1, DIR_NORTH 2, DIR_WEST 3, DIR_EAST 4.
-local OE_FACING = 0x18
+-- The facing direction mt_moon.live_objects() reports for each D-pad key
+-- (include/constants/global.h: DIR_SOUTH 1, DIR_NORTH 2, DIR_WEST 3,
+-- DIR_EAST 4).
 local DIR_VALUE = { DOWN = 1, UP = 2, LEFT = 3, RIGHT = 4 }
 
 -- struct PlayerAvatar (include/global.fieldmap.h): runningState is the byte
@@ -299,9 +305,7 @@ local NOT_MOVING = 0
 
 local function player_facing()
     for _, o in ipairs(mm.live_objects()) do
-        if o.is_player then
-            return emu:read8(sym.addr("gObjectEvents") + o.index * 0x24 + OE_FACING) & 0xF
-        end
+        if o.is_player then return o.facing end
     end
     return nil
 end
@@ -314,12 +318,7 @@ end
 function walk.to_face(tx, ty, opts)
     local px, py = mm.player_tile()
     if px == nil then return { ok = false, steps = 0, replans = 0, why = "no player" } end
-    local objects = object_tiles()
-    local warps = {}
-    for _, w in ipairs(mm.read_warps()) do warps[mm.key(w.x, w.y)] = true end
-    local dist = mm.bfs(mm.read_grid(), px, py, function(x, y)
-        return objects[mm.key(x, y)] or warps[mm.key(x, y)]
-    end)
+    local dist = mm.bfs(mm.read_grid(), px, py, (planner_blocked(px, py)))
     local best, best_d = nil, nil
     for _, d in ipairs(DIRS) do
         -- The player stands at target - d and faces along d.

@@ -50,11 +50,11 @@ local capture = dofile(project_dir .. "test/lib/frame_capture.lua")
 local ITEM_MOON_STONE = mm.read_defines("include/constants/items.h").ITEM_MOON_STONE
 local FLAGS = mm.read_defines("include/constants/flags.h")
 local FLAG_BALL = FLAGS.FLAG_HIDE_MT_MOON_1F_MOON_STONE
--- flags.h writes this one as (FLAG_HIDDEN_ITEMS_START + 2), which
--- read_defines can't evaluate; the hidden item itself says which flag it
--- uses (see hidden_flag below).
-local BG_EVENT_HIDDEN_ITEM = 7  -- include/constants/event_bg.h
-local BOULDER = 0x282
+-- The hidden Moon Stone's flag, FLAG_HIDDEN_ITEM_MT_MOON_B2F_MOON_STONE, is
+-- written in flags.h as (FLAG_HIDDEN_ITEMS_START + 2), which read_defines
+-- can't evaluate, so it is read from the hidden item itself (hidden_flag
+-- below).
+local BG_EVENT_HIDDEN_ITEM = mm.BG_EVENT.BG_EVENT_HIDDEN_ITEM
 
 -- Random state for each fresh entry.
 local RNG = { first_1f = 0x5EED0801, again_1f = 0x5EED0802, b2f = 0x5EED0803 }
@@ -89,6 +89,11 @@ end
 local function hidden_item(bg) return bg.data & 0xFFFF end
 local function hidden_flag(bg) return ((bg.data >> 16) & 0xFF) + FLAGS.FLAG_HIDDEN_ITEMS_START end
 
+-- " (why)" for an assertion message when a walk result says why it failed.
+local function why(result)
+    return result.why and (" (" .. result.why .. ")") or ""
+end
+
 local function log_failed_walk(result, tx, ty)
     if result.ok then return end
     for _, line in ipairs(walk.describe_map(tx, ty)) do fw.log(line) end
@@ -118,7 +123,7 @@ fw.run(function()
 
     local result = walk.to_face(ball.x, ball.y)
     log_failed_walk(result, ball.x, ball.y)
-    fw.assert_true(result.ok, "walked next to the ball and faced it" .. (result.why and (" (" .. result.why .. ")") or ""))
+    fw.assert_true(result.ok, "walked next to the ball and faced it" .. why(result))
     if result.ok then
         capture.caption("1F: picking up the Moon Stone")
         local got = walk.press_a_until(function() return mm.get_flag(FLAG_BALL) end, 900)
@@ -134,7 +139,7 @@ fw.run(function()
     if ball ~= nil then
         result = walk.to_face(ball.x, ball.y)
         log_failed_walk(result, ball.x, ball.y)
-        fw.assert_true(result.ok, "walked next to the ball's tile" .. (result.why and (" (" .. result.why .. ")") or ""))
+        fw.assert_true(result.ok, "walked next to the ball's tile" .. why(result))
         fw.assert_true(live_object(ball.local_id) == nil,
             string.format("no object %d next to the player at (%d,%d)", ball.local_id, ball.x, ball.y))
         result = walk.to(ball.x, ball.y)
@@ -154,11 +159,11 @@ fw.run(function()
         local flag = hidden_flag(stone)
         local cell = snap.grid.cells[mm.key(stone.x, stone.y)]
         fw.log(string.format("hidden Moon Stone at (%d,%d), flag 0x%x, tile 0x%04x", stone.x, stone.y, flag, cell or 0))
-        fw.assert_true(cell ~= nil and mm.metatile(cell) == BOULDER, "the hidden Moon Stone sits on a boulder (0x282)")
+        fw.assert_true(cell ~= nil and mm.metatile(cell) == mm.BOULDER, "the hidden Moon Stone sits on a boulder (0x282)")
         fw.assert_true(not mm.get_flag(flag), "the hidden item's flag starts clear")
         result = walk.to_face(stone.x, stone.y)
         log_failed_walk(result, stone.x, stone.y)
-        fw.assert_true(result.ok, "walked next to the boulder and faced it" .. (result.why and (" (" .. result.why .. ")") or ""))
+        fw.assert_true(result.ok, "walked next to the boulder and faced it" .. why(result))
         if result.ok then
             capture.caption("B2F: pressing A on the boulder")
             local got = walk.press_a_until(function() return mm.get_flag(flag) end, 900)

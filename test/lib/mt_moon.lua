@@ -149,6 +149,8 @@ local OE_MAP_GROUP  = 0x0A
 local OE_INITIAL    = 0x0C  -- initialCoords  (s16 x, s16 y)
 local OE_CURRENT    = 0x10  -- currentCoords
 local OE_PREVIOUS   = 0x14  -- previousCoords
+local OE_FACING     = 0x18  -- facingDirection in bits 0-3: DIR_SOUTH 1,
+                            -- DIR_NORTH 2, DIR_WEST 3, DIR_EAST 4
 
 -- struct ObjectEventTemplate (include/global.fieldmap.h), 0x18 bytes each:
 --   +0x00 u8 localId     +0x01 u8 graphicsId   +0x02 u8 kind
@@ -492,6 +494,16 @@ end
 
 mm.MOVEMENT = mm.read_defines("include/constants/event_object_movement.h")
 
+-- Background event kinds (BG_EVENT_HIDDEN_ITEM, BG_EVENT_PLAYER_FACING_*).
+mm.BG_EVENT = mm.read_defines("include/constants/event_bg.h")
+
+-- The one-tile prefabs the design (#22, section 3) puts under hidden items
+-- and signs, as metatile ids: the lone boulder every vanilla Mt. Moon hidden
+-- item sits on, and the signpost. Kept here as the design states them,
+-- not read from the generator, so the checks stay an independent source.
+mm.BOULDER = 0x282
+mm.SIGNPOST = 0x2cd
+
 local MOVING_TYPES = {}
 for name, value in pairs(mm.MOVEMENT) do
     if name:match("^MOVEMENT_TYPE_WANDER_") or name:match("^MOVEMENT_TYPE_WALK_UP_AND_DOWN")
@@ -574,6 +586,7 @@ function mm.live_objects(saved)
                 -- blocks the tile it left.
                 prev_x = s16(emu:read16(a + OE_PREVIOUS)) - mm.MAP_OFFSET,
                 prev_y = s16(emu:read16(a + OE_PREVIOUS + 2)) - mm.MAP_OFFSET,
+                facing = emu:read8(a + OE_FACING) & 0xF,
             }
         end
     end
@@ -613,6 +626,18 @@ function mm.poke_player(x, y)
     local sb1 = mm.sb1()
     emu:write16(sb1 + SB1_POS + 0, x & 0xFFFF)
     emu:write16(sb1 + SB1_POS + 2, y & 0xFFFF)
+end
+
+-- Move live object `index` (as listed by mm.live_objects) to map tile
+-- (x, y) by rewriting its current and previous coordinates. No game logic
+-- runs and the sprite isn't moved; used to put an object out of the way.
+function mm.poke_object(index, x, y)
+    local a = object_addr(index, false)
+    local vx, vy = (x + mm.MAP_OFFSET) & 0xFFFF, (y + mm.MAP_OFFSET) & 0xFFFF
+    for _, field in ipairs({ OE_CURRENT, OE_PREVIOUS }) do
+        emu:write16(a + field, vx)
+        emu:write16(a + field + 2, vy)
+    end
 end
 
 -- Everything the generator decides for the loaded floor, plus where the
@@ -707,6 +732,14 @@ function mm.ladder_warps(floor, snap)
     }
 end
 
+-- The set of key(x, y) of the floor's two active warps (mm.ladder_warps).
+function mm.warp_tile_set(ladders)
+    return {
+        [key(ladders.entrance.x, ladders.entrance.y)] = true,
+        [key(ladders.exit.x, ladders.exit.y)] = true,
+    }
+end
+
 -- Reachability as the player has it after arriving through warp `from`
 -- (one of mm.ladder_warps): the BFS distances from the arrival tile, where
 -- every tile an object could stand on is solid (mm.object_tiles) and the
@@ -718,6 +751,23 @@ function mm.reach_from_warp(snap, from, to)
         function(x, y) return objects[key(x, y)] end,
         function(x, y) return x == to.x and y == to.y end)
     return dist, objects
+end
+
+-- The player arrives on a floor through either warp, depending on which way
+-- they are going. Calls fn(label, dist, objects, from, to) once per arrival
+-- warp, with mm.reach_from_warp's results, and stops at the first call
+-- that returns false (plus a reason), returning that; otherwise true.
+function mm.check_each_arrival(floor, snap, fn)
+    local ladders = mm.ladder_warps(floor, snap)
+    for _, arrival in ipairs({ "entrance", "exit" }) do
+        local from = ladders[arrival]
+        local to = ladders[arrival == "entrance" and "exit" or "entrance"]
+        local dist, objects = mm.reach_from_warp(snap, from, to)
+        local label = string.format("arriving at the %s (%d,%d)", arrival, from.x, from.y)
+        local ok, why = fn(label, dist, objects, from, to)
+        if not ok then return false, why end
+    end
+    return true
 end
 
 -- The warp the player arrives through on `floor`, from a snapshot.

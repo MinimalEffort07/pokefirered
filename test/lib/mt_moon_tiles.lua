@@ -26,7 +26,8 @@
 -- WALKABLE FRACTION. Walkable tiles (collision 0) divided by all tiles of
 -- the map. Vanilla: 1F 60%, B1F 16%, B2F 46% (design comment on #22).
 --
--- USAGE (from a check file; `h` is mt_moon.lua as passed to check.run):
+-- USAGE (from a check file; `h` is mt_moon.lua as passed to check.run, the
+-- `mm` parameter below):
 --   local tiles = dofile(project_dir .. "test/lib/mt_moon_tiles.lua")
 --   local vanilla = tiles.vanilla_pairs(floor)            -- cached per floor
 --   local report = tiles.non_vanilla_pairs(h, snap.grid, vanilla)
@@ -107,9 +108,9 @@ end
 -- The pairs of a generated map (mt_moon.read_grid() / snapshot.grid) that
 -- the vanilla pair set lacks. `allowlist` (optional) is a set of pair keys
 -- that don't count. Returns { count, total, pairs = key -> count }.
-function tiles.non_vanilla_pairs(h, grid, vanilla, allowlist)
+function tiles.non_vanilla_pairs(mm, grid, vanilla, allowlist)
     local all = count_pairs(grid.w, grid.h, function(x, y)
-        return h.metatile(grid.cells[h.key(x, y)])
+        return mm.metatile(grid.cells[mm.key(x, y)])
     end)
     local report = { count = 0, total = 0, pairs = {} }
     for k, n in pairs(all) do
@@ -123,11 +124,11 @@ function tiles.non_vanilla_pairs(h, grid, vanilla, allowlist)
 end
 
 -- Walkable tiles / all tiles of a generated map.
-function tiles.walkable_fraction(h, grid)
+function tiles.walkable_fraction(mm, grid)
     local walkable = 0
     for y = 0, grid.h - 1 do
         for x = 0, grid.w - 1 do
-            if h.passable(grid.cells[h.key(x, y)]) then walkable = walkable + 1 end
+            if mm.passable(grid.cells[mm.key(x, y)]) then walkable = walkable + 1 end
         end
     end
     return walkable / (grid.w * grid.h)

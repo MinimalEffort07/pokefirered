@@ -23,10 +23,6 @@
 -- counted, and still may not share a tile with anything.
 -------------------------------------------------------------------------------
 
-local BOULDER = 0x282
-local SIGNPOST = 0x2cd
-local BG_EVENT_HIDDEN_ITEM = 7  -- include/constants/event_bg.h
-
 -- Local ids of the exempt objects per floor, from the generated header
 -- include/constants/map_event_ids.h (filled in on the first run).
 local exempt_ids = nil
@@ -51,12 +47,9 @@ return {
     run = function(h, floor, rng, snap)
         local rom = h.rom_events(floor)
         local grid = snap.grid
-        local ladders = h.ladder_warps(floor, snap)
-        local warp_at = {
-            [h.key(ladders.entrance.x, ladders.entrance.y)] = true,
-            [h.key(ladders.exit.x, ladders.exit.y)] = true,
-        }
+        local warp_at = h.warp_tile_set(h.ladder_warps(floor, snap))
         local exempt = exempt_on(h, floor.name)
+        local HIDDEN_ITEM = h.BG_EVENT.BG_EVENT_HIDDEN_ITEM
 
         -- 1. Objects.
         if #snap.templates ~= #rom.objects then
@@ -92,7 +85,7 @@ return {
         local bg_at = {}
         for i, bg in ipairs(snap.bg_events) do
             local v = rom.bg_events[i]
-            local what = bg.kind == BG_EVENT_HIDDEN_ITEM and "hidden item" or "sign"
+            local what = bg.kind == HIDDEN_ITEM and "hidden item" or "sign"
             if bg.kind ~= v.kind or bg.elevation ~= v.elevation or bg.data ~= v.data then
                 return false, string.format("%s %d differs from vanilla: kind %d/%d, elevation %d/%d, data 0x%08x/0x%08x",
                     what, i, bg.kind, v.kind, bg.elevation, v.elevation, bg.data, v.data)
@@ -107,7 +100,7 @@ return {
             end
             bg_at[k] = true
             local cell = grid.cells[k]
-            local want = bg.kind == BG_EVENT_HIDDEN_ITEM and BOULDER or SIGNPOST
+            local want = bg.kind == HIDDEN_ITEM and h.BOULDER or h.SIGNPOST
             if cell == nil or h.metatile(cell) ~= want or h.passable(cell) then
                 return false, string.format("%s %d at (%d,%d) is on 0x%04x, expected the solid 0x%03x",
                     what, i, bg.x, bg.y, cell or 0, want)

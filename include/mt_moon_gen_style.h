@@ -149,13 +149,19 @@
  *      and the player can stand next to every object, hidden item and
  *      sign, facing it. Nothing goes within 2 tiles of a ladder.
  *   3. Repair. If no spot fits, the core carves open floor (wall cells
- *      become floor) around a floor cell: the object's box plus one tile
- *      on every side, kept 3+ tiles from the ladders and inside the
- *      2-tile border (3 at the bottom). It never removes floor, so the
- *      ladders' footprints are untouched. A style that leaves enough open
- *      floor never sees this happen.
+ *      become floor): the object's box plus one tile on every side, kept
+ *      3+ tiles from the ladders and inside the 2-tile border (3 at the
+ *      bottom), always touching existing floor so it joins the cave. It
+ *      never removes floor, so the ladders' footprints are untouched. A
+ *      style that leaves enough open floor rarely sees this happen. If
+ *      even that finds no spot for some
+ *      piece, or the core's final reachability check fails, the shape is
+ *      thrown away and buildShape is called again, exactly as for broken
+ *      ladders (rule 2 above), so nothing is ever dropped or unreachable.
  *   4. Facing. Each stationary trainer is turned toward its longest
- *      straight run of floor, so its sight line can catch the player.
+ *      straight run of open floor (walls, boulders, signposts and the
+ *      tiles objects can stand on all end a run), so its sight line can
+ *      catch the player.
  *
  * ONE-TILE PREFABS
  *

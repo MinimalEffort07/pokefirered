@@ -23,9 +23,6 @@
 --      vanilla Mt. Moon hidden item does).
 -------------------------------------------------------------------------------
 
-local BOULDER = 0x282
-local BG_EVENT_HIDDEN_ITEM = 7  -- include/constants/event_bg.h
-
 -- Some tile in `tiles` is reachable (in dist) and not a warp.
 local function any_reachable(h, dist, tiles, warp_tile)
     for _, p in ipairs(tiles) do
@@ -39,28 +36,19 @@ return {
     id = "P2",
     title = "reachable",
     run = function(h, floor, rng, snap)
-        local ladders = h.ladder_warps(floor, snap)
-        local warp_tile = {
-            [h.key(ladders.entrance.x, ladders.entrance.y)] = true,
-            [h.key(ladders.exit.x, ladders.exit.y)] = true,
-        }
+        local warp_tile = h.warp_tile_set(h.ladder_warps(floor, snap))
 
         for _, bg in ipairs(snap.bg_events) do
-            if bg.kind == BG_EVENT_HIDDEN_ITEM then
+            if bg.kind == h.BG_EVENT.BG_EVENT_HIDDEN_ITEM then
                 local cell = snap.grid.cells[h.key(bg.x, bg.y)]
-                if cell == nil or h.metatile(cell) ~= BOULDER then
+                if cell == nil or h.metatile(cell) ~= h.BOULDER then
                     return false, string.format("hidden item at (%d,%d) sits on 0x%03x, not the boulder 0x%03x",
-                        bg.x, bg.y, cell and h.metatile(cell) or 0, BOULDER)
+                        bg.x, bg.y, cell and h.metatile(cell) or 0, h.BOULDER)
                 end
             end
         end
 
-        for _, arrival in ipairs({ "entrance", "exit" }) do
-            local from = ladders[arrival]
-            local to = ladders[arrival == "entrance" and "exit" or "entrance"]
-            local dist = h.reach_from_warp(snap, from, to)
-            local label = string.format("arriving at the %s (%d,%d)", arrival, from.x, from.y)
-
+        return h.check_each_arrival(floor, snap, function(label, dist, objects, from, to)
             if dist[h.key(to.x, to.y)] == nil then
                 return false, string.format("%s: the other warp (%d,%d) can't be reached", label, to.x, to.y)
             end
@@ -72,11 +60,11 @@ return {
             end
             for _, bg in ipairs(snap.bg_events) do
                 if not any_reachable(h, dist, h.facing_tiles(bg.x, bg.y, bg.x, bg.y), warp_tile) then
-                    return false, string.format("%s: no reachable tile next to the %s at (%d,%d)",
-                        label, bg.kind == BG_EVENT_HIDDEN_ITEM and "hidden item" or "sign", bg.x, bg.y)
+                    return false, string.format("%s: no reachable tile next to the %s at (%d,%d)", label,
+                        bg.kind == h.BG_EVENT.BG_EVENT_HIDDEN_ITEM and "hidden item" or "sign", bg.x, bg.y)
                 end
             end
-        end
-        return true
+            return true
+        end)
     end,
 }

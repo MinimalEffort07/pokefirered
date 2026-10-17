@@ -55,8 +55,7 @@
  *      position for each ladder the floor table doesn't fix
  *      (ProposeLadders), and let the floor's style carve the shape around
  *      the ladders, moving them first if it wants.
- *   3. Check the ladders (CheckLadders). A style that breaks the rules gets
- *      up to 4 tries; after that the floor stays the vanilla map.
+ *   3. Check the ladders (CheckLadders).
  *   4. Fill pockets (FillPockets): floor the player can't walk to becomes
  *      wall, so 100% of the floor is reachable.
  *   5. Rewrite the floor's event tables (SetUpEvents): the entrance and exit
@@ -66,11 +65,15 @@
  *   6. Place ALL of the floor's vanilla content (PlaceContent): trainers,
  *      NPCs and item balls on open floor, hidden items on a stamped
  *      boulder and signs on a stamped signpost. Every spot keeps the floor
- *      connected and leaves a tile next to the object for the player to
- *      stand on, facing it (see CONTENT PLACEMENT below). Nothing is
- *      dropped.
+ *      connected and leaves a tile next to the piece for the player to
+ *      stand on, facing it, carving open floor where nothing fits; a final
+ *      flood fill checks the result (IsContentReachable). See CONTENT
+ *      PLACEMENT below.
+ *   If step 3 or 6 fails, the shape is thrown away and the style builds a
+ *   new one (back to step 2), up to 4 times; after that the floor stays
+ *   the vanilla map. So nothing is ever dropped.
  *   7. Turn each stationary trainer toward its longest straight run of
- *      floor (FaceStationaryTrainers).
+ *      open floor (FaceStationaryTrainers).
  *   8. Draw every map cell with the style's tile picker, then the stamped
  *      one-tile prefabs on top.
  * Then, on a fresh entry, the player is put on the generated tile of the
@@ -117,7 +120,8 @@
 #define MAX_WARPS 8
 
 /* Hidden items and signs kept per floor (B1F has the most: 6 hidden
- * items). Each costs 12 bytes of EWRAM for as long as the floor is loaded. */
+ * items). Each costs 12 bytes of EWRAM (sMtMoonBgEvents, a static array, so
+ * the 72 bytes are reserved for good). */
 #define MAX_BG_EVENTS 6
 
 /* One-tile prefabs per floor (see MtMoonGen_StampTile). They are kept in
@@ -241,11 +245,12 @@ static u32 sRngState;           /* MtMoonGen_Random's state */
  * completely full. So the grid is borrowed from the game's heap (Alloc,
  * src/malloc.c) for the duration of one generation and freed at the end;
  * only this pointer is permanent. The same block also holds the flood
- * fill's queue (FloodQueue), one u16 cell index per map tile, and the list
- * of stamped one-tile prefabs (Stamps). (A u16 index limits a grid to
- * 65,535 cells including the frame; Mt. Moon's floors have about 2,100.)
- * For the biggest floor (B1F, 49 x 40) the block is about 6.5 KB of the
- * 112 KB heap.
+ * fill's queue (FloodQueue), one u16 cell index per map tile, and the work
+ * areas of the later steps (struct GenerationWork: the stamped one-tile
+ * prefabs and the content placement's bookkeeping). (A u16 index limits a
+ * grid to 65,535 cells including the frame; Mt. Moon's floors have about
+ * 2,100.) For the biggest floor (B1F, 49 x 40) the block is about 7 KB of
+ * the 112 KB heap.
  * The map loader borrows heap memory the same way when it copies tilesets
  * to video memory.
  */
@@ -253,6 +258,11 @@ static EWRAM_DATA u8 *sCaveGrid = NULL;
 
 #define GRID_STRIDE (sCave.width + 2)
 #define CELL_INDEX(x, y) (((y) + 1) * GRID_STRIDE + (x) + 1)
+
+/* Row y of the grid, so that GRID_ROW(y)[x] is cell (x, y): the core's own,
+ * call-free version of MtMoonGen_GetRow for its hot loops. Only for y from
+ * -1 to height (the wall frame included). */
+#define GRID_ROW(y) (&sCaveGrid[CELL_INDEX(0, (y))])
 
 /* The rewritten event tables. gMapHeader.events points here while a
  * generated floor is loaded, instead of at the read-only ROM tables. The
@@ -278,6 +288,45 @@ struct StampList
 {
     u16 count;
     struct MtMoonStamp stamps[MAX_STAMPS];
+};
+
+/* A rectangle of map tiles, corners included. */
+struct Box
+{
+    s16 x1;
+    s16 y1;
+    s16 x2;
+    s16 y2;
+};
+
+/* At most 64 objects (the save block's template array) and the bg events:
+ * every PIECE of content (see CONTENT PLACEMENT). */
+#define MAX_PIECES (OBJECT_EVENT_TEMPLATES_COUNT + MAX_BG_EVENTS)
+
+/* What content placement keeps track of (see CONTENT PLACEMENT). */
+struct Placement
+{
+    /* The candidate tiles, packed as x | (y << 8) (both are under 256).
+     * They live in the flood-fill queue's memory: no flood fill runs while
+     * content is being placed. */
+    u16 *candidates;
+    s32 candidateCount;
+    /* The boxes of every piece placed so far (rule 3). */
+    s32 count;
+    struct Box boxes[MAX_PIECES];
+};
+
+/*
+ * The fixed-size work areas of one generation, kept in the borrowed heap
+ * block after the grid and the flood queue (about 1.1 KB). They are too big
+ * for the stack: the CPU's stack lives in IWRAM, between the last IWRAM
+ * variable and IWRAM_END - 0x1C0, which leaves it under 2.5 KB for the
+ * whole chain of calls that loads a map.
+ */
+struct GenerationWork
+{
+    struct StampList stamps;
+    struct Placement placement;
 };
 
 /* ------------------------------------------------------------------------- */
@@ -323,12 +372,22 @@ u16 MtMoonGen_RandomBelow(u16 n)
 /* Cave grid                                                                 */
 /* ------------------------------------------------------------------------- */
 
-/* Size in bytes of the grid part of the borrowed block, rounded up to an
- * even number so the u16 queue after it is aligned (the CPU can only read
- * a u16 from an even address). */
+/*
+ * The borrowed block is laid out as
+ *     [grid] [flood queue] [struct GenerationWork]
+ * with each part's size rounded up to a multiple of 4 bytes, so every part
+ * starts on an address the CPU can read it from (a u16 needs an even
+ * address; a u32 or a pointer, a multiple of 4). The heap hands out
+ * blocks that start on a multiple of 4.
+ */
 static s32 GridBytes(void)
 {
-    return ((sCave.width + 2) * (sCave.height + 2) + 1) & ~1;
+    return ((sCave.width + 2) * (sCave.height + 2) + 3) & ~3;
+}
+
+static s32 QueueBytes(void)
+{
+    return (sCave.width * sCave.height * sizeof(u16) + 3) & ~3;
 }
 
 static u16 *FloodQueue(void)
@@ -336,20 +395,23 @@ static u16 *FloodQueue(void)
     return (u16 *)(sCaveGrid + GridBytes());
 }
 
-/* The stamp list, right after the queue. (The queue ends on an even
- * address, and the list only needs 2-byte alignment for its u16s.) */
+static struct GenerationWork *Work(void)
+{
+    return (struct GenerationWork *)(sCaveGrid + GridBytes() + QueueBytes());
+}
+
 static struct StampList *Stamps(void)
 {
-    return (struct StampList *)(FloodQueue() + sCave.width * sCave.height);
+    return &Work()->stamps;
 }
 
 /* Borrow an all-wall grid (wall is 0, so zeroed memory) of the given size,
- * plus the flood-fill queue and an empty stamp list. */
+ * plus the flood-fill queue and the work areas (an empty stamp list). */
 static bool8 AllocCaveGrid(s32 width, s32 height)
 {
     sCave.width = width;
     sCave.height = height;
-    sCaveGrid = AllocZeroed(GridBytes() + width * height * sizeof(u16) + sizeof(struct StampList));
+    sCaveGrid = AllocZeroed(GridBytes() + QueueBytes() + sizeof(struct GenerationWork));
     return sCaveGrid != NULL;
 }
 
@@ -779,46 +841,49 @@ static bool8 IsLadderValid(const struct MtMoonLadder *ladder, const struct MtMoo
 }
 
 /*
+ * WHAT THE PLAYER CAN WALK TO
+ *
  * The player can step ONTO a ladder but never walk THROUGH one: stepping on
  * it leaves the floor. So the flood fills that decide what the player can
- * reach treat both ladder cells as solid while they run. These switch the
- * two ladder cells between BLOCKED (solid for MarkReachableFrom, which only
- * spreads into FLOOR cells) and FLOOR (what they really are).
+ * reach treat both ladder cells as solid while they run.
+ *
+ * MarkWalkableFromEntrance marks VISITED every floor cell the player can
+ * walk to from the entrance without stepping on a ladder. While it runs,
+ * the two ladder cells are BLOCKED (MarkReachableFrom only spreads into
+ * FLOOR cells). It returns the count ClearWalkableMarks needs to undo all
+ * of it, ladder cells included.
  */
-static void BlockLadderCells(void)
+
+/* TRUE for the floor cells of a ladder's footprint other than the ladder
+ * itself. */
+static bool8 IsFootprintFloor(const struct LadderCell *cell)
 {
-    sCaveGrid[CELL_INDEX(sCave.entrance.x, sCave.entrance.y)] = MT_MOON_CELL_BLOCKED;
-    sCaveGrid[CELL_INDEX(sCave.exit.x, sCave.exit.y)] = MT_MOON_CELL_BLOCKED;
+    return cell->cell == MT_MOON_CELL_FLOOR && (cell->dx != 0 || cell->dy != 0);
 }
 
-static void UnblockLadderCells(void)
+static s32 MarkWalkableFromEntrance(void)
 {
-    sCaveGrid[CELL_INDEX(sCave.entrance.x, sCave.entrance.y)] = MT_MOON_CELL_FLOOR;
-    sCaveGrid[CELL_INDEX(sCave.exit.x, sCave.exit.y)] = MT_MOON_CELL_FLOOR;
-}
-
-/* Where the player stands right after arriving through `ladder`, in effect:
- * the first floor cell of its footprint that isn't the ladder itself
- * (north of the door, north-west of a hole, south of an up-ladder). Flood
- * fills that ask "what can the player reach" start here. */
-static void GetLadderStart(const struct MtMoonLadder *ladder, s32 *x, s32 *y)
-{
-    const struct LadderKind *kind = &sLadderKinds[ladder->kind];
+    const struct LadderKind *kind = &sLadderKinds[sCave.entrance.kind];
     s32 i;
 
+    sCaveGrid[CELL_INDEX(sCave.entrance.x, sCave.entrance.y)] = MT_MOON_CELL_BLOCKED;
+    sCaveGrid[CELL_INDEX(sCave.exit.x, sCave.exit.y)] = MT_MOON_CELL_BLOCKED;
+    /* Start where the player stands right after arriving, in effect: the
+     * first floor cell of the entrance's footprint that isn't the ladder
+     * (north of the door, north-west of a hole, south of an up-ladder). */
     for (i = 0; i < kind->cellCount; i++)
     {
-        const struct LadderCell *cell = &kind->cells[i];
-
-        if (cell->cell == MT_MOON_CELL_FLOOR && (cell->dx != 0 || cell->dy != 0))
-        {
-            *x = ladder->x + cell->dx;
-            *y = ladder->y + cell->dy;
-            return;
-        }
+        if (IsFootprintFloor(&kind->cells[i]))
+            return MarkReachableFrom(sCave.entrance.x + kind->cells[i].dx, sCave.entrance.y + kind->cells[i].dy);
     }
-    *x = ladder->x;
-    *y = ladder->y;
+    return 0;
+}
+
+static void ClearWalkableMarks(s32 marked)
+{
+    ClearVisited(marked);
+    sCaveGrid[CELL_INDEX(sCave.entrance.x, sCave.entrance.y)] = MT_MOON_CELL_FLOOR;
+    sCaveGrid[CELL_INDEX(sCave.exit.x, sCave.exit.y)] = MT_MOON_CELL_FLOOR;
 }
 
 /* TRUE if every floor cell of `ladder`'s footprint, apart from the ladder
@@ -832,7 +897,7 @@ static bool8 IsFootprintVisited(const struct MtMoonLadder *ladder)
     {
         const struct LadderCell *cell = &kind->cells[i];
 
-        if (cell->cell == MT_MOON_CELL_FLOOR && (cell->dx != 0 || cell->dy != 0)
+        if (IsFootprintFloor(cell)
             && MtMoonGen_GetCell(ladder->x + cell->dx, ladder->y + cell->dy) != MT_MOON_CELL_VISITED)
             return FALSE;
     }
@@ -846,7 +911,7 @@ static bool8 IsFootprintVisited(const struct MtMoonLadder *ladder)
  */
 static bool8 CheckLadders(const struct MtMoonFloor *floor)
 {
-    s32 x, y, marked;
+    s32 marked;
     bool8 connected;
 
     if (!IsLadderValid(&sCave.entrance, &floor->entrance)
@@ -855,12 +920,9 @@ static bool8 CheckLadders(const struct MtMoonFloor *floor)
     if (MtMoonGen_LadderDistance(&sCave.entrance, &sCave.exit) < MT_MOON_LADDER_MIN_DISTANCE)
         return FALSE;
 
-    BlockLadderCells();
-    GetLadderStart(&sCave.entrance, &x, &y);
-    marked = MarkReachableFrom(x, y);
+    marked = MarkWalkableFromEntrance();
     connected = IsFootprintVisited(&sCave.entrance) && IsFootprintVisited(&sCave.exit);
-    ClearVisited(marked);
-    UnblockLadderCells();
+    ClearWalkableMarks(marked);
     return connected;
 }
 
@@ -870,9 +932,8 @@ static bool8 CheckLadders(const struct MtMoonFloor *floor)
 
 /*
  * Turn every floor cell the player can't walk to into wall, so that 100%
- * of the floor is reachable (test P3). "Can walk to" means connected to
- * the entrance's footprint without stepping on a ladder; CheckLadders has
- * already made sure both footprints are part of that.
+ * of the floor is reachable (test P3). CheckLadders has already made sure
+ * both ladders' footprints can be walked to.
  *
  * After this, the floor without the two ladder cells is one connected
  * piece, and every floor cell next to a ladder belongs to it. Content
@@ -880,12 +941,10 @@ static bool8 CheckLadders(const struct MtMoonFloor *floor)
  */
 static void FillPockets(void)
 {
-    s32 x, y, i, marked;
+    s32 i;
     s32 count = (sCave.width + 2) * (sCave.height + 2);
+    s32 marked = MarkWalkableFromEntrance();
 
-    BlockLadderCells();
-    GetLadderStart(&sCave.entrance, &x, &y);
-    marked = MarkReachableFrom(x, y);
     /* The reached cells are VISITED now, so the FLOOR ones left are the
      * pockets. (The wall frame is wall, so the loop can run over it.) */
     for (i = 0; i < count; i++)
@@ -893,8 +952,7 @@ static void FillPockets(void)
         if (sCaveGrid[i] == MT_MOON_CELL_FLOOR)
             sCaveGrid[i] = MT_MOON_CELL_WALL;
     }
-    ClearVisited(marked);
-    UnblockLadderCells();
+    ClearWalkableMarks(marked);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -967,8 +1025,8 @@ static void DrawCave(const struct MtMoonFloor *floor)
 /* ------------------------------------------------------------------------- */
 
 /*
- * Copy the floor's vanilla event tables into RAM and point gMapHeader.events
- * at the copy:
+ * Copy the floor's vanilla event tables (`rom`) into RAM and point
+ * gMapHeader.events at the copy:
  *   - warps: the entrance and exit warps move onto the generated ladders,
  *     keeping their vanilla destinations (see sFloors); every other warp is
  *     parked at (0,0), which is always solid wall, so it can never fire;
@@ -979,9 +1037,8 @@ static void DrawCave(const struct MtMoonFloor *floor)
  *     (PlaceContent), and B2F's one trigger, Miguel's, stays at its vanilla
  *     tile (14,11) until the fossil chamber is built around it.
  */
-static void SetUpEvents(const struct MtMoonFloor *floor)
+static void SetUpEvents(const struct MtMoonFloor *floor, const struct MapEvents *rom)
 {
-    const struct MapEvents *rom = gMapHeader.events;
     s32 i;
     s32 warpCount = rom->warpCount;
     s32 bgCount = rom->bgEventCount;
@@ -1023,24 +1080,25 @@ static void SetUpEvents(const struct MtMoonFloor *floor)
  *
  * Every vanilla object (trainers, NPCs, item balls) and background event
  * (hidden items, signs) of the floor gets a spot on the generated floor;
- * nothing is dropped. Afterwards the player, arriving by either ladder,
- * must be able to (tests P2 and P3):
+ * nothing is dropped. Each of them is a PIECE of content here (not to be
+ * confused with the game's items). Afterwards the player, arriving by
+ * either ladder, must be able to (tests P2 and P3):
  *   - walk to the other ladder;
- *   - stand next to every object, hidden item and sign, facing it;
+ *   - stand next to every piece, facing it;
  *   - walk to every floor tile that no object can stand on.
  * Objects are solid, and a defeated trainer never moves out of the way, so
  * an object in the only gap between two parts of the cave would cut one of
  * them off for good. An object that moves (a wanderer) could be on any tile
  * of its roaming box, so the whole box counts as taken.
  *
- * Each item covers a BOX of tiles: an object's roaming box (GetItemBox), or
- * the single tile of a hidden item or sign. A spot is good (IsGoodSpot)
+ * Each piece covers a BOX of tiles: an object's roaming box (GetPieceBox),
+ * or the single tile of a hidden item or sign. A spot is good (IsGoodSpot)
  * when:
  *   1. every tile of the box is free floor, so a mover can roam all of it;
  *   2. the box is at least 3 tiles from both ladders, so nothing crowds the
  *      arrival tiles or stands in a ladder's footprint;
  *   3. the box is at least 2 tiles from every box placed before it, so a
- *      free tile separates any two items and no item can take the tile
+ *      free tile separates any two pieces and no piece can take the tile
  *      next to another (the tile the player faces it from);
  *   4. covering the box keeps the floor in one piece. This is checked on
  *      the RING of tiles around the box (its 8 neighbours, for a 1-tile
@@ -1049,17 +1107,18 @@ static void SetUpEvents(const struct MtMoonFloor *floor)
  *      ring tiles that share a side with the box lie in ONE such run, any
  *      walk that crossed the box can go around it along the ring instead,
  *      so covering the box cuts nothing off. At least one such tile must
- *      exist: it is where the player stands to face the item.
+ *      exist: it is where the player stands to face the piece.
  *      Hidden items and signs are stricter: their whole ring must be free
  *      floor, so the boulder or signpost stands alone in open floor (as
  *      vanilla's sign does).
  * Since every placement keeps the floor in one piece (rule 4) and no later
- * item can take a tile next to an earlier one (rule 3), every rule above
- * still holds once the last item is placed.
+ * piece can take a tile next to an earlier one (rule 3), every rule above
+ * still holds once the last piece is placed. IsContentReachable then checks
+ * the result with one flood fill anyway.
  *
- * Finding a spot (FindSpot) only looks at the tiles that were free floor
- * when placement started (the CANDIDATES; on a typical floor a quarter of
- * the map or less), trying each way in turn until one works:
+ * Finding a spot (FindSpot) looks at the CANDIDATES (the tiles that were
+ * free floor when placement started, plus any floor carved since), trying
+ * each way in turn until one works:
  *   a. random candidates;
  *   b. every candidate in turn, starting from a random one;
  *   c. REPAIR: pick a candidate where the box and its ring could be carved
@@ -1067,19 +1126,25 @@ static void SetUpEvents(const struct MtMoonFloor *floor)
  *      and its ring are then all free floor, so rules 1 and 4 hold. Floor
  *      is only ever added, next to floor that is already connected, so no
  *      pocket appears and no ladder footprint is touched;
- *   d. never needed on the property test's 300 floors: any candidate clear
- *      of the ladders, ignoring rules 1, 3 and 4. (If even that fails, the
- *      item keeps its vanilla position.)
+ *   d. REPAIR, on a cramped floor where every candidate is too close to a
+ *      placed piece or a ladder: the same carving, anchored on ANY tile
+ *      (wall too) whose box and ring hold some free floor, which joins the
+ *      carved area to the cave (CarveAnywhere).
+ * If no way works for some piece, or the final check fails, the whole
+ * shape is thrown away and the style builds a new one (GenerateFloor), the
+ * same as for a shape with broken ladders; after 4 shapes the floor stays
+ * the vanilla map, where every piece is reachable as vanilla placed it.
  * Big boxes are the hardest to fit, so movers go first, then the hidden
  * items and signs, then everything else.
  *
  * While placement runs, the tiles an object covers are marked OCCUPIED in
- * the grid, so the rules see them as taken. Afterwards they become floor
- * again, because the trainers' sight lines (FaceStationaryTrainers) and
- * the Continue safety net need the real terrain. Hidden items and signs
- * stay BLOCKED: their boulder and signpost tiles are solid.
+ * the grid, so the rules see them as taken. They stay marked until the
+ * trainers have been turned (FaceStationaryTrainers: objects block sight
+ * lines), then become floor again (ReleaseObjectTiles), because the
+ * Continue safety net needs the real terrain. Hidden items and signs stay
+ * BLOCKED: their boulder and signpost tiles are solid.
  *
- * LOAD TIME: on a cramped floor many items need ways b and c, which look
+ * LOAD TIME: on a cramped floor many pieces need ways b and c, which look
  * at every candidate, so those loops are kept lean: they never look at a
  * wall tile, rule checks read the grid directly, and the cheapest rules
  * run first.
@@ -1091,42 +1156,17 @@ static void SetUpEvents(const struct MtMoonFloor *floor)
 #define CELL_OCCUPIED 4
 
 #define LADDER_CLEARANCE 3   /* rule 2 */
-#define ITEM_SPACING     2   /* rule 3 */
+#define PIECE_SPACING    2   /* rule 3 */
 #define RANDOM_TRIES     64  /* way a */
 
-/* At most 64 objects (the save block's template array) and the bg events. */
-#define MAX_ITEMS (OBJECT_EVENT_TEMPLATES_COUNT + MAX_BG_EVENTS)
-
 /* The biggest ring: around a 31 x 31 box, the largest a movement range
- * (4 bits, so at most 15 tiles each way) allows. */
+ * (4 bits, so at most 15 tiles each way) allows. ReadRing's buffer is this
+ * many bytes of stack. */
 #define MAX_RING_TILES (4 * 31 + 4)
 
-/* A rectangle of map tiles, corners included. */
-struct Box
-{
-    s16 x1;
-    s16 y1;
-    s16 x2;
-    s16 y2;
-};
-
-/* Everything placement keeps track of. Lives on PlaceContent's stack while
- * it runs (about 0.6 KB). */
-struct Placement
-{
-    /* The candidate tiles, packed as x | (y << 8) (both are under 256).
-     * They live in the flood-fill queue's memory: no flood fill runs while
-     * content is placed. */
-    u16 *candidates;
-    s32 candidateCount;
-    /* The boxes of every item placed so far (rule 3). */
-    s32 count;
-    struct Box boxes[MAX_ITEMS];
-};
-
-/* What an item needs: its movement (which sets its box) and whether its
+/* What a piece needs: its movement (which sets its box) and whether its
  * whole ring must be open floor. */
-struct ItemShape
+struct PieceShape
 {
     u8 movementType;
     u8 rangeX;
@@ -1137,8 +1177,7 @@ struct ItemShape
 enum
 {
     SPOT_FITS,   /* ways a and b: the spot already follows every rule */
-    SPOT_CARVE,  /* way c */
-    SPOT_ANY,    /* way d */
+    SPOT_CARVE,  /* way c: the spot follows them once it is carved out */
 };
 
 /* TRUE for the movement types that walk around inside their movement range
@@ -1166,7 +1205,7 @@ static bool8 IsMovingType(u8 movementType)
 }
 
 /*
- * The box of tiles an item placed at (x, y) can be on:
+ * The box of tiles a piece placed at (x, y) can be on:
  *   - a wanderer, walker or copier: anywhere within its movement range,
  *     [x - rangeX, x + rangeX] x [y - rangeY, y + rangeY];
  *   - MOVEMENT_TYPE_WALK_SEQUENCE_LEFT_DOWN_RIGHT_UP (1F's Lass Miriam):
@@ -1175,7 +1214,7 @@ static bool8 IsMovingType(u8 movementType)
  *     her box is [x - rangeX, x] x [y, y + rangeY];
  *   - anything else stands still: just (x, y).
  */
-static void GetItemBox(const struct ItemShape *shape, s32 x, s32 y, struct Box *box)
+static void GetPieceBox(const struct PieceShape *shape, s32 x, s32 y, struct Box *box)
 {
     s32 rx = shape->rangeX;
     s32 ry = shape->rangeY;
@@ -1204,18 +1243,21 @@ static void GetItemBox(const struct ItemShape *shape, s32 x, s32 y, struct Box *
  * is the larger of (b.x1 - a.x2) and (a.x1 - b.x2), and they are closer
  * than `gap` exactly when the gaps along both x and y are.
  */
-#define BOXES_CLOSER_THAN(a, b, gap)             \
-    ((b)->x1 - (a)->x2 < (gap) && (a)->x1 - (b)->x2 < (gap) \
+#define BOXES_CLOSER_THAN(a, b, gap)                         \
+    ((b)->x1 - (a)->x2 < (gap) && (a)->x1 - (b)->x2 < (gap)  \
   && (b)->y1 - (a)->y2 < (gap) && (a)->y1 - (b)->y2 < (gap))
 
 static bool8 IsNearLadder(const struct Box *box, const struct MtMoonLadder *ladder, s32 clearance)
 {
-    return ladder->x - box->x2 < clearance && box->x1 - ladder->x < clearance
-        && ladder->y - box->y2 < clearance && box->y1 - ladder->y < clearance;
+    struct Box tile;
+
+    tile.x1 = tile.x2 = ladder->x;
+    tile.y1 = tile.y2 = ladder->y;
+    return BOXES_CLOSER_THAN(box, &tile, clearance);
 }
 
 /* Rules 2 and 3, with the given clearance from the ladders. */
-static bool8 IsClearOfLaddersAndItems(const struct Box *box, s32 ladderClearance, const struct Placement *placement)
+static bool8 IsClearOfLaddersAndPieces(const struct Box *box, s32 ladderClearance, const struct Placement *placement)
 {
     s32 i;
 
@@ -1223,7 +1265,7 @@ static bool8 IsClearOfLaddersAndItems(const struct Box *box, s32 ladderClearance
         return FALSE;
     for (i = 0; i < placement->count; i++)
     {
-        if (BOXES_CLOSER_THAN(box, &placement->boxes[i], ITEM_SPACING))
+        if (BOXES_CLOSER_THAN(box, &placement->boxes[i], PIECE_SPACING))
             return FALSE;
     }
     return TRUE;
@@ -1239,7 +1281,7 @@ static bool8 IsBoxFreeFloor(const struct Box *box)
         return FALSE;
     for (y = box->y1; y <= box->y2; y++)
     {
-        const u8 *row = MtMoonGen_GetRow(y);
+        const u8 *row = GRID_ROW(y);
 
         for (x = box->x1; x <= box->x2; x++)
         {
@@ -1268,16 +1310,16 @@ static s32 ReadRing(const struct Box *box, u8 *ring)
     s32 n = 0, x, y;
     const u8 *row;
 
-    row = MtMoonGen_GetRow(box->y1 - 1);
+    row = GRID_ROW(box->y1 - 1);
     for (x = box->x1 - 1; x <= box->x2 + 1; x++)
         ring[n++] = (row[x] == MT_MOON_CELL_FLOOR ? RING_FREE : 0) | (x >= box->x1 && x <= box->x2 ? RING_TOUCHES : 0);
     for (y = box->y1; y <= box->y2; y++)
-        ring[n++] = (MtMoonGen_GetRow(y)[box->x2 + 1] == MT_MOON_CELL_FLOOR ? RING_FREE : 0) | RING_TOUCHES;
-    row = MtMoonGen_GetRow(box->y2 + 1);
+        ring[n++] = (GRID_ROW(y)[box->x2 + 1] == MT_MOON_CELL_FLOOR ? RING_FREE : 0) | RING_TOUCHES;
+    row = GRID_ROW(box->y2 + 1);
     for (x = box->x2 + 1; x >= box->x1 - 1; x--)
         ring[n++] = (row[x] == MT_MOON_CELL_FLOOR ? RING_FREE : 0) | (x >= box->x1 && x <= box->x2 ? RING_TOUCHES : 0);
     for (y = box->y2; y >= box->y1; y--)
-        ring[n++] = (MtMoonGen_GetRow(y)[box->x1 - 1] == MT_MOON_CELL_FLOOR ? RING_FREE : 0) | RING_TOUCHES;
+        ring[n++] = (GRID_ROW(y)[box->x1 - 1] == MT_MOON_CELL_FLOOR ? RING_FREE : 0) | RING_TOUCHES;
     return n;
 }
 
@@ -1334,43 +1376,51 @@ static bool8 KeepsFloorConnected(const struct Box *box, bool8 needOpenRing)
 }
 
 /* All four rules, cheapest first. */
-static bool8 IsGoodSpot(const struct Box *box, const struct ItemShape *shape, const struct Placement *placement)
+static bool8 IsGoodSpot(const struct Box *box, const struct PieceShape *shape, const struct Placement *placement)
 {
     return IsBoxFreeFloor(box)
-        && IsClearOfLaddersAndItems(box, LADDER_CLEARANCE, placement)
+        && IsClearOfLaddersAndPieces(box, LADDER_CLEARANCE, placement)
         && KeepsFloorConnected(box, shape->needOpenRing);
 }
 
 /*
- * Way c (repair): can the box and its ring be carved into open floor? They
- * must stay inside a 2-tile border (3 at the bottom, the border every style
- * keeps solid), the ring must stay 3+ tiles from the ladders (their
- * footprints reach 2 tiles out), the usual spacing from placed items must
- * hold, and nothing stamped or occupied may be inside.
+ * Ways c and d (repair): can the box and its ring be carved into open
+ * floor? They must stay inside a 2-tile border (3 at the bottom, the border
+ * every style keeps solid), the ring must stay 3+ tiles from the ladders
+ * (their footprints reach 2 tiles out), the usual spacing from placed
+ * pieces must hold, nothing stamped or occupied may be inside, and at
+ * least one tile inside must already be free floor: that tile joins the
+ * carved area to the rest of the cave (all free floor is connected).
  */
 static bool8 CanCarveAround(const struct Box *box, const struct Placement *placement)
 {
     s32 x, y;
+    bool8 touchesFloor = FALSE;
 
     if (box->x1 - 1 < 2 || box->y1 - 1 < 2
         || box->x2 + 1 > sCave.width - 3 || box->y2 + 1 > sCave.height - 4)
         return FALSE;
-    if (!IsClearOfLaddersAndItems(box, LADDER_CLEARANCE + 1, placement))
-        return FALSE;
+    /* The area first: way d asks this for every map tile, and most of them
+     * are deep in rock, with no floor in reach. */
     for (y = box->y1 - 1; y <= box->y2 + 1; y++)
     {
-        const u8 *row = MtMoonGen_GetRow(y);
+        const u8 *row = GRID_ROW(y);
 
         for (x = box->x1 - 1; x <= box->x2 + 1; x++)
         {
-            if (row[x] != MT_MOON_CELL_WALL && row[x] != MT_MOON_CELL_FLOOR)
+            if (row[x] == MT_MOON_CELL_FLOOR)
+                touchesFloor = TRUE;
+            else if (row[x] != MT_MOON_CELL_WALL)
                 return FALSE;
         }
     }
-    return TRUE;
+    return touchesFloor && IsClearOfLaddersAndPieces(box, LADDER_CLEARANCE + 1, placement);
 }
 
-static void CarveAround(const struct Box *box)
+/* Turn the wall tiles of the box and its ring into floor, and add them to
+ * the candidates. (The candidate list has room for every map tile, and a
+ * carved tile was wall, so it was never listed before.) */
+static void CarveAround(const struct Box *box, struct Placement *placement)
 {
     s32 x, y;
 
@@ -1379,16 +1429,18 @@ static void CarveAround(const struct Box *box)
         for (x = box->x1 - 1; x <= box->x2 + 1; x++)
         {
             if (sCaveGrid[CELL_INDEX(x, y)] == MT_MOON_CELL_WALL)
+            {
                 sCaveGrid[CELL_INDEX(x, y)] = MT_MOON_CELL_FLOOR;
+                placement->candidates[placement->candidateCount++] = x | (y << 8);
+            }
         }
     }
 }
 
-/* Try candidate `packed` (x | y << 8) for the item the way `mode` allows;
- * for SPOT_CARVE this also carves. The tile must still be free floor (for
- * SPOT_CARVE that is what connects the carved area to the rest of the
- * cave). */
-static bool8 TrySpot(const struct ItemShape *shape, const struct Placement *placement, u16 packed, u8 mode)
+/* Can the piece go on candidate `packed` (x | y << 8) the way `mode`
+ * allows? The tile must still be free floor (for SPOT_CARVE that is what
+ * connects the carved area to the rest of the cave). Changes nothing. */
+static bool8 IsUsableSpot(const struct PieceShape *shape, const struct Placement *placement, u16 packed, u8 mode)
 {
     struct Box box;
     s32 x = packed & 0xFF;
@@ -1396,59 +1448,90 @@ static bool8 TrySpot(const struct ItemShape *shape, const struct Placement *plac
 
     if (sCaveGrid[CELL_INDEX(x, y)] != MT_MOON_CELL_FLOOR)
         return FALSE;
-    GetItemBox(shape, x, y, &box);
-    switch (mode)
-    {
-    case SPOT_FITS:
+    GetPieceBox(shape, x, y, &box);
+    if (mode == SPOT_FITS)
         return IsGoodSpot(&box, shape, placement);
-    case SPOT_CARVE:
-        if (!CanCarveAround(&box, placement))
-            return FALSE;
-        CarveAround(&box);
-        return TRUE;
-    default:
-        return !IsNearLadder(&box, &sCave.entrance, LADDER_CLEARANCE)
-            && !IsNearLadder(&box, &sCave.exit, LADDER_CLEARANCE);
-    }
+    return CanCarveAround(&box, placement);
 }
 
-/* Find the item a spot (ways a to d in CONTENT PLACEMENT) and store it in
- * (*outX, *outY). Returns FALSE, leaving them alone, if there is none. */
-static bool8 FindSpot(const struct ItemShape *shape, const struct Placement *placement, s32 *outX, s32 *outY)
+/* Way d: carve out a spot anchored on any tile, wall or floor, whose box
+ * and ring hold some free floor (CanCarveAround). Every map tile is looked
+ * at once, in reading order from a random one. */
+static bool8 CarveAnywhere(const struct PieceShape *shape, struct Placement *placement, s32 *outX, s32 *outY)
 {
-    const u16 *candidates = placement->candidates;
+    s32 width = sCave.width;
+    s32 height = sCave.height;
+    s32 x = MtMoonGen_RandomBelow(width);
+    s32 y = MtMoonGen_RandomBelow(height);
+    s32 i;
+    struct Box box;
+
+    for (i = 0; i < width * height; i++)
+    {
+        GetPieceBox(shape, x, y, &box);
+        if (CanCarveAround(&box, placement))
+        {
+            CarveAround(&box, placement);
+            *outX = x;
+            *outY = y;
+            return TRUE;
+        }
+        if (++x == width)
+        {
+            x = 0;
+            if (++y == height)
+                y = 0;
+        }
+    }
+    return FALSE;
+}
+
+/* Find the piece a spot (ways a to d in CONTENT PLACEMENT), carving it out
+ * if it takes way c or d, and store it in (*outX, *outY). Returns FALSE if
+ * there is none. */
+static bool8 FindSpot(const struct PieceShape *shape, struct Placement *placement, s32 *outX, s32 *outY)
+{
     s32 count = placement->candidateCount;
     s32 i, j, start;
     u8 mode;
+    struct Box box;
 
     if (count == 0)
         return FALSE;
     for (i = 0; i < RANDOM_TRIES; i++)
     {
         j = MtMoonGen_RandomBelow(count);
-        if (TrySpot(shape, placement, candidates[j], SPOT_FITS))
+        if (IsUsableSpot(shape, placement, placement->candidates[j], SPOT_FITS))
+        {
+            mode = SPOT_FITS;
             goto found;
+        }
     }
 
-    /* Ways b, c and d each look at every candidate once, starting from the
+    /* Ways b and c each look at every candidate once, starting from the
      * same random one and wrapping around at the end of the list. */
     start = MtMoonGen_RandomBelow(count);
-    for (mode = SPOT_FITS; mode <= SPOT_ANY; mode++)
+    for (mode = SPOT_FITS; mode <= SPOT_CARVE; mode++)
     {
         j = start;
         for (i = 0; i < count; i++)
         {
-            if (TrySpot(shape, placement, candidates[j], mode))
+            if (IsUsableSpot(shape, placement, placement->candidates[j], mode))
                 goto found;
             if (++j == count)
                 j = 0;
         }
     }
-    return FALSE;
+    return CarveAnywhere(shape, placement, outX, outY);
 
 found:
-    *outX = candidates[j] & 0xFF;
-    *outY = candidates[j] >> 8;
+    *outX = placement->candidates[j] & 0xFF;
+    *outY = placement->candidates[j] >> 8;
+    if (mode == SPOT_CARVE)
+    {
+        GetPieceBox(shape, *outX, *outY, &box);
+        CarveAround(&box, placement);
+    }
     return TRUE;
 }
 
@@ -1457,7 +1540,7 @@ static void TakeBox(struct Placement *placement, const struct Box *box, u8 cell)
 {
     s32 x, y;
 
-    if (placement->count < MAX_ITEMS)
+    if (placement->count < MAX_PIECES)
         placement->boxes[placement->count++] = *box;
     for (y = box->y1; y <= box->y2; y++)
     {
@@ -1469,43 +1552,45 @@ static void TakeBox(struct Placement *placement, const struct Box *box, u8 cell)
     }
 }
 
-static void PlaceObject(struct ObjectEventTemplate *template, struct Placement *placement)
+static bool8 PlaceObject(struct ObjectEventTemplate *template, struct Placement *placement)
 {
-    struct ItemShape shape;
+    struct PieceShape shape;
     struct Box box;
-    s32 x = template->x;
-    s32 y = template->y;
+    s32 x, y;
 
     shape.movementType = template->objUnion.normal.movementType;
     shape.rangeX = template->objUnion.normal.movementRangeX;
     shape.rangeY = template->objUnion.normal.movementRangeY;
     shape.needOpenRing = FALSE;
-    FindSpot(&shape, placement, &x, &y);
+    if (!FindSpot(&shape, placement, &x, &y))
+        return FALSE;
     template->x = x;
     template->y = y;
-    GetItemBox(&shape, x, y, &box);
+    GetPieceBox(&shape, x, y, &box);
     TakeBox(placement, &box, CELL_OCCUPIED);
+    return TRUE;
 }
 
 /* A hidden item or sign: a one-tile prefab in open floor. Stamping its
  * solid tile turns the cell BLOCKED. */
-static void PlaceBgEvent(struct BgEvent *bgEvent, struct Placement *placement)
+static bool8 PlaceBgEvent(struct BgEvent *bgEvent, struct Placement *placement)
 {
-    struct ItemShape shape;
+    struct PieceShape shape;
     struct Box box;
-    s32 x = bgEvent->x;
-    s32 y = bgEvent->y;
+    s32 x, y;
 
     shape.movementType = MOVEMENT_TYPE_NONE;
     shape.rangeX = 0;
     shape.rangeY = 0;
     shape.needOpenRing = TRUE;
-    FindSpot(&shape, placement, &x, &y);
+    if (!FindSpot(&shape, placement, &x, &y))
+        return FALSE;
     bgEvent->x = x;
     bgEvent->y = y;
     MtMoonGen_StampTile(x, y, bgEvent->kind == BG_EVENT_HIDDEN_ITEM ? TILE_BOULDER : TILE_SIGNPOST);
-    GetItemBox(&shape, x, y, &box);
+    GetPieceBox(&shape, x, y, &box);
     TakeBox(placement, &box, MT_MOON_CELL_BLOCKED);
+    return TRUE;
 }
 
 /* List every free floor tile as a candidate (see struct Placement). */
@@ -1517,7 +1602,7 @@ static void ListCandidates(struct Placement *placement)
     placement->candidateCount = 0;
     for (y = 0; y < sCave.height; y++)
     {
-        const u8 *row = MtMoonGen_GetRow(y);
+        const u8 *row = GRID_ROW(y);
 
         for (x = 0; x < sCave.width; x++)
         {
@@ -1528,51 +1613,121 @@ static void ListCandidates(struct Placement *placement)
 }
 
 /*
- * Place all of the floor's content (see CONTENT PLACEMENT above). Object
- * templates (the starting position of each trainer, NPC and item ball,
- * kept in the save block) start from the ROM copy, so the result depends
- * only on the seed, even on Continue, when the save still holds the
- * previous placement. Objects keep their vanilla movement types and ranges.
+ * Put every object template (the starting position and movement of each
+ * trainer, NPC and item ball, kept in the save block) back to the ROM's
+ * vanilla values. Placement starts from them, so the result depends only on
+ * the seed, even on Continue, when the save still holds the previous
+ * placement; and a floor that falls back to the vanilla map gets them back.
  */
-static void PlaceContent(void)
+static void ResetObjectTemplates(const struct MapEvents *rom)
 {
-    struct Placement placement;
     struct ObjectEventTemplate *templates = gSaveBlock1Ptr->objectEventTemplates;
-    const struct ObjectEventTemplate *rom = sMtMoonEvents.objectEvents;
-    s32 objectCount = sMtMoonEvents.objectEventCount;
-    s32 i, count;
+    s32 i;
 
-    placement.count = 0;
-    ListCandidates(&placement);
-    for (i = 0; i < objectCount; i++)
+    for (i = 0; i < rom->objectEventCount; i++)
     {
         /* A clone template stands in for an object of a neighbouring map,
          * and its fields hold that map's ids instead of a position and a
          * movement. Mt. Moon has none, but leave any alone. */
         if (templates[i].kind == OBJ_KIND_CLONE)
             continue;
-        templates[i].x = rom[i].x;
-        templates[i].y = rom[i].y;
-        templates[i].objUnion.normal.movementType = rom[i].objUnion.normal.movementType;
-        templates[i].objUnion.normal.movementRangeX = rom[i].objUnion.normal.movementRangeX;
-        templates[i].objUnion.normal.movementRangeY = rom[i].objUnion.normal.movementRangeY;
+        templates[i].x = rom->objectEvents[i].x;
+        templates[i].y = rom->objectEvents[i].y;
+        templates[i].objUnion.normal.movementType = rom->objectEvents[i].objUnion.normal.movementType;
+        templates[i].objUnion.normal.movementRangeX = rom->objectEvents[i].objUnion.normal.movementRangeX;
+        templates[i].objUnion.normal.movementRangeY = rom->objectEvents[i].objUnion.normal.movementRangeY;
     }
+}
+
+/*
+ * Place all of the floor's content (see CONTENT PLACEMENT above), objects
+ * keeping their vanilla movement types and ranges. Returns FALSE if some
+ * piece found no spot; GenerateFloor then tries a new shape.
+ */
+static bool8 PlaceContent(void)
+{
+    struct Placement *placement = &Work()->placement;
+    struct ObjectEventTemplate *templates = gSaveBlock1Ptr->objectEventTemplates;
+    s32 objectCount = sMtMoonEvents.objectEventCount;
+    s32 i;
+
+    ResetObjectTemplates(&sMtMoonEvents);
+    placement->count = 0;
+    ListCandidates(placement);
 
     for (i = 0; i < objectCount; i++)
     {
-        if (templates[i].kind != OBJ_KIND_CLONE && IsMovingType(templates[i].objUnion.normal.movementType))
-            PlaceObject(&templates[i], &placement);
+        if (templates[i].kind != OBJ_KIND_CLONE && IsMovingType(templates[i].objUnion.normal.movementType)
+            && !PlaceObject(&templates[i], placement))
+            return FALSE;
     }
     for (i = 0; i < sMtMoonEvents.bgEventCount; i++)
-        PlaceBgEvent(&sMtMoonBgEvents[i], &placement);
+    {
+        if (!PlaceBgEvent(&sMtMoonBgEvents[i], placement))
+            return FALSE;
+    }
     for (i = 0; i < objectCount; i++)
     {
-        if (templates[i].kind != OBJ_KIND_CLONE && !IsMovingType(templates[i].objUnion.normal.movementType))
-            PlaceObject(&templates[i], &placement);
+        if (templates[i].kind != OBJ_KIND_CLONE && !IsMovingType(templates[i].objUnion.normal.movementType)
+            && !PlaceObject(&templates[i], placement))
+            return FALSE;
     }
+    return TRUE;
+}
 
-    /* Objects stand on floor: give their tiles back (see above). */
-    count = (sCave.width + 2) * (sCave.height + 2);
+/* TRUE if a tile next to the box (north, south, west or east of it, where
+ * the player could stand facing it) was reached by the last flood fill. */
+static bool8 IsBoxNextToVisited(const struct Box *box)
+{
+    s32 x, y;
+
+    for (x = box->x1; x <= box->x2; x++)
+    {
+        if (MtMoonGen_GetCell(x, box->y1 - 1) == MT_MOON_CELL_VISITED
+            || MtMoonGen_GetCell(x, box->y2 + 1) == MT_MOON_CELL_VISITED)
+            return TRUE;
+    }
+    for (y = box->y1; y <= box->y2; y++)
+    {
+        if (MtMoonGen_GetCell(box->x1 - 1, y) == MT_MOON_CELL_VISITED
+            || MtMoonGen_GetCell(box->x2 + 1, y) == MT_MOON_CELL_VISITED)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/*
+ * The final check of CONTENT PLACEMENT, with every piece's tiles still
+ * taken: from the entrance, without stepping on a ladder, the player can
+ * walk to both ladders' footprints, to every free floor tile (no pockets),
+ * and next to every piece. The rules make this true by construction; one
+ * flood fill makes sure.
+ */
+static bool8 IsContentReachable(void)
+{
+    const struct Placement *placement = &Work()->placement;
+    s32 i;
+    s32 count = (sCave.width + 2) * (sCave.height + 2);
+    s32 marked = MarkWalkableFromEntrance();
+    bool8 reachable = IsFootprintVisited(&sCave.entrance) && IsFootprintVisited(&sCave.exit);
+
+    for (i = 0; reachable && i < count; i++)
+    {
+        if (sCaveGrid[i] == MT_MOON_CELL_FLOOR)
+            reachable = FALSE; /* free floor the fill didn't reach */
+    }
+    for (i = 0; reachable && i < placement->count; i++)
+        reachable = IsBoxNextToVisited(&placement->boxes[i]);
+    ClearWalkableMarks(marked);
+    return reachable;
+}
+
+/* Objects stand on floor: give their tiles back (see CONTENT PLACEMENT). */
+static void ReleaseObjectTiles(void)
+{
+    s32 i;
+    s32 count = (sCave.width + 2) * (sCave.height + 2);
+
     for (i = 0; i < count; i++)
     {
         if (sCaveGrid[i] == CELL_OCCUPIED)
@@ -1600,8 +1755,9 @@ static const struct
     { MOVEMENT_TYPE_FACE_RIGHT, 1,  0 },
 };
 
-/* How many floor tiles follow (x, y) in a straight line, one step of
- * (dx, dy) at a time, before the first solid one. */
+/* How many free floor tiles follow (x, y) in a straight line, one step of
+ * (dx, dy) at a time, before the first tile that isn't (a wall, a boulder
+ * or signpost, or a tile an object could stand on). */
 static s32 FloorRunLength(s32 x, s32 y, s32 dx, s32 dy)
 {
     s32 length = 0;
@@ -1612,12 +1768,15 @@ static s32 FloorRunLength(s32 x, s32 y, s32 dx, s32 dy)
 }
 
 /*
- * A trainer only spots the player along the direction it faces. Turn every
- * stationary trainer (a trainer whose movement type is one of the four
- * FACE_ types) toward its longest straight run of floor, so its sight line
- * isn't wasted on a wall. Ties keep the vanilla facing when it is one of
- * the longest. Look-around trainers, wanderers and non-trainers keep their
- * vanilla movement. Runs only care about the map: objects don't end them.
+ * A trainer only spots the player along the direction it faces, and the
+ * game's sight check (src/trainer_see.c) stops at walls and at objects.
+ * Turn every stationary trainer (a trainer whose movement type is one of
+ * the four FACE_ types) toward its longest straight run of open floor, so
+ * its sight line can actually catch the player. Runs end at walls,
+ * boulders and signposts, and at every tile an object could stand on, so
+ * this runs while the objects' tiles are still OCCUPIED. Ties keep the
+ * vanilla facing when it is one of the longest. Look-around trainers,
+ * wanderers and non-trainers keep their vanilla movement.
  */
 static void FaceStationaryTrainers(void)
 {
@@ -1670,18 +1829,24 @@ static const struct MtMoonFloor *GetCurrentFloor(void)
 /*
  * Build `floor` from `seed` and write it into the loaded map. Leaves the
  * grid allocated for the caller's follow-up step; the caller must call
- * FreeCaveGrid(). Returns FALSE, changing nothing, if the heap can't lend
- * the grid or the style never produced valid ladders; the floor then
- * simply stays the vanilla map from the ROM, with its vanilla warps and
- * objects, which is fully playable. (On Continue the player would keep
- * coordinates from the generated cave, which may be wall in the vanilla
- * map, and the safety net can't run without a generated cave. Both are
- * should-never-happen fallbacks: the grid is about 6 KB of a 112 KB heap,
- * and the property test checks the ladders of every style on 100 seeds.)
+ * FreeCaveGrid().
+ *
+ * A shape is thrown away, and the style asked for a new one, if its ladders
+ * break the rules (CheckLadders) or if some piece of content finds no spot
+ * on it, even with repairs (PlaceContent, IsContentReachable). Returns
+ * FALSE if the heap can't lend the grid or no shape works in 4 tries; the
+ * floor then simply stays the vanilla map from the ROM, with its vanilla
+ * warps and objects, which is fully playable. (On Continue the player
+ * would keep coordinates from the generated cave, which may be wall in the
+ * vanilla map, and the safety net can't run without a generated cave.
+ * Both are should-never-happen fallbacks: the block is about 7 KB of a
+ * 112 KB heap, and the property test checks every style on 100 seeds per
+ * floor.)
  */
 static bool8 GenerateFloor(const struct MtMoonFloor *floor, u16 seed)
 {
     s32 attempt;
+    const struct MapEvents *rom = gMapHeader.events; /* the map loader set it from the ROM header */
 
     if (!AllocCaveGrid(gMapHeader.mapLayout->width, gMapHeader.mapLayout->height))
         return FALSE;
@@ -1694,18 +1859,25 @@ static bool8 GenerateFloor(const struct MtMoonFloor *floor, u16 seed)
         InitLadder(&sCave.exit, &floor->exit);
         ProposeLadders();
         floor->style->buildShape(&sCave);
-        if (CheckLadders(floor))
+        if (!CheckLadders(floor))
+            continue;
+        FillPockets();
+        SetUpEvents(floor, rom);
+        if (PlaceContent() && IsContentReachable())
             break;
     }
     if (attempt == MAX_SHAPE_ATTEMPTS)
+    {
+        /* Undo what a failed attempt may have changed outside the grid. */
+        gMapHeader.events = rom;
+        ResetObjectTemplates(rom);
         return FALSE;
+    }
 
-    /* Every step below may still change the grid (fill, stamp, carve), so
-     * the map is drawn last. */
-    FillPockets();
-    SetUpEvents(floor);
-    PlaceContent();
+    /* Every step above may change the grid (fill, stamp, carve), so the
+     * map is drawn last. */
     FaceStationaryTrainers();
+    ReleaseObjectTiles();
     DrawCave(floor);
     return TRUE;
 }
