@@ -383,9 +383,10 @@ ADDR.gPlayerPartyCount               = 0x02024029
 -- WALKING POKEMON FOLLOWER (pokemon_follower.c)
 -------------------------------------------------------------------------------
 -- sFollower: static EWRAM struct tracking the active follower Pokemon.
--- Base address from pokefirered.map: grep "ewram_data.*pokemon_follower" pokefirered.map
--- NOTE: Re-verify after any rebuild that touches EWRAM layout before pokemon_follower.o.
--- Field offsets (valid both before and after adding u32 pid at +8):
+-- The number below is only a fallback copied from one build: sFollower is a
+-- unique symbol name, so the live-address pass at the end of this file
+-- replaces it with its address in pokefirered.elf (see symbols.lua).
+-- Field offsets (12 bytes in all; the u32 forces 4-byte alignment):
 --   +0  bool8 active
 --   +1  bool8 spriteSpawned
 --   +2  u8    partySlot
@@ -394,7 +395,8 @@ ADDR.gPlayerPartyCount               = 0x02024029
 --   +6  u8    graphicsId
 --   +7  u8    objEventId
 --   +8  u32   pid  (added by issue-4 fix; not present in pre-fix builds)
-ADDR.sFollower               = 0x0203f7a8
+-- These offsets must be redone whenever a field is added to the struct.
+ADDR.sFollower               = 0x0203f624
 ADDR.FOLLOWER_OFF_ACTIVE     = 0x00
 ADDR.FOLLOWER_OFF_SPECIES    = 0x04
 ADDR.FOLLOWER_OFF_PID        = 0x08
