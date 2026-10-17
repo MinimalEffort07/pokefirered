@@ -142,8 +142,8 @@ fw.run(function()
         else
             fw.slow_down(string.format("observing flybys on %s", stop.label))
             local count = watch_flybys(stop.label)
-            local shot_path = string.format("/tmp/mgba-flyby-%s.png",
-                stop.label:lower())
+            local shot_path = fw.out_path(string.format("mgba-flyby-%s.png",
+                stop.label:lower()))
             fw.screenshot(shot_path)
             table.insert(summary, {
                 label = stop.label, count = count, screenshot = shot_path,

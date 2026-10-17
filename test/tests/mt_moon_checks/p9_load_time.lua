@@ -60,6 +60,9 @@ return {
         local cave = h.VANILLA_CAVE
         local vanilla = h.timed_entry(cave, cave.warp, rng)
         local generated = h.timed_entry(floor, floor.entrance.warp, rng)
+        -- The timed entry leaves Rock Tunnel, not this floor, so it can roll
+        -- a different seed than `snap` has; report the one it measured.
+        local timed_seed = h.seed()
         h.enter_floor(floor, rng)
         if vanilla == nil then
             return false, cave.name .. ": the player never regained control"
@@ -71,7 +74,7 @@ return {
         add(s.floor, generated)
         add(s.extra, generated - vanilla)
         if generated - vanilla > MAX_EXTRA_FRAMES then
-            return false, string.format("%d frames, %s took %d: %d extra (limit %d)",
+            return false, string.format("cave seed 0x%04x: %d frames, %s took %d: %d extra (limit %d)", timed_seed,
                 generated, cave.name, vanilla, generated - vanilla, MAX_EXTRA_FRAMES)
         end
         return true

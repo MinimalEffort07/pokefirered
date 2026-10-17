@@ -30,6 +30,7 @@
 --   MT_MOON_RNG     run a single gRngValue (hex or decimal) instead
 --   MT_MOON_FLOORS  comma-separated floor names to run, e.g. "B1F"
 --   MT_MOON_CHECKS  comma-separated check ids to run, e.g. "P8"
+--   MT_MOON_MAX_LOGGED  failures printed per check and floor (default 5)
 --
 -- The full sweep takes longer than run_test.sh's default 60 s limit:
 --   MGBA_TEST_TIMEOUT=900 bash test/run_test.sh test/tests/test_mt_moon_properties.lua
@@ -44,8 +45,9 @@ local mm = dofile(project_dir .. "test/lib/mt_moon.lua")
 
 local CHECK_DIR = project_dir .. "test/tests/mt_moon_checks"
 
--- How many failures to print per (check, floor) before going quiet.
-local MAX_LOGGED_FAILURES = 5
+-- How many failures to print per (check, floor) before going quiet
+-- (MT_MOON_MAX_LOGGED overrides it, e.g. to list every failing seed).
+local MAX_LOGGED_FAILURES = tonumber(os.getenv("MT_MOON_MAX_LOGGED") or "") or 5
 
 local function csv_set(value)
     if value == nil or value == "" then return nil end

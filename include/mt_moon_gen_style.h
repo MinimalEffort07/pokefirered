@@ -9,8 +9,10 @@
  *
  * The core does everything that is the same on every floor: the per-visit
  * seed and the private random number generator, the cave grid, proposing
- * and checking the ladders, writing the finished map into the game's map
- * buffer, the warps, placing NPCs, and the Continue safety net.
+ * and checking the ladders, filling sealed-off pockets of floor, placing
+ * the floor's vanilla content (trainers, NPCs, item balls, hidden items and
+ * signs) where the player can reach all of it, writing the finished map
+ * into the game's map buffer, the warps, and the Continue safety net.
  *
  * A style decides what a floor looks like, through two functions:
  *
@@ -49,6 +51,12 @@
  * cell holds one of the MT_MOON_CELL_* values. Coordinates are map tile
  * coordinates: (0,0) is the top-left tile, x grows east, y grows south.
  * Reading outside the grid returns MT_MOON_CELL_WALL.
+ *
+ * Only WALL, FLOOR and VISITED exist while buildShape runs. The core adds
+ * BLOCKED cells afterwards, where it stamps a solid one-tile prefab onto
+ * the floor (see ONE-TILE PREFABS below). A style's pickTile counts a
+ * BLOCKED cell as floor (it is not WALL), so the tiles around a boulder
+ * are drawn as open floor, the way vanilla draws them.
  *
  * LADDERS
  *
@@ -110,7 +118,11 @@
  *          holds; MtMoonGen_MarkLadderSite() writes a footprint),
  *        - is at least MT_MOON_LADDER_MIN_DISTANCE from the other ladder,
  *          counted as steps east-west plus steps north-south,
- *      and the two ladders are connected through floor cells.
+ *      and every floor cell of both footprints is connected to every other
+ *      through floor cells WITHOUT stepping on either ladder cell. (Stepping
+ *      on a ladder leaves the floor, so the player can never walk through
+ *      one. For example the cells west and east of 1F's door must connect
+ *      to the cell north of it around the door, not across it.)
  *   3. pickTile draws the ladders, usually by returning
  *      MtMoonGen_GetLadderTile() first. A style may draw its own vanilla
  *      variants instead, keeping the same cells walkable and solid: for
@@ -122,6 +134,45 @@
  * on a fresh all-wall grid with fresh proposals (the random numbers have
  * moved on, so it comes out different), up to 4 times, then gives up and
  * leaves the floor's vanilla map in place.
+ *
+ * WHAT THE CORE DOES TO THE SHAPE AFTERWARDS
+ *
+ *   1. Pockets. Every floor cell the player can't walk to from the
+ *      entrance (without stepping on a ladder) becomes wall. A style that
+ *      would rather CONNECT a pocket (because filling it would leave a
+ *      shape its tiles can't draw) must connect it in buildShape.
+ *   2. Content. Every trainer, NPC and item ball is put on open floor, and
+ *      every hidden item and sign is stamped onto open floor as a one-tile
+ *      prefab (a boulder 0x282, the signpost 0x2cd). Objects that move
+ *      (wanderers) count as standing on every tile of their roaming box.
+ *      Each spot is chosen so that the floor stays in one connected piece
+ *      and the player can stand next to every object, hidden item and
+ *      sign, facing it. Nothing goes within 2 tiles of a ladder.
+ *   3. Repair. If no spot fits, the core carves open floor (wall cells
+ *      become floor): the object's box plus one tile on every side, kept
+ *      3+ tiles from the ladders and inside the 2-tile border (3 at the
+ *      bottom), always touching existing floor so it joins the cave. It
+ *      never removes floor, so the ladders' footprints are untouched. A
+ *      style that leaves enough open floor rarely sees this happen. If
+ *      even that finds no spot for some
+ *      piece, or the core's final reachability check fails, the shape is
+ *      thrown away and buildShape is called again, exactly as for broken
+ *      ladders (rule 2 above), so nothing is ever dropped or unreachable.
+ *   4. Facing. Each stationary trainer is turned toward its longest
+ *      straight run of open floor (walls, boulders, signposts and the
+ *      tiles objects can stand on all end a run), so its sight line can
+ *      catch the player.
+ *
+ * ONE-TILE PREFABS
+ *
+ * MtMoonGen_StampTile(x, y, tile) draws map tile (x, y) as a fixed vanilla
+ * tile instead of whatever pickTile would draw there. The grid follows the
+ * tile's collision bits: a walkable tile makes the cell FLOOR; a solid tile
+ * on floor makes it BLOCKED (drawn by the prefab, nobody can walk on it);
+ * a solid tile on wall leaves it WALL. The core uses it for hidden items
+ * and signs; a style (or a later decoration step) may use it for its own
+ * one-tile pieces, once its shape is final. Never stamp a ladder's
+ * footprint. A later stamp on the same tile replaces an earlier one.
  *
  * MAP CELL VALUES
  *
@@ -137,6 +188,9 @@
 #define MT_MOON_CELL_WALL    0
 #define MT_MOON_CELL_FLOOR   1
 #define MT_MOON_CELL_VISITED 2  /* floor already reached by a flood fill */
+#define MT_MOON_CELL_BLOCKED 3  /* floor under a solid one-tile prefab (a
+                                 * boulder, a sign): drawn by the prefab,
+                                 * not walkable; see ONE-TILE PREFABS */
 
 /* Ladder kinds (see LADDERS above). */
 #define MT_MOON_LADDER_DOOR 0
@@ -176,7 +230,8 @@ struct MtMoonStyle
 u8 MtMoonGen_GetCell(s32 x, s32 y);
 void MtMoonGen_SetCell(s32 x, s32 y, u8 value);
 
-/* TRUE for MT_MOON_CELL_FLOOR and MT_MOON_CELL_VISITED; FALSE off the grid. */
+/* TRUE for every cell that isn't MT_MOON_CELL_WALL (FLOOR, VISITED and
+ * BLOCKED); FALSE off the grid. */
 bool8 MtMoonGen_IsFloor(s32 x, s32 y);
 
 /* How many of the 8 cells around (x, y) are wall; off-grid counts as wall. */
@@ -259,6 +314,17 @@ void MtMoonGen_GetLadderFoot(const struct MtMoonLadder *ladder, s32 *x, s32 *y);
  *         into the wall above.
  */
 u16 MtMoonGen_GetLadderTile(const struct MtMoonCave *cave, s32 x, s32 y);
+
+/* --- One-tile prefabs (provided by the core) ------------------------------ */
+
+/*
+ * Draw map tile (x, y) as `tile`, a full map cell value (see MAP CELL
+ * VALUES), instead of what the style's pickTile would draw, and update the
+ * grid to match the tile's collision (see ONE-TILE PREFABS above). Returns
+ * FALSE, changing nothing, if (x, y) is off the grid or the core's list of
+ * stamps (room for 128 per floor) is full.
+ */
+bool8 MtMoonGen_StampTile(s32 x, s32 y, u16 tile);
 
 /* --- One style object per generated floor --------------------------------- */
 
