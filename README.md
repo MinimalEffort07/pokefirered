@@ -14,7 +14,7 @@ This is a fork of the PRET project with custom features. Development is AI-assis
   - **1F look:** 1F currently uses the shared cellular-automata cave style.
   - **B1F look:** B1F currently uses the shared cellular-automata cave style.
   - **B2F look:** B2F currently uses the shared cellular-automata cave style.
-  - **Fossil chamber:** Not built yet: Super Nerd Miguel and the two fossils are placed on B2F like any other object, and Miguel's battle trigger stays on vanilla's tile (14,11).
+  - **Fossil chamber:** B2F always has vanilla's fossil chamber, copied tile for tile. Super Nerd Miguel guards the Dome and Helix Fossils at the top of the stairs that are the only way in, and his battle trigger is the tile right next to him, so you can't reach the fossils without facing him. Wherever the chamber lands, it is guaranteed reachable from both ladders but never on the only way between them: it stays a side room, as in vanilla. Beat Miguel and take one fossil, and he walks over and takes the other. Leave and come back, and both fossils stay gone while Miguel is back at his post.
   - **Decorations:** None yet: no rubble, craters, puddles or stairs.
 
   ![Procedurally Generated Mt. Moon](gifs/procedurallyGenerated.gif)
