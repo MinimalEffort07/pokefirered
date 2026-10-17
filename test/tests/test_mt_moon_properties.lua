@@ -33,7 +33,7 @@
 --   MT_MOON_MAX_LOGGED  failures printed per check and floor (default 5)
 --
 -- The full sweep takes longer than run_test.sh's default 60 s limit:
---   MGBA_TEST_TIMEOUT=900 bash test/run_test.sh test/tests/test_mt_moon_properties.lua
+--   MGBA_TEST_TIMEOUT=1500 bash test/run_test.sh test/tests/test_mt_moon_properties.lua
 -------------------------------------------------------------------------------
 
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""

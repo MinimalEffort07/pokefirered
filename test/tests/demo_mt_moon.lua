@@ -121,7 +121,7 @@ fw.run(function()
 
     local legs = chain.legs("east")
     for i, leg in ipairs(legs) do
-        if leg.to.name == "Route 4" then
+        if i == #legs then
             -- The last leg leaves B2F: take the fossil first.
             if not fossil.take_here("dome", fw, capture) then break end
         end

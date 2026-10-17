@@ -54,8 +54,8 @@ GBA BACKGROUND, for readers new to it:
   * The GBA stores colours as 5 bits per channel, so each .pal colour
     (8 bits per channel) is cut to 5 bits, as the build does, and stretched
     back to 8 bits for the PNG, giving the colours the game shows.
-  * A metatile id with no data in either tileset is drawn as a magenta and
-    black checkerboard, so a broken map cell stands out.
+  * A metatile id with no data in either tileset is drawn as magenta and
+    black diagonal stripes, so a broken map cell stands out.
 
 The output is pixel for pixel the same as the prototype renderer the
 Mt. Moon design was done with (issue #22), which read the build's converted
@@ -78,7 +78,7 @@ RULER = 14               # pixels of coordinate ruler above and left of the map
 RULER_EVERY = 4          # label every 4th map tile
 RULER_BACKGROUND = (40, 40, 40)
 RULER_TEXT = (255, 255, 0)
-MISSING = ((255, 0, 255), (0, 0, 0))  # checkerboard for a metatile id with no data
+MISSING = ((255, 0, 255), (0, 0, 0))  # stripes for a metatile id with no data
 
 DUMP_MAGIC = "map-dump"
 
@@ -243,7 +243,7 @@ def read_palette(path):
     return colours
 
 
-class Tileset:
+class LayoutTilesets:
     """The primary and secondary tilesets of one layout, merged the way the
     game loads them into video memory."""
 
@@ -430,7 +430,7 @@ def main():
     args = parser.parse_args()
 
     layout, cells = read_input(args.input, args.layout)
-    tileset = Tileset(layout)
+    tileset = LayoutTilesets(layout)
     write_png(args.output, render(tileset, cells, layout["width"], layout["height"]))
     print("%s: %s, %d x %d tiles" % (args.output, layout_dir_name(layout), layout["width"], layout["height"]))
 

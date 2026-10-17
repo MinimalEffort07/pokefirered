@@ -4,11 +4,12 @@
 --
 -- The two fossil scenarios mirror each other, so their flow lives here:
 --
---   take(which, rng, test_fw, test_capture) (or take_here(), for a B2F the
---   player has already walked into: steps 2 and 3), with which = "dome" (S4) or
+--   take(which, rng, test_fw, test_capture), with which = "dome" (S4) or
 --   "helix" (S5), test_fw the calling test's framework (its assertions are
 --   the ones reported) and test_capture its frame_capture module (so the
---   captions land in the test's recording; optional):
+--   captions land in the test's recording; optional), does steps 1-3;
+--   take_here(which, test_fw, test_capture, snap) does steps 2 and 3 on a
+--   B2F the player has already walked into (the demo):
 --     1. Enter B2F through its entrance ladder with gRngValue = rng (a fixed
 --        value, so every run builds the same cave).
 --     2. Walk (real D-pad steps, test/lib/walk.lua) to the tile next to the
@@ -87,6 +88,9 @@ end
 -- snapshot taken on arrival (before the fossil was taken), or nil if the
 -- scenario couldn't run to the end.
 function fossil.take(which, rng, test_fw, test_capture)
+    local cap = test_capture or capture
+    mm.set_text_speed_fast()  -- see take_here
+    cap.caption("B2F: walking to the " .. KINDS[which].name)
     local snap = mm.enter_floor(chamber.FLOOR, rng)
     fw.log(string.format("B2F: cave seed 0x%04x", snap.seed))
     test_fw.assert_true(fw.wait_until(walk.ready, 600, "control after arriving on B2F"),
@@ -99,9 +103,10 @@ end
 -- Steps 2 and 3 of take() (see the header) on the B2F the player is on now,
 -- however they got there (the demo, test/tests/demo_mt_moon.lua, climbs
 -- down from B1F). `snap` is an mt_moon snapshot of this B2F taken before
--- any fossil was taken (default: one taken now). Returns true once the
--- fossil is taken, false if the scenario couldn't run to the end; the
--- PASS checks are asserted through `test_fw` either way.
+-- any fossil was taken (default: one taken now). Returns false if the
+-- scenario couldn't run to the end (no fossils or Miguel, or no way to the
+-- fossil), true once it has pressed through the fossil script and checked
+-- the result; the PASS checks are asserted through `test_fw`.
 function fossil.take_here(which, test_fw, test_capture, snap)
     local T = test_fw
     local cap = test_capture or capture
@@ -150,7 +155,7 @@ function fossil.take_here(which, test_fw, test_capture, snap)
     T.assert_true(miguel ~= nil and miguel.x == left.x and miguel.y == left.y + 1, string.format(
         "Miguel stands right below the %s's old tile (%d,%d): at (%d,%d)", other.name, left.x, left.y + 1,
         miguel and miguel.x or -1, miguel and miguel.y or -1))
-    return frames ~= nil
+    return true
 end
 
 return fossil

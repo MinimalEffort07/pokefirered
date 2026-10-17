@@ -109,7 +109,8 @@ If a shape fails a check, the style builds a new one; after 4 failures the floor
 Each test boots the ROM in mGBA's headless emulator and drives the game from a Lua script (see `test/run_test.sh`). Build first with `make -j$(nproc) firered`; the tests run `pokefirered.gba`.
 
 ```bash
-# Property checks: every generated floor, 100 seeds each (about 3 minutes)
+# Property checks: every generated floor, 100 seeds each (about 3 minutes;
+# the limit is generous)
 MGBA_TEST_TIMEOUT=1500 bash test/run_test.sh test/tests/test_mt_moon_properties.lua
 # One floor, one check, or one random state, e.g. to reproduce a logged failure
 MT_MOON_FLOORS=B2F MT_MOON_CHECKS=P5-B2F MT_MOON_RNG=0x12345678 \

@@ -63,7 +63,7 @@ local MAX_TRIES = 6
 -- Any starting value works: the first entry only measures k.
 local PROBE_RNG = 0x5EED0000
 
-local function csv(value)
+local function split_list(value)
     if value == nil or value == "" then return nil end
     local items = {}
     for item in value:gmatch("[^,%s]+") do items[#items + 1] = item end
@@ -102,8 +102,8 @@ local function write_dump(path, floor, snap, rng)
 end
 
 fw.run(function()
-    local seeds = csv(os.getenv("MT_MOON_DUMP_SEEDS"))
-    local floors = csv(os.getenv("MT_MOON_DUMP_FLOORS"))
+    local seeds = split_list(os.getenv("MT_MOON_DUMP_SEEDS"))
+    local floors = split_list(os.getenv("MT_MOON_DUMP_FLOORS"))
     local dir = os.getenv("MT_MOON_DUMP_DIR")
     if dir ~= nil and dir ~= "" then os.execute("mkdir -p '" .. dir .. "'") end
     local function out_file(name)
