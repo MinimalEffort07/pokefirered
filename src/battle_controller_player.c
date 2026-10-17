@@ -141,7 +141,8 @@ static void PlayerDoMoveAnimation(void);
 static void Task_StartSendOutAnim(u8 taskId);
 static void PreviewDeterminativeMoveTargets(void);
 static u16 GetMoveEffectivenessColor(u16 move, u8 defType1, u8 defType2, u8 defAbility);
-static void MoveSelectionSetEffectivenessColors(void);
+static u8 GetDefaultEffectivenessDefender(void);
+static void MoveSelectionSetEffectivenessColors(u8 defender);
 static void SwitchIn_HandleSoundAndEnd(void);
 static void Task_GiveExpWithExpBar(u8 taskId);
 static void Task_CreateLevelUpVerticalStripes(u8 taskId);
@@ -432,6 +433,14 @@ static void HandleInputChooseTarget(void)
         }
         while (i == 0);
         gSprites[gBattlerSpriteIds[gMultiUsePlayerCursor]].callback = SpriteCB_ShowAsMoveTarget;
+        /*
+         * Recolor the move names for the opponent now under the cursor. On
+         * the player's own side (the partner, or the user for moves that
+         * allow it) the colors are left as they are: they describe matchups
+         * against foes.
+         */
+        if (GET_BATTLER_SIDE(gMultiUsePlayerCursor) == B_SIDE_OPPONENT)
+            MoveSelectionSetEffectivenessColors(gMultiUsePlayerCursor);
     }
     else if (JOY_NEW(DPAD_RIGHT | DPAD_DOWN))
     {
@@ -472,6 +481,14 @@ static void HandleInputChooseTarget(void)
         }
         while (i == 0);
         gSprites[gBattlerSpriteIds[gMultiUsePlayerCursor]].callback = SpriteCB_ShowAsMoveTarget;
+        /*
+         * Recolor the move names for the opponent now under the cursor. On
+         * the player's own side (the partner, or the user for moves that
+         * allow it) the colors are left as they are: they describe matchups
+         * against foes.
+         */
+        if (GET_BATTLER_SIDE(gMultiUsePlayerCursor) == B_SIDE_OPPONENT)
+            MoveSelectionSetEffectivenessColors(gMultiUsePlayerCursor);
     }
 }
 
@@ -539,6 +556,15 @@ void HandleInputChooseMove(void)
             else
                 gMultiUsePlayerCursor = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
             gSprites[gBattlerSpriteIds[gMultiUsePlayerCursor]].callback = SpriteCB_ShowAsMoveTarget;
+            /*
+             * The target cursor has just been reset to its default. If the
+             * player earlier moved it to the other opponent and then backed
+             * out with B, the move names still show that opponent's colors,
+             * so recolor them for the opponent the cursor is on now.
+             * HandleInputChooseTarget does the same on every D-pad move.
+             */
+            if (GET_BATTLER_SIDE(gMultiUsePlayerCursor) == B_SIDE_OPPONENT)
+                MoveSelectionSetEffectivenessColors(gMultiUsePlayerCursor);
         }
     }
     else if (JOY_NEW(B_BUTTON))
@@ -699,7 +725,7 @@ static void HandleMoveSwitching(void)
                 gDisableStructs[gActiveBattler].mimickedMoves &= (~gBitTable[gMoveSelectionCursor[gActiveBattler]]);
                 gDisableStructs[gActiveBattler].mimickedMoves |= gBitTable[gMultiUsePlayerCursor];
             }
-            MoveSelectionSetEffectivenessColors();
+            MoveSelectionSetEffectivenessColors(GetDefaultEffectivenessDefender());
             MoveSelectionDisplayMoveNames();
             for (i = 0; i < MAX_MON_MOVES; ++i)
                 perMovePPBonuses[i] = (gBattleMons[gActiveBattler].ppBonuses & (3 << (i * 2))) >> (i * 2);
@@ -1504,24 +1530,61 @@ static u16 GetMoveEffectivenessColor(u16 move, u8 defType1, u8 defType2, u8 defA
 }
 
 /*
+ * Returns the battler whose types the move names are colored against when
+ * the move menu opens (or its moves are reordered), before the player has
+ * pointed the target cursor at anyone.
+ *
+ * A battler is one Pokemon slot on the field, numbered 0-3; in a single
+ * battle only 0 (player) and 1 (opponent) exist. GetBattlerAtPosition turns
+ * a screen position (opponent left/right) into that battler number.
+ *
+ * gAbsentBattlerFlags is a bitmask with one bit per battler: bit N
+ * (gBitTable[N], i.e. 1 << N) is set when battler N's Pokemon has fainted
+ * and its side has nothing left to send out, so that slot stays empty. The
+ * bit is cleared again if a Pokemon is switched in or revived there.
+ *
+ * Normally the answer is the opponent on the left. In a double battle where
+ * that opponent has fainted with no replacement, its slot still holds the
+ * fainted Pokemon's old types in gBattleMons, so coloring against it would
+ * show matchups for a Pokemon that is no longer there. The right opponent
+ * is then the only one left to attack, so the colors use it instead. This
+ * is the same choice HandleInputChooseMove makes for where the target
+ * cursor starts, so the colors and the cursor agree.
+ */
+static u8 GetDefaultEffectivenessDefender(void)
+{
+    if (gAbsentBattlerFlags & gBitTable[GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT)])
+        return GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT);
+    return GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
+}
+
+/*
  * Assigns each move-name window (B_WIN_MOVE_NAME_1..4) its own BG palette
  * and sets the text color (palette entry 13) to reflect how effective that
- * move is against the current opponent.  Must be called BEFORE
+ * move is against `defender`.  Must be called BEFORE
  * MoveSelectionDisplayMoveNames() so the palette assignment is in place
  * when PutWindowTilemap writes tilemap entries.
+ *
+ * `defender` is the battler number (0-3) of the opponent to color against;
+ * its types and ability are read from gBattleMons[defender]. Callers pass
+ * GetDefaultEffectivenessDefender() when the move menu opens, and the
+ * battler under the target cursor whenever that cursor lands on an
+ * opponent (a D-pad move in HandleInputChooseTarget, or the reset to its
+ * default when a move is picked in HandleInputChooseMove), so in a double
+ * battle the colors always describe the opponent being aimed at.
+ * Calling it again just rewrites the four palette entries, so it is safe to
+ * call while the menu is on screen.
  *
  * Uses palettes 10-13 which are unused during battle.  Palettes 8-9 are
  * reserved by the animation system (BG_ANIM_PAL_1/2 in battle_anim_mons.c)
  * and must not be touched here.
  */
-static void MoveSelectionSetEffectivenessColors(void)
+static void MoveSelectionSetEffectivenessColors(u8 defender)
 {
     s32 i;
     struct ChooseMoveStruct *moveInfo = (struct ChooseMoveStruct *)(&gBattleBufferA[gActiveBattler][4]);
-    u8 defender;
     u8 defType1, defType2, defAbility;
 
-    defender = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
     defType1 = gBattleMons[defender].type1;
     defType2 = gBattleMons[defender].type2;
     defAbility = gBattleMons[defender].ability;
@@ -2615,7 +2678,7 @@ static void PlayerHandleChooseMove(void)
 
 void InitMoveSelectionsVarsAndStrings(void)
 {
-    MoveSelectionSetEffectivenessColors();
+    MoveSelectionSetEffectivenessColors(GetDefaultEffectivenessDefender());
     MoveSelectionDisplayMoveNames();
     gMultiUsePlayerCursor = 0xFF;
     MoveSelectionCreateCursorAt(gMoveSelectionCursor[gActiveBattler], 0);
