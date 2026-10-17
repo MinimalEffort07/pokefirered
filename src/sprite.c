@@ -156,8 +156,8 @@
 
 #define SET_SPRITE_TILE_RANGE(index, start, count) \
 {                                                  \
-    sSpriteTileRanges[index * 2] = start;          \
-    (sSpriteTileRanges + 1)[index * 2] = count;    \
+    sSpriteTileRanges[index][0] = start;           \
+    sSpriteTileRanges[index][1] = count;           \
 }
 
 #define ALLOC_SPRITE_TILE(n)                              \
@@ -412,7 +412,7 @@ static const struct OamDimensions sOamDimensions[3][4] =
 };
 
 static u16 sSpriteTileRangeTags[MAX_SPRITES];
-static u16 sSpriteTileRanges[MAX_SPRITES * 2];
+static u16 sSpriteTileRanges[MAX_SPRITES][2];
 static struct AffineAnimState sAffineAnimStates[OAM_MATRIX_COUNT];
 static u16 sSpritePaletteTags[16];
 
@@ -1825,14 +1825,10 @@ void FreeSpriteTilesByTag(u16 tag)
     if (index != 0xFF)
     {
         u16 i;
-        u16 *rangeStarts;
-        u16 *rangeCounts;
         u16 start;
         u16 count;
-        rangeStarts = sSpriteTileRanges;
-        start = rangeStarts[index * 2];
-        rangeCounts = sSpriteTileRanges + 1;
-        count = rangeCounts[index * 2];
+        start = sSpriteTileRanges[index][0];
+        count = sSpriteTileRanges[index][1];
 
         for (i = start; i < start + count; i++)
             FREE_SPRITE_TILE(i);
@@ -1857,7 +1853,7 @@ u16 GetSpriteTileStartByTag(u16 tag)
     u8 index = IndexOfSpriteTileTag(tag);
     if (index == 0xFF)
         return TAG_NONE;
-    return sSpriteTileRanges[index * 2];
+    return sSpriteTileRanges[index][0];
 }
 
 u8 IndexOfSpriteTileTag(u16 tag)
@@ -1877,7 +1873,7 @@ u16 GetSpriteTileTagByTileStart(u16 start)
 
     for (i = 0; i < MAX_SPRITES; i++)
     {
-        if (sSpriteTileRangeTags[i] != TAG_NONE && sSpriteTileRanges[i * 2] == start)
+        if (sSpriteTileRangeTags[i] != TAG_NONE && sSpriteTileRanges[i][0] == start)
             return sSpriteTileRangeTags[i];
     }
 
