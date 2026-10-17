@@ -84,7 +84,8 @@
  *             (0x298 0x299 ... 0x29a) with 2-wide STAIRS (0x284 0x284) cut
  *             into it. The floor along the walls inside is drawn with
  *             vanilla's edge tiles (0x2d8 west, 0x2da east, 0x2e1 south and
- *             their corners). Rooms differ in their north side:
+ *             their corners). Rooms differ in their north side, which is
+ *             always a wall:
  *
  *               HANGING room: cut into the rock mass's bottom row. Its top
  *               corners are 0x29c / 0x29b with a 0x299 face cell beside
@@ -101,23 +102,24 @@
  *               horizontal ridge (top corners 0x2ed / 0x2ec), as vanilla's
  *               alcove at (27..32, 26..28).
  *
- *               PLATFORM: open to the north, where its top row is drawn
- *               with the edge tiles 0x2d0 0x2d1 ... 0x2d2 and the walls
- *               start with 0x288 / 0x28a. Vanilla only puts a vertical ridge
- *               (or another platform) east of 0x28a, so a platform always
- *               stands with its east wall against a vertical ridge.
- *
- *             Hanging rooms and alcoves are entered only by their stairs;
- *             a platform can also be walked onto from the north.
+ *             Either way the stairs are the only way in. (Vanilla also has
+ *             rooms open to the north, whose top row is the edge floor
+ *             0x2d0 0x2d1 0x2d2. Those three tiles have the metatile
+ *             behaviour MB_IMPASSABLE_NORTH: the player can't step off them
+ *             northward or onto them from the north, a one-way edge that
+ *             the core's grid, its reachability rules and the tests' path
+ *             searches don't know about. This style doesn't draw them.)
  *
  *   BAR       A short free-standing horizontal ridge, both ends free.
  *
  *   CHAMBER   Vanilla's fossil chamber (see THE FOSSIL CHAMBER in the
  *             style header), drawn by the core. It is a room too: its north
- *             wall hangs from the rock mass and its east side needs a
- *             vertical ridge (its corner 0x28a again), so this style always
- *             puts it in one of the top two rooms, against the ridge on
- *             that room's east side.
+ *             wall hangs from the rock mass, and vanilla only puts a
+ *             vertical ridge east of its north-east corner tile (0x28a), so
+ *             this style always puts it in one of the top two rooms,
+ *             against the ridge on that room's east side. (The chamber's
+ *             own north edge is drawn with 0x2d0/0x2d1/0x2d2, see ROOM;
+ *             nothing can reach it from the north anyway, it is wall.)
  *
  *   LADDERS   Both of B2F's ladders are up-ladders standing in open floor
  *             (MT_MOON_LADDER_UP_IN_FLOOR): the ladder 0x296 with its top,
@@ -146,7 +148,7 @@
  * connect: ConnectTerraces() works out which rooms these ends connect and
  * cuts GAPS where more connections are needed.
  *
- * Then the rooms, alcoves, platforms and bars are tried at random places,
+ * Then hanging rooms, alcoves and bars are tried at random places,
  * each kept only where it fits: every structure keeps a one-cell ring of
  * floor around its sides (marked T_KEEP so nothing else is built there), so
  * walking around it is always possible and nothing it is built in gets cut
@@ -208,10 +210,7 @@ enum
     T_STAIRS,       /* 0x284 stairs in a room's south wall */
     T_EDGE_W,       /* 0x2d8 room floor along its west wall */
     T_EDGE_E,       /* 0x2da room floor along its east wall */
-    T_EDGE_N,       /* 0x2d1 a platform's open north side */
     T_EDGE_S,       /* 0x2e1 room floor along its south wall */
-    T_EDGE_NW,      /* 0x2d0 */
-    T_EDGE_NE,      /* 0x2d2 */
     T_EDGE_SW,      /* 0x2e0 */
     T_EDGE_SE,      /* 0x2e2 */
     T_LADDER,       /* 0x296 up-ladder */
@@ -238,8 +237,6 @@ enum
     T_CORNER_SE,    /* 0x2ac the map's south-east corner (top row) */
     T_WALL_W,       /* 0x290 room walls */
     T_WALL_E,       /* 0x292 */
-    T_WALL_NW,      /* 0x288 a platform's top corners */
-    T_WALL_NE,      /* 0x28a */
     T_WALL_SW,      /* 0x298 a south wall's west end */
     T_WALL_S,       /* 0x299 one-row wall */
     T_WALL_SE,      /* 0x29a a south wall's east end */
@@ -264,10 +261,7 @@ static const u16 sTileValues[T_COUNT] =
     [T_STAIRS]      = 0x3284,
     [T_EDGE_W]      = 0x32d8,
     [T_EDGE_E]      = 0x32da,
-    [T_EDGE_N]      = 0x32d1,
     [T_EDGE_S]      = 0x32e1,
-    [T_EDGE_NW]     = 0x32d0,
-    [T_EDGE_NE]     = 0x32d2,
     [T_EDGE_SW]     = 0x32e0,
     [T_EDGE_SE]     = 0x32e2,
     [T_LADDER]      = 0x3296,
@@ -293,8 +287,6 @@ static const u16 sTileValues[T_COUNT] =
     [T_CORNER_SE]   = 0x06ac,
     [T_WALL_W]      = 0x0690,
     [T_WALL_E]      = 0x0692,
-    [T_WALL_NW]     = 0x0688,
-    [T_WALL_NE]     = 0x068a,
     [T_WALL_SW]     = 0x0698,
     [T_WALL_S]      = 0x0699,
     [T_WALL_SE]     = 0x069a,
@@ -321,186 +313,166 @@ static const u16 sTileValues[T_COUNT] =
 
 static const u32 sEastOk[T_COUNT][2] =
 {
-    /* 281: 281 2d9 2da 2e1 2e2 296 2e6 290 288 298 28e */
-    [T_FLOOR] = { 0x00016298, 0x000040a8 },
+    /* 281: 281 2d9 2da 2e1 2e2 296 2e6 290 298 28e */
+    [T_FLOOR] = { 0x00002d98, 0x00000205 },
     /* 2d9: 281 2d9 2da 2e1 2e6 29d 319 2e3 */
-    [T_DITHER] = { 0x38010298, 0x00000000 },
+    [T_DITHER] = { 0x07002198, 0x00000000 },
     /* 284: 284 299 */
-    [T_STAIRS] = { 0x00000020, 0x00000100 },
+    [T_STAIRS] = { 0x00000020, 0x00000008 },
     /* 2d8: 281 2d9 2da */
     [T_EDGE_W] = { 0x00000098, 0x00000000 },
     /* 2da: 292 29b 2ec */
-    [T_EDGE_E] = { 0x00000000, 0x00002810 },
-    /* 2d1: 2d1 2d2 */
-    [T_EDGE_N] = { 0x00000900, 0x00000000 },
+    [T_EDGE_E] = { 0x00000000, 0x00000142 },
     /* 2e1: 281 2d9 2e1 2e2 */
-    [T_EDGE_S] = { 0x00002218, 0x00000000 },
-    /* 2d0: 2d1 */
-    [T_EDGE_NW] = { 0x00000100, 0x00000000 },
-    /* 2d2: 28a */
-    [T_EDGE_NE] = { 0x00000000, 0x00000040 },
+    [T_EDGE_S] = { 0x00000518, 0x00000000 },
     /* 2e0: 281 2e1 2e2 */
-    [T_EDGE_SW] = { 0x00002208, 0x00000000 },
+    [T_EDGE_SW] = { 0x00000508, 0x00000000 },
     /* 2e2: 292 */
-    [T_EDGE_SE] = { 0x00000000, 0x00000010 },
+    [T_EDGE_SE] = { 0x00000000, 0x00000002 },
     /* 296: 281 */
     [T_LADDER] = { 0x00000008, 0x00000000 },
     /* 2ce: 2ce 2e6 2ea 299 */
-    [T_ROCK] = { 0x00058000, 0x00000100 },
+    [T_ROCK] = { 0x0000b000, 0x00000008 },
     /* 2e6: 2e7 2f0 2e8 */
-    [T_RIDGE_W] = { 0x05020000, 0x00000000 },
+    [T_RIDGE_W] = { 0x00a04000, 0x00000000 },
     /* 2e7: 281 2ce 2e4 290 298 2ed */
-    [T_RIDGE_E] = { 0x00408008, 0x00001088 },
+    [T_RIDGE_E] = { 0x00081008, 0x00000085 },
     /* 2ea: 2eb */
-    [T_RIDGE_TOP_W] = { 0x00080000, 0x00000000 },
+    [T_RIDGE_TOP_W] = { 0x00010000, 0x00000000 },
     /* 2eb: 2ce */
-    [T_RIDGE_TOP_E] = { 0x00008000, 0x00000000 },
+    [T_RIDGE_TOP_E] = { 0x00001000, 0x00000000 },
     /* 2df: 2df 2f1 29e 2ac */
-    [T_TOP] = { 0x40900000, 0x00000004 },
+    [T_TOP] = { 0x88120000, 0x00000000 },
     /* 2c2: 2c2 2e9 31a */
-    [T_LEDGE] = { 0x82200000, 0x00000000 },
+    [T_LEDGE] = { 0x10440000, 0x00000000 },
     /* 2e4: 2e6 2e4 2e5 2ed */
-    [T_CLIFF] = { 0x00410000, 0x00001001 },
+    [T_CLIFF] = { 0x20082000, 0x00000080 },
     /* 2f1: 2e7 2f0 */
-    [T_CROSS_W] = { 0x01020000, 0x00000000 },
+    [T_CROSS_W] = { 0x00204000, 0x00000000 },
     /* 2f0: 2df */
-    [T_CROSS_E] = { 0x00100000, 0x00000000 },
+    [T_CROSS_E] = { 0x00020000, 0x00000000 },
     /* 2e9: 2e7 2e8 */
-    [T_DROP_W] = { 0x04020000, 0x00000000 },
+    [T_DROP_W] = { 0x00804000, 0x00000000 },
     /* 2e8: 2c2 */
-    [T_DROP_E] = { 0x00200000, 0x00000000 },
+    [T_DROP_E] = { 0x00040000, 0x00000000 },
     /* 29d: 2df */
-    [T_WEND_TOP] = { 0x00100000, 0x00000000 },
+    [T_WEND_TOP] = { 0x00020000, 0x00000000 },
     /* 319: 2c2 */
-    [T_WEND_LEDGE] = { 0x00200000, 0x00000000 },
+    [T_WEND_LEDGE] = { 0x00040000, 0x00000000 },
     /* 2e3: 2e4 */
-    [T_WEND_CLIFF] = { 0x00400000, 0x00000000 },
+    [T_WEND_CLIFF] = { 0x00080000, 0x00000000 },
     /* 29e: 281 2d9 */
     [T_EEND_TOP] = { 0x00000018, 0x00000000 },
     /* 31a: 281 2d9 */
     [T_EEND_LEDGE] = { 0x00000018, 0x00000000 },
     /* 2e5: 281 2d9 2e6 */
-    [T_EEND_CLIFF] = { 0x00010018, 0x00000000 },
+    [T_EEND_CLIFF] = { 0x00002018, 0x00000000 },
     /* 2a5: 2c2 */
-    [T_CORNER_SW] = { 0x00200000, 0x00000000 },
+    [T_CORNER_SW] = { 0x00040000, 0x00000000 },
     /* 2ac: 2e7 */
-    [T_CORNER_SE] = { 0x00020000, 0x00000000 },
+    [T_CORNER_SE] = { 0x00004000, 0x00000000 },
     /* 290: 2d8 2e0 */
-    [T_WALL_W] = { 0x00001040, 0x00000000 },
+    [T_WALL_W] = { 0x00000240, 0x00000000 },
     /* 292: 281 2e6 290 */
-    [T_WALL_E] = { 0x00010008, 0x00000008 },
-    /* 288: 2d0 */
-    [T_WALL_NW] = { 0x00000400, 0x00000000 },
-    /* 28a: 2e6 288 */
-    [T_WALL_NE] = { 0x00010000, 0x00000020 },
+    [T_WALL_E] = { 0x00002008, 0x00000001 },
     /* 298: 284 299 */
-    [T_WALL_SW] = { 0x00000020, 0x00000100 },
+    [T_WALL_SW] = { 0x00000020, 0x00000008 },
     /* 299: 284 2ce 299 29a 29c */
-    [T_WALL_S] = { 0x00008020, 0x00000700 },
+    [T_WALL_S] = { 0x00001020, 0x00000038 },
     /* 29a: 281 2e6 298 */
-    [T_WALL_SE] = { 0x00010008, 0x00000080 },
+    [T_WALL_SE] = { 0x00002008, 0x00000004 },
     /* 29c: 2d8 */
     [T_HANG_W] = { 0x00000040, 0x00000000 },
     /* 29b: 299 */
-    [T_HANG_E] = { 0x00000000, 0x00000100 },
+    [T_HANG_E] = { 0x00000000, 0x00000008 },
     /* 2ed: 2d8 */
     [T_CUT_W] = { 0x00000040, 0x00000000 },
     /* 2ec: 2e6 2e4 */
-    [T_CUT_E] = { 0x00410000, 0x00000000 },
+    [T_CUT_E] = { 0x00082000, 0x00000000 },
     /* 28e: 281 */
     [T_LADDER_TOP] = { 0x00000008, 0x00000000 },
 };
 
 static const u32 sSouthOk[T_COUNT][2] =
 {
-    /* 281: 281 2d9 284 2d1 2e1 2d0 2d2 2df 29d 29e 288 28a 28e */
-    [T_FLOOR] = { 0x48100f38, 0x00004060 },
+    /* 281: 281 2d9 284 2e1 2df 29d 29e 28e */
+    [T_FLOOR] = { 0x09020138, 0x00000200 },
     /* 2d9: 281 2d9 284 2d8 2e1 2df 29d */
-    [T_DITHER] = { 0x08100278, 0x00000000 },
+    [T_DITHER] = { 0x01020178, 0x00000000 },
     /* 284: 281 */
     [T_STAIRS] = { 0x00000008, 0x00000000 },
     /* 2d8: 284 2d8 2e0 29e */
-    [T_EDGE_W] = { 0x40001060, 0x00000000 },
+    [T_EDGE_W] = { 0x08000260, 0x00000000 },
     /* 2da: 2da 2e2 2df */
-    [T_EDGE_E] = { 0x00102080, 0x00000000 },
-    /* 2d1: 281 */
-    [T_EDGE_N] = { 0x00000008, 0x00000000 },
+    [T_EDGE_E] = { 0x00020480, 0x00000000 },
     /* 2e1: 299 29c 29b */
-    [T_EDGE_S] = { 0x00000000, 0x00000d00 },
-    /* 2d0: 2d8 */
-    [T_EDGE_NW] = { 0x00000040, 0x00000000 },
-    /* 2d2: 2da */
-    [T_EDGE_NE] = { 0x00000080, 0x00000000 },
+    [T_EDGE_S] = { 0x00000000, 0x00000068 },
     /* 2e0: 299 */
-    [T_EDGE_SW] = { 0x00000000, 0x00000100 },
+    [T_EDGE_SW] = { 0x00000000, 0x00000008 },
     /* 2e2: 299 */
-    [T_EDGE_SE] = { 0x00000000, 0x00000100 },
+    [T_EDGE_SE] = { 0x00000000, 0x00000008 },
     /* 296: 281 */
     [T_LADDER] = { 0x00000008, 0x00000000 },
-    /* 2ce: 281 2d8 2da 2d1 2d2 2ce 2ea 2eb 28a 299 29c 29b 2ed 2ec */
-    [T_ROCK] = { 0x000c89c8, 0x00003d40 },
+    /* 2ce: 281 2d8 2da 2ce 2ea 2eb 299 29c 29b 2ed 2ec */
+    [T_ROCK] = { 0x000190c8, 0x000001e8 },
     /* 2e6: 2e6 2f1 319 2a5 2ac */
-    [T_RIDGE_W] = { 0x10810000, 0x00000006 },
+    [T_RIDGE_W] = { 0xc2102000, 0x00000000 },
     /* 2e7: 2e7 2f0 31a */
-    [T_RIDGE_E] = { 0x81020000, 0x00000000 },
+    [T_RIDGE_E] = { 0x10204000, 0x00000000 },
     /* 2ea: 2e6 */
-    [T_RIDGE_TOP_W] = { 0x00010000, 0x00000000 },
+    [T_RIDGE_TOP_W] = { 0x00002000, 0x00000000 },
     /* 2eb: 2e7 */
-    [T_RIDGE_TOP_E] = { 0x00020000, 0x00000000 },
+    [T_RIDGE_TOP_E] = { 0x00004000, 0x00000000 },
     /* 2df: 2c2 2e9 2e8 */
-    [T_TOP] = { 0x06200000, 0x00000000 },
+    [T_TOP] = { 0x00c40000, 0x00000000 },
     /* 2c2: 2e4 2e5 */
-    [T_LEDGE] = { 0x00400000, 0x00000001 },
+    [T_LEDGE] = { 0x20080000, 0x00000000 },
     /* 2e4: 281 2d9 2d8 2da 2e4 29c 2ed 2ec */
-    [T_CLIFF] = { 0x004000d8, 0x00003400 },
+    [T_CLIFF] = { 0x000800d8, 0x000001a0 },
     /* 2f1: 2c2 2e9 */
-    [T_CROSS_W] = { 0x02200000, 0x00000000 },
+    [T_CROSS_W] = { 0x00440000, 0x00000000 },
     /* 2f0: 2c2 */
-    [T_CROSS_E] = { 0x00200000, 0x00000000 },
+    [T_CROSS_E] = { 0x00040000, 0x00000000 },
     /* 2e9: 2e6 */
-    [T_DROP_W] = { 0x00010000, 0x00000000 },
+    [T_DROP_W] = { 0x00002000, 0x00000000 },
     /* 2e8: 2e7 */
-    [T_DROP_E] = { 0x00020000, 0x00000000 },
+    [T_DROP_E] = { 0x00004000, 0x00000000 },
     /* 29d: 2e6 319 */
-    [T_WEND_TOP] = { 0x10010000, 0x00000000 },
+    [T_WEND_TOP] = { 0x02002000, 0x00000000 },
     /* 319: 2e3 */
-    [T_WEND_LEDGE] = { 0x20000000, 0x00000000 },
+    [T_WEND_LEDGE] = { 0x04000000, 0x00000000 },
     /* 2e3: 281 2d9 2e3 299 */
-    [T_WEND_CLIFF] = { 0x20000018, 0x00000100 },
+    [T_WEND_CLIFF] = { 0x04000018, 0x00000008 },
     /* 29e: 2e7 31a */
-    [T_EEND_TOP] = { 0x80020000, 0x00000000 },
+    [T_EEND_TOP] = { 0x10004000, 0x00000000 },
     /* 31a: 2e5 */
-    [T_EEND_LEDGE] = { 0x00000000, 0x00000001 },
+    [T_EEND_LEDGE] = { 0x20000000, 0x00000000 },
     /* 2e5: 281 2d9 2e5 */
-    [T_EEND_CLIFF] = { 0x00000018, 0x00000001 },
+    [T_EEND_CLIFF] = { 0x20000018, 0x00000000 },
     /* 2a5: 2e3 */
-    [T_CORNER_SW] = { 0x20000000, 0x00000000 },
+    [T_CORNER_SW] = { 0x04000000, 0x00000000 },
     /* 2ac: 2c2 */
-    [T_CORNER_SE] = { 0x00200000, 0x00000000 },
+    [T_CORNER_SE] = { 0x00040000, 0x00000000 },
     /* 290: 2df 290 298 */
-    [T_WALL_W] = { 0x00100000, 0x00000088 },
-    /* 292: 2d1 2df 292 29a */
-    [T_WALL_E] = { 0x00100100, 0x00000210 },
-    /* 288: 290 */
-    [T_WALL_NW] = { 0x00000000, 0x00000008 },
-    /* 28a: 292 */
-    [T_WALL_NE] = { 0x00000000, 0x00000010 },
-    /* 298: 281 2d1 */
-    [T_WALL_SW] = { 0x00000108, 0x00000000 },
-    /* 299: 281 2d1 2d0 2d2 2ce 288 299 29c */
-    [T_WALL_S] = { 0x00008d08, 0x00000520 },
-    /* 29a: 281 28a */
-    [T_WALL_SE] = { 0x00000008, 0x00000040 },
-    /* 29c: 2d1 290 */
-    [T_HANG_W] = { 0x00000100, 0x00000008 },
-    /* 29b: 2d1 292 */
-    [T_HANG_E] = { 0x00000100, 0x00000010 },
+    [T_WALL_W] = { 0x00020000, 0x00000005 },
+    /* 292: 2df 292 29a */
+    [T_WALL_E] = { 0x00020000, 0x00000012 },
+    /* 298: 281 */
+    [T_WALL_SW] = { 0x00000008, 0x00000000 },
+    /* 299: 281 2ce 299 29c */
+    [T_WALL_S] = { 0x00001008, 0x00000028 },
+    /* 29a: 281 */
+    [T_WALL_SE] = { 0x00000008, 0x00000000 },
+    /* 29c: 290 */
+    [T_HANG_W] = { 0x00000000, 0x00000001 },
+    /* 29b: 292 */
+    [T_HANG_E] = { 0x00000000, 0x00000002 },
     /* 2ed: 290 */
-    [T_CUT_W] = { 0x00000000, 0x00000008 },
+    [T_CUT_W] = { 0x00000000, 0x00000001 },
     /* 2ec: 292 */
-    [T_CUT_E] = { 0x00000000, 0x00000010 },
+    [T_CUT_E] = { 0x00000000, 0x00000002 },
     /* 28e: 296 */
-    [T_LADDER_TOP] = { 0x00004000, 0x00000000 },
+    [T_LADDER_TOP] = { 0x00000800, 0x00000000 },
 };
 
 /* ------------------------------------------------------------------------- */
@@ -907,12 +879,12 @@ static bool8 ChooseLayout(const struct TileMap *map, struct Layout *layout)
  * column 24, H1 on rows 14-17 (columns 7-40, both ends free), H2 on rows
  * 24-27 (columns 9-38, both ends free), no lower splits and no gaps, plus
  * the rooms in sFallbackRooms. A Python prototype of this style checked it:
- * every pair is a vanilla pair, 47% is walkable, and for every possible
- * choice of the two ladders at least 71 content spots remain (37 are
+ * every pair is a vanilla pair, 46% is walkable, and for every possible
+ * choice of the two ladders at least 69 content spots remain (37 are
  * needed); a test build that always used it passed every B2F property check
  * on 30 seeds. It only exists so that B2F is always generated: in 500
- * generations of the game, 479 kept their first random layout, 21 needed a
- * second, and none needed this one.
+ * generations of the game, 469 kept their first random layout, 30 needed a
+ * second, 1 a third, and none needed this one.
  */
 static const struct Layout sFallbackLayout =
 {
@@ -1098,7 +1070,7 @@ static void DrawFrame(struct TileMap *map)
 }
 
 /*
- * Everything of the layout except the rooms, alcoves, platforms and bars:
+ * Everything of the layout except the hanging rooms, alcoves and bars:
  * the frame, the rock, the ridges and the fossil chamber.
  */
 static void DrawSkeleton(struct TileMap *map, const struct Layout *layout)
@@ -1266,28 +1238,6 @@ static bool8 TryAlcove(struct TileMap *map, s32 x1, s32 x2, s32 row, s32 h)
     return TRUE;
 }
 
-/*
- * A PLATFORM open to the north, walls on columns x1 and x2, whose east wall
- * stands against a vertical ridge (its west column 0x2e6 in column x2 + 1),
- * from the platform's top row down to its south wall.
- */
-static bool8 TryPlatform(struct TileMap *map, s32 x1, s32 x2, s32 top, s32 h)
-{
-    s32 y;
-
-    for (y = top; y <= top + h; y++)
-    {
-        if (TILE_AT(map, x2 + 1, y) != T_RIDGE_W)
-            return FALSE;
-    }
-    if (!IsFree(map, x1 - 1, top - 1, x2, top + h + 1))
-        return FALSE;
-    RoomTop(map, x1, x2, top, T_WALL_NW, T_WALL_NE, T_EDGE_NW, T_EDGE_N, T_EDGE_NE);
-    RoomBody(map, x1, x2, top, h);
-    Keep(map, x1 - 1, top - 1, x2, top + h + 1);
-    return TRUE;
-}
-
 /* A BAR: a free-standing horizontal ridge from column west to east, rows
  * row..row+3, with floor all around it (and the dithered column at its
  * west end). */
@@ -1301,21 +1251,19 @@ static bool8 TryBar(struct TileMap *map, s32 west, s32 east, s32 row)
 }
 
 /*
- * How many places to try for each kind of room, and their sizes (floor
- * columns, floor rows). A try that doesn't fit is skipped; the prototype
- * of this style kept about 1 hanging room, 1.5 platforms, 1.6 alcoves and
- * 0.5 bars per layout.
+ * How many places to try for each kind of room. A try that doesn't fit is
+ * skipped; in the prototype of this style these kept about 1.2 hanging
+ * rooms, 2.4 alcoves and 0.9 bars per layout.
  */
-#define HANGING_TRIES   4
-#define PLATFORM_TRIES 12
-#define ALCOVE_TRIES   10
-#define BAR_TRIES      12
+#define HANGING_TRIES   6
+#define ALCOVE_TRIES   16
+#define BAR_TRIES      16
 
 /*
  * Try the rooms of a random layout at random places (see THE STRUCTURES):
  * hanging rooms under the rock of the top room without the chamber,
- * platforms against the vertical ridge east of any terrace room, alcoves
- * under H1 and H2, and bars in the lower terraces.
+ * alcoves under H1 and H2, and bars in the lower terraces. The sizes are
+ * in floor columns and floor rows.
  */
 static void TryRooms(struct TileMap *map, const struct Layout *layout)
 {
@@ -1332,26 +1280,6 @@ static void TryRooms(struct TileMap *map, const struct Layout *layout)
             continue;
         x = RandomBetween(x1, x2 - w - 1);   /* the hanging room's west wall */
         TryHangingRoom(map, x, x + w + 1, layout->rockBottom[side], h);
-    }
-
-    for (i = 0; i < PLATFORM_TRIES; i++)
-    {
-        k = MtMoonGen_RandomBelow(TERRACES);
-        side = MtMoonGen_RandomBelow(2);
-        if (side == 1 && layout->split[k] == 0)
-            side = 0;
-        /* The top room with the chamber has the chamber against its east
-         * ridge. */
-        if (k == 0 && side == (layout->chamberWest ? 0 : 1))
-            continue;
-        x2 = RoomEast(map, layout, k, side);
-        top = TerraceTop(layout, k, side);
-        bottom = TerraceBottom(map, layout, k);
-        w = RandomBetween(4, 9);
-        h = RandomBetween(3, 5);
-        if (bottom - h - 1 < top + 1)
-            continue;
-        TryPlatform(map, x2 - w - 1, x2, RandomBetween(top + 1, bottom - h - 1), h);
     }
 
     for (i = 0; i < ALCOVE_TRIES; i++)
@@ -1391,7 +1319,6 @@ enum
 {
     ROOM_HANGING,
     ROOM_ALCOVE,
-    ROOM_PLATFORM,
     ROOM_BAR,
 };
 
@@ -1401,7 +1328,7 @@ struct FallbackRoom
     u8 x1;   /* west wall (a bar's west end) */
     u8 x2;   /* east wall (a bar's east end) */
     u8 row;  /* hanging: the rock's bottom row; alcove: its ridge's top row;
-              * platform, bar: its top row */
+              * bar: its top row */
     u8 h;    /* floor rows (unused for a bar) */
 };
 
@@ -1409,7 +1336,7 @@ static const struct FallbackRoom sFallbackRooms[] =
 {
     { ROOM_HANGING,  28, 37,  8, 3 },
     { ROOM_ALCOVE,   17, 23, 14, 3 },
-    { ROOM_PLATFORM, 38, 45, 19, 3 },
+    { ROOM_BAR,      36, 43, 19, 0 },
     { ROOM_ALCOVE,   21, 28, 24, 2 },
     { ROOM_BAR,       6, 14, 30, 0 },
     { ROOM_BAR,      32, 41, 30, 0 },
@@ -1430,9 +1357,6 @@ static void DrawFallbackRooms(struct TileMap *map)
             break;
         case ROOM_ALCOVE:
             TryAlcove(map, room->x1, room->x2, room->row, room->h);
-            break;
-        case ROOM_PLATFORM:
-            TryPlatform(map, room->x1, room->x2, room->row, room->h);
             break;
         case ROOM_BAR:
             TryBar(map, room->x1, room->x2, room->row);

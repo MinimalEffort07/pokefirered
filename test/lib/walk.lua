@@ -370,13 +370,19 @@ function walk.to_face(tx, ty, opts)
         end
         fw.yield()
     end
+    -- Only when a turn is needed: if the walk's last step already went
+    -- toward the target, the player faces it, and a press in the direction
+    -- the player faces starts a step at once (onto the target, if it is
+    -- free floor, such as a trigger tile).
     local idx = fw.KEY[best.key]
-    emu:addKey(idx)
-    for _ = 1, 30 do
-        fw.yield()
-        if player_facing() == DIR_VALUE[best.key] then break end
+    if player_facing() ~= DIR_VALUE[best.key] then
+        emu:addKey(idx)
+        for _ = 1, 30 do
+            fw.yield()
+            if player_facing() == DIR_VALUE[best.key] then break end
+        end
+        emu:clearKey(idx)
     end
-    emu:clearKey(idx)
     fw.wait_until(walk.ready, 60, "standing still after turning")
     local facing = player_facing()
     local px2, py2 = mm.player_tile()
