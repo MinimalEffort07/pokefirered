@@ -1,3 +1,4 @@
+scripts/
 *.1bpp
 *.4bpp
 *.8bpp
@@ -21,7 +22,8 @@
 *.id0
 *.id1
 *.id2
-*.latfont
+*.hwlatfont
+*.fwlatfont
 *.lz
 *.map
 *.nam
@@ -67,3 +69,5 @@ build-cmake-*/
 CMakeLists.txt
 .pokemon_debug
 .worktrees/
+compile_commands.json
+.porydaw/

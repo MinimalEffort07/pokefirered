@@ -12,6 +12,17 @@
 # USAGE:
 #   bash test/record_test.sh [TEST_SCRIPT]
 #
+# PER-RUN OUTPUT: like test/run_test.sh, every run gets a private directory
+# (mktemp -d, passed to Lua as MGBA_TEST_DIR) for the test's results,
+# screenshots, the game's save file and this script's logs. Only the video
+# goes to the shared $RECORDINGS_DIR, under a timestamped name.
+#
+# NOT PARALLEL-SAFE: only one recording can run at a time on a machine, even
+# from different worktrees. It records the whole virtual display :1, which
+# it restarts if its size is wrong, and it kills every running mgba-qt
+# before starting. Headless runs (test/run_test.sh) don't touch :1 or
+# mgba-qt, so they can run alongside a recording.
+#
 ###############################################################################
 set -uo pipefail
 
@@ -21,7 +32,9 @@ MGBA_BUILD="/home/min/projects/minimaleffort/mgba/build"
 ROM="$PROJECT_DIR/pokefirered.gba"
 TEST_SCRIPT="${1:-$PROJECT_DIR/test/tests/test_player_sprite.lua}"
 RECORDINGS_DIR="/tmp/mgba-recordings"
-RESULTS_FILE="/tmp/mgba-test-results.json"
+RUN_DIR="$(mktemp -d /tmp/mgba-record.XXXXXX)"
+export MGBA_TEST_DIR="$RUN_DIR"
+RESULTS_FILE="$RUN_DIR/mgba-test-results.json"
 MGBA_QT_INI="$HOME/.config/mgba/qt.ini"
 TIMEOUT=300
 
@@ -44,12 +57,15 @@ if [ "$CURRENT_GEOM" != "${VIRT_W}x${VIRT_H}" ]; then
     pkill -x Xvfb 2>/dev/null || true
     pkill -x openbox 2>/dev/null || true
     sleep 1
-    Xvfb :1 -screen 0 "${VIRT_W}x${VIRT_H}x24" &
+    # Xvfb and openbox outlive this script. Detach their stdout/stderr so a
+    # caller piping our output (e.g. `record_test.sh ... | tail`) isn't held
+    # open forever by these background processes inheriting the pipe.
+    Xvfb :1 -screen 0 "${VIRT_W}x${VIRT_H}x24" > /dev/null 2>&1 &
     sleep 1
 fi
 
 if ! DISPLAY=:1 pgrep -x openbox > /dev/null 2>&1; then
-    DISPLAY=:1 openbox &
+    DISPLAY=:1 openbox > /dev/null 2>&1 &
     sleep 1
 fi
 
@@ -63,43 +79,27 @@ OUTPUT="$RECORDINGS_DIR/${TEST_NAME}_${TIMESTAMP}.mp4"
 pkill -x mgba-qt 2>/dev/null || true
 sleep 1
 
-rm -f "$RESULTS_FILE" /tmp/mgba-test-exitcode
-
 # If a .sav or auto-state file sits next to the ROM, the game boots into the
-# "CONTINUE" main menu with the cursor on CONTINUE — so the generic "press A
+# "CONTINUE" main menu with the cursor on CONTINUE, so the generic "press A
 # to select NEW GAME" boot sequence in test/lib/character_select.lua would
 # instead load the save and skip character-select entirely, making sentinel
-# detection fail. Move them aside for the duration of the recording and
-# restore on exit so the user's saved progress is preserved either way.
-ROM_SAV="${ROM%.gba}.sav"
-ROM_AUTO_STATE="${ROM%.gba}.ss1"
-SAV_BACKUP=""
-AUTO_STATE_BACKUP=""
-if [ -f "$ROM_SAV" ]; then
-    SAV_BACKUP="$(mktemp --suffix=.sav)"
-    mv "$ROM_SAV" "$SAV_BACKUP"
-fi
-if [ -f "$ROM_AUTO_STATE" ]; then
-    AUTO_STATE_BACKUP="$(mktemp --suffix=.ss1)"
-    mv "$ROM_AUTO_STATE" "$AUTO_STATE_BACKUP"
-fi
-restore_save() {
-    [ -n "$SAV_BACKUP" ] && [ -f "$SAV_BACKUP" ] && mv "$SAV_BACKUP" "$ROM_SAV"
-    [ -n "$AUTO_STATE_BACKUP" ] && [ -f "$AUTO_STATE_BACKUP" ] && \
-        mv "$AUTO_STATE_BACKUP" "$ROM_AUTO_STATE"
-}
-trap restore_save EXIT
+# detection fail. So mGBA keeps the save and save states of this run in the
+# run's own directory (-C savegamePath/savestatePath below), which starts
+# empty; any files next to the ROM (e.g. the user's own) are never read or
+# changed.
+SAVE_OPTIONS=(-C "savegamePath=$RUN_DIR" -C "savestatePath=$RUN_DIR")
 
 echo "=== mGBA Test Recorder ==="
 echo "Test:   $TEST_NAME"
 echo "Output: $OUTPUT"
+echo "Run files: $RUN_DIR"
 echo ""
 
 # Give mGBA a private XDG_CONFIG_HOME for recording so it reads/writes a
 # temp config and never modifies the user's real ~/.config/mgba/. We copy the
 # user's config as a base, then set displayDriver=0 (Qt software renderer —
 # hardware OpenGL unavailable on Xvfb shows black) in the temp copy.
-RECORDING_XDG="/tmp/mgba-recording-xdg"
+RECORDING_XDG="$RUN_DIR/xdg"
 RECORDING_CONFIG="$RECORDING_XDG/mgba"
 mkdir -p "$RECORDING_CONFIG"
 cp "$MGBA_QT_INI" "$RECORDING_CONFIG/qt.ini" 2>/dev/null || true
@@ -131,13 +131,18 @@ ffmpeg -f x11grab -r 30 -s "${VIRT_W}x${VIRT_H}" -i :1 \
     -c:v libx264 -profile:v baseline -level 3.1 \
     -preset ultrafast -pix_fmt yuv420p \
     -movflags +faststart \
-    "$OUTPUT" > /tmp/ffmpeg-record.log 2>&1 &
+    "$OUTPUT" > "$RUN_DIR/ffmpeg-record.log" 2>&1 &
 FFMPEG_PID=$!
 
 # Step 2: launch mGBA with the private config dir.
-DISPLAY=:1 XDG_CONFIG_HOME="$RECORDING_XDG" LD_LIBRARY_PATH="$MGBA_BUILD" \
-    "$MGBA_BUILD/qt/mgba-qt" "$ROM" --script "$TEST_SCRIPT" \
-    > /tmp/mgba-gui.log 2>&1 &
+#
+# QT_QPA_PLATFORM=xcb forces Qt onto X11. Under WSL, WSLg exports
+# WAYLAND_DISPLAY (e.g. wayland-0), and Qt prefers Wayland when it is set, so
+# without this the mGBA window opens on the WSLg desktop instead of Xvfb's
+# DISPLAY=:1 and ffmpeg's x11grab records a black screen.
+DISPLAY=:1 QT_QPA_PLATFORM=xcb XDG_CONFIG_HOME="$RECORDING_XDG" LD_LIBRARY_PATH="$MGBA_BUILD" \
+    "$MGBA_BUILD/qt/mgba-qt" "${SAVE_OPTIONS[@]}" "$ROM" --script "$TEST_SCRIPT" \
+    > "$RUN_DIR/mgba-gui.log" 2>&1 &
 MGBA_PID=$!
 
 # Step 3: identify windows by title and move them into position.

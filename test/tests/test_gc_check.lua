@@ -16,7 +16,7 @@ fw.run(function()
     fw.log("Navigation done")
 
     fw.log("About to screenshot...")
-    emu:screenshot("/tmp/mgba-test-screenshot.png")
+    emu:screenshot(fw.out_path("mgba-test-screenshot.png"))
     fw.log("Screenshot done")
 
     fw.assert_true(true, "survived screenshot")

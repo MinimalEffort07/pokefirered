@@ -50,7 +50,11 @@ static void Task_FieldPoisonEffect(u8 taskId)
     {
     case 0:
         /* Phase 1: Increase mosaic (more pixelated) */
+#if REVISION >=  0xA
+        data[1] += 2;
+#else
         data[1] += 1;
+#endif
         if (data[1] > 4)
             data[0]++;
         break;
