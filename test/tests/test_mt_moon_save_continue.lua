@@ -7,7 +7,7 @@
 -- the cave from the stored one, so the player loads into the same cave they
 -- saved in.
 --
--- FOR EACH GENERATED FLOOR (1F, then B1F):
+-- FOR EACH GENERATED FLOOR (1F, B1F, then B2F):
 --   1. Fresh entry through the floor's arrival warp, with a fixed gRngValue.
 --      PASS: VAR_MT_MOON_MAP_SEED changed (a fresh entry rolls a new seed),
 --      and the player stands on the arrival warp's generated tile.
@@ -58,7 +58,7 @@ local mm      = dofile(project_dir .. "test/lib/mt_moon.lua")
 local capture = dofile(project_dir .. "test/lib/frame_capture.lua")
 
 -- Fixed random states, so every run builds the same caves.
-local RNG = { ["1F"] = 0x00C0FFEE, ["B1F"] = 0x0B1F0B1F }
+local RNG = { ["1F"] = 0x00C0FFEE, ["B1F"] = 0x0B1F0B1F, ["B2F"] = 0x0B2F0B2F }
 
 -- Tiles the player shouldn't be moved onto: warp tiles and object tiles.
 local function occupied_set(snap)

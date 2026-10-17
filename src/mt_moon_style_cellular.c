@@ -10,19 +10,26 @@
  * original procedural-cave look, and for now every generated floor uses it.
  *
  * SHAPE (BuildCellularShape):
- *   1. Fill the grid with random walls and floors (about 30% floor).
- *   2. Smooth it four times with a cellular-automata rule: a cell becomes
+ *   1. Keep the ladders where the core proposed them (see the ladder
+ *      contract in include/mt_moon_gen_style.h). An up-ladder is proposed
+ *      on row 2, against the solid top border, so the north wall it must
+ *      stand at the foot of is the border, which nothing here ever carves.
+ *   2. Fill the grid with random walls and floors (about 30% floor).
+ *   3. Smooth it four times with a cellular-automata rule: a cell becomes
  *      wall if 5 or more of its 8 neighbours are wall, otherwise floor. Blobs
  *      of noise grow into cave-like rooms.
- *   3. Keep a solid border (2 cells on the sides and top, 3 at the bottom)
- *      and open corridors in front of the entrance and the exit.
- *   4. Clean up shapes the tiles draw badly: lone floor cells, 1-cell-wide
+ *   4. Keep a solid border (2 cells on the sides and top, 3 at the bottom)
+ *      and open floor around each ladder, with its footprint (see
+ *      include/mt_moon_gen_style.h) stamped in.
+ *   5. Clean up shapes the tiles draw badly: lone floor cells, 1-cell-wide
  *      wall strands, diagonal wall pinches, bumps and notches.
- *   5. If the entrance can't reach the exit, carve a winding corridor.
+ *   6. If the entrance can't reach the exit, carve a winding corridor
+ *      between the floor cells in front of them.
  *
- * TILES (PickCellularTile): floor cells get the cave floor tile, with a
- * position-based ~8% sprinkling of sand. Wall cells get a tile chosen from
- * which of their four neighbours (N, S, W, E) are floor; see GetWallTile.
+ * TILES (PickCellularTile): ladder cells get the core's vanilla ladder
+ * tiles. Other floor cells get the cave floor tile, with a position-based
+ * ~8% sprinkling of sand. Wall cells get a tile chosen from which of their
+ * four neighbours (N, S, W, E) are floor; see GetWallTile.
  *
  * Every random choice uses MtMoonGen_Random(), the core's seeded generator,
  * so the same seed always produces the same cave.
@@ -68,16 +75,27 @@
 /* Short names for the core's grid functions, to keep the dense cell loops
  * below readable. */
 #define IS_FLOOR(x, y) MtMoonGen_IsFloor((x), (y))
-#define CELL(x, y) MtMoonGen_GetCell((x), (y))
 #define SET_CELL(x, y, v) MtMoonGen_SetCell((x), (y), (v))
+#define FLOOR_MASK(x, y) MtMoonGen_GetFloorMask((x), (y))
 
-/* How many of the 4 cells N, S, W and E of (x, y) are wall (off-grid
- * counts as wall). */
-static u8 CountCardinalWalls(s32 x, s32 y)
-{
-    return (!IS_FLOOR(x, y - 1)) + (!IS_FLOOR(x, y + 1))
-         + (!IS_FLOOR(x - 1, y)) + (!IS_FLOOR(x + 1, y));
-}
+/*
+ * The passes over the whole grid read cells straight from grid rows (see
+ * MtMoonGen_GetRow): `row` is the cell's row, `above` and `below` the rows
+ * north and south of it. Each pass touches every cell, several times over,
+ * while the screen is black between two warps; calling a function for each
+ * neighbour made that pause visibly long (test P9).
+ */
+#define FLOOR_AT(r, x) ((r)[x] != MT_MOON_CELL_WALL)
+
+/* How many of the 8 neighbours of cell x are wall. */
+#define WALLS_AROUND(above, row, below, x)                                      \
+    (!FLOOR_AT(above, (x) - 1) + !FLOOR_AT(above, (x)) + !FLOOR_AT(above, (x) + 1) \
+   + !FLOOR_AT(row, (x) - 1)                          + !FLOOR_AT(row, (x) + 1)   \
+   + !FLOOR_AT(below, (x) - 1) + !FLOOR_AT(below, (x)) + !FLOOR_AT(below, (x) + 1))
+
+/* How many of the 4 neighbours N, S, W and E of cell x are wall. */
+#define CARDINAL_WALLS(above, row, below, x) \
+    (!FLOOR_AT(above, (x)) + !FLOOR_AT(below, (x)) + !FLOOR_AT(row, (x) - 1) + !FLOOR_AT(row, (x) + 1))
 
 /* Make every cell in the rectangle floor, staying clear of the border. */
 static void ForceFloorRect(const struct MtMoonCave *cave, s32 x1, s32 y1, s32 x2, s32 y2)
@@ -113,13 +131,42 @@ static void EnforceBorders(const struct MtMoonCave *cave)
     }
 }
 
-/* Borders, plus open corridors leading north from the entrance and south
- * from the exit, so neither ends up walled in. */
+/*
+ * Open floor around one ladder, then its footprint (which also writes the
+ * cells ForceFloorRect can't reach, such as 1F's door in the bottom border):
+ *   door  a 3-wide corridor running 5 cells north from the doorway;
+ *   down  a 5 x 5 patch of floor around the hole;
+ *   up    a 3-wide patch of floor 4 cells deep below the ladder. The wall
+ *         above is the top border (up-ladders are proposed on row 2).
+ */
+static void ReinforceLadder(const struct MtMoonCave *cave, const struct MtMoonLadder *ladder)
+{
+    s32 x = ladder->x;
+    s32 y = ladder->y;
+
+    switch (ladder->kind)
+    {
+    case MT_MOON_LADDER_DOOR:
+        ForceFloorRect(cave, x - 1, y - 5, x + 1, y - 1);
+        break;
+    case MT_MOON_LADDER_DOWN:
+        ForceFloorRect(cave, x - 2, y - 2, x + 2, y + 2);
+        break;
+    case MT_MOON_LADDER_UP:
+        ForceFloorRect(cave, x - 1, y, x + 1, y + 3);
+        break;
+    }
+    MtMoonGen_MarkLadderSite(ladder);
+}
+
+/* Open floor around both ladders, so neither ends up walled in or loses its
+ * footprint. Runs after every pass that changes cells. (The borders don't
+ * need the same: they are written once, after the random fill, and every
+ * later pass only turns border cells into wall, never floor.) */
 static void ReinforceKeyAreas(const struct MtMoonCave *cave)
 {
-    EnforceBorders(cave);
-    ForceFloorRect(cave, cave->entranceX - 1, cave->entranceY - 5, cave->entranceX + 1, cave->entranceY);
-    ForceFloorRect(cave, cave->exitX - 1, cave->exitY, cave->exitX + 1, cave->exitY + 5);
+    ReinforceLadder(cave, &cave->entrance);
+    ReinforceLadder(cave, &cave->exit);
 }
 
 static void InitRandomGrid(const struct MtMoonCave *cave)
@@ -128,25 +175,75 @@ static void InitRandomGrid(const struct MtMoonCave *cave)
 
     for (y = 0; y < cave->height; y++)
         for (x = 0; x < cave->width; x++)
-            SET_CELL(x, y, (MtMoonGen_Random() % 100) < INITIAL_FLOOR_PERCENT
+            /* A 16-bit random number is below 30% of 65536 30% of the time. */
+            SET_CELL(x, y, MtMoonGen_Random() < INITIAL_FLOOR_PERCENT * 0x10000 / 100
                 ? MT_MOON_CELL_FLOOR : MT_MOON_CELL_WALL);
-
-    /* Like ReinforceKeyAreas, but the starting corridors are one cell
-     * longer (6 instead of 5) to give smoothing more open space to grow
-     * from. */
     EnforceBorders(cave);
-    ForceFloorRect(cave, cave->entranceX - 1, cave->entranceY - 6, cave->entranceX + 1, cave->entranceY);
-    ForceFloorRect(cave, cave->exitX - 1, cave->exitY, cave->exitX + 1, cave->exitY + 6);
+    ReinforceKeyAreas(cave);
 }
 
-/* One cellular-automata pass: a cell is wall when 5+ of its 8 neighbours are. */
+/* How many of the 3 cells in column x of the rows above, at and below are
+ * wall. */
+#define COLUMN_WALLS(above, row, below, x) \
+    (!FLOOR_AT(above, (x)) + !FLOOR_AT(row, (x)) + !FLOOR_AT(below, (x)))
+
+/*
+ * One cellular-automata pass: a cell is wall when 5+ of its 8 neighbours
+ * are. Cells change in place, so a cell sees the new values of the cells
+ * before it (west of it and in the rows above).
+ *
+ * This is the most-run loop of the style (every cell, four times), so it
+ * slides a 3 x 3 window along each row instead of reading all 8 neighbours
+ * per cell: `left`, `mid` and `right` count the walls in the window's
+ * three columns, and each step only reads the new right column. The cell
+ * itself is in the middle column, so it is subtracted from the total.
+ */
 static void SmoothGrid(const struct MtMoonCave *cave)
 {
     s32 x, y;
+    const u8 *above, *row, *below;
+
     for (y = 2; y < cave->height - 3; y++)
+    {
+        s32 left, mid, right;
+
+        above = MtMoonGen_GetRow(y - 1);
+        row = MtMoonGen_GetRow(y);
+        below = MtMoonGen_GetRow(y + 1);
+        left = COLUMN_WALLS(above, row, below, 1);
+        mid = COLUMN_WALLS(above, row, below, 2);
         for (x = 2; x < cave->width - 2; x++)
-            SET_CELL(x, y, MtMoonGen_CountWallNeighbors(x, y) >= 5
-                ? MT_MOON_CELL_WALL : MT_MOON_CELL_FLOOR);
+        {
+            s32 wasWall = !FLOOR_AT(row, x);
+            s32 isWall;
+
+            right = COLUMN_WALLS(above, row, below, x + 1);
+            isWall = (left + mid + right - wasWall >= 5);
+            if (isWall != wasWall)
+                SET_CELL(x, y, isWall ? MT_MOON_CELL_WALL : MT_MOON_CELL_FLOOR);
+            /* Slide right. The cell just decided is now in the left column,
+             * with its new value. */
+            left = mid - wasWall + isWall;
+            mid = right;
+        }
+    }
+}
+
+/* Drop floor cells with fewer than 3 floor neighbours (out of 8). */
+static void DropLoneFloor(const struct MtMoonCave *cave)
+{
+    s32 x, y;
+    const u8 *above, *row, *below;
+
+    for (y = 3; y < cave->height - 3; y++)
+    {
+        above = MtMoonGen_GetRow(y - 1);
+        row = MtMoonGen_GetRow(y);
+        below = MtMoonGen_GetRow(y + 1);
+        for (x = 3; x < cave->width - 3; x++)
+            if (row[x] == MT_MOON_CELL_FLOOR && 8 - WALLS_AROUND(above, row, below, x) < 3)
+                SET_CELL(x, y, MT_MOON_CELL_WALL);
+    }
 }
 
 /*
@@ -164,29 +261,36 @@ static void SmoothWallEdges(const struct MtMoonCave *cave)
 {
     s32 x, y, iter;
     bool8 changed;
-    bool8 floorN, floorS, floorW, floorE;
+    const u8 *above, *row, *below;
 
     for (iter = 0; iter < 3; iter++)
     {
         changed = FALSE;
         for (y = 2; y < cave->height - 3; y++)
+        {
+            above = MtMoonGen_GetRow(y - 1);
+            row = MtMoonGen_GetRow(y);
+            below = MtMoonGen_GetRow(y + 1);
             for (x = 2; x < cave->width - 2; x++)
             {
-                if (CELL(x, y) != MT_MOON_CELL_WALL)
+                bool8 floorN, floorS, floorW, floorE;
+
+                if (row[x] != MT_MOON_CELL_WALL)
                     continue;
-                floorN = IS_FLOOR(x,     y - 1);
-                floorS = IS_FLOOR(x,     y + 1);
-                floorW = IS_FLOOR(x - 1, y);
-                floorE = IS_FLOOR(x + 1, y);
-                if ((floorN && floorE && IS_FLOOR(x + 1, y - 1))
-                    || (floorN && floorW && IS_FLOOR(x - 1, y - 1))
-                    || (floorS && floorE && IS_FLOOR(x + 1, y + 1))
-                    || (floorS && floorW && IS_FLOOR(x - 1, y + 1)))
+                floorN = FLOOR_AT(above, x);
+                floorS = FLOOR_AT(below, x);
+                floorW = FLOOR_AT(row, x - 1);
+                floorE = FLOOR_AT(row, x + 1);
+                if ((floorN && floorE && FLOOR_AT(above, x + 1))
+                    || (floorN && floorW && FLOOR_AT(above, x - 1))
+                    || (floorS && floorE && FLOOR_AT(below, x + 1))
+                    || (floorS && floorW && FLOOR_AT(below, x - 1)))
                 {
                     SET_CELL(x, y, MT_MOON_CELL_FLOOR);
                     changed = TRUE;
                 }
             }
+        }
         if (!changed)
             break;
     }
@@ -195,16 +299,21 @@ static void SmoothWallEdges(const struct MtMoonCave *cave)
     {
         changed = FALSE;
         for (y = 2; y < cave->height - 3; y++)
+        {
+            above = MtMoonGen_GetRow(y - 1);
+            row = MtMoonGen_GetRow(y);
+            below = MtMoonGen_GetRow(y + 1);
             for (x = 2; x < cave->width - 2; x++)
             {
-                if (CELL(x, y) == MT_MOON_CELL_WALL)
+                if (row[x] == MT_MOON_CELL_WALL)
                     continue;
-                if (CountCardinalWalls(x, y) >= 3)
+                if (CARDINAL_WALLS(above, row, below, x) >= 3)
                 {
                     SET_CELL(x, y, MT_MOON_CELL_WALL);
                     changed = TRUE;
                 }
             }
+        }
         if (!changed)
             break;
     }
@@ -224,18 +333,22 @@ static void FillDiagonalCorners(const struct MtMoonCave *cave)
 {
     s32 x, y, iter;
     bool8 changed;
+    const u8 *row, *below;
 
     for (iter = 0; iter < 3; iter++)
     {
         changed = FALSE;
         for (y = 2; y < cave->height - 3; y++)
+        {
+            row = MtMoonGen_GetRow(y);
+            below = MtMoonGen_GetRow(y + 1);
             for (x = 2; x < cave->width - 3; x++)
             {
                 /* The 2x2 block with (x, y) at its top-left corner. */
-                bool8 wallTopLeft     = !IS_FLOOR(x,     y);
-                bool8 wallTopRight    = !IS_FLOOR(x + 1, y);
-                bool8 wallBottomLeft  = !IS_FLOOR(x,     y + 1);
-                bool8 wallBottomRight = !IS_FLOOR(x + 1, y + 1);
+                bool8 wallTopLeft     = !FLOOR_AT(row, x);
+                bool8 wallTopRight    = !FLOOR_AT(row, x + 1);
+                bool8 wallBottomLeft  = !FLOOR_AT(below, x);
+                bool8 wallBottomRight = !FLOOR_AT(below, x + 1);
                 if (wallTopLeft && wallBottomRight && !wallTopRight && !wallBottomLeft)
                 {
                     if (MtMoonGen_CountWallNeighbors(x + 1, y) >= MtMoonGen_CountWallNeighbors(x, y + 1))
@@ -253,6 +366,7 @@ static void FillDiagonalCorners(const struct MtMoonCave *cave)
                     changed = TRUE;
                 }
             }
+        }
         if (!changed)
             break;
     }
@@ -267,28 +381,34 @@ static void RemoveThinWalls(const struct MtMoonCave *cave)
 {
     s32 x, y, iter;
     bool8 changed;
+    const u8 *above, *row, *below;
 
     for (iter = 0; iter < 4; iter++)
     {
         changed = FALSE;
         for (y = 2; y < cave->height - 3; y++)
+        {
+            above = MtMoonGen_GetRow(y - 1);
+            row = MtMoonGen_GetRow(y);
+            below = MtMoonGen_GetRow(y + 1);
             for (x = 2; x < cave->width - 2; x++)
             {
-                if (CELL(x, y) != MT_MOON_CELL_WALL)
+                if (row[x] != MT_MOON_CELL_WALL)
                     continue;
-                if ((IS_FLOOR(x - 1, y) && IS_FLOOR(x + 1, y))
-                    || (IS_FLOOR(x, y - 1) && IS_FLOOR(x, y + 1)))
+                if ((FLOOR_AT(row, x - 1) && FLOOR_AT(row, x + 1))
+                    || (FLOOR_AT(above, x) && FLOOR_AT(below, x)))
                 {
                     SET_CELL(x, y, MT_MOON_CELL_FLOOR);
                     changed = TRUE;
                     continue;
                 }
-                if (CountCardinalWalls(x, y) <= 1)
+                if (CARDINAL_WALLS(above, row, below, x) <= 1)
                 {
                     SET_CELL(x, y, MT_MOON_CELL_FLOOR);
                     changed = TRUE;
                 }
             }
+        }
         if (!changed)
             break;
     }
@@ -316,7 +436,7 @@ static void CarvePath(const struct MtMoonCave *cave, s32 fromX, s32 fromY, s32 t
         if (y != toY)
         {
             y += (y > toY) ? -1 : 1;
-            dx = (MtMoonGen_Random() % 3) - 1;
+            dx = MtMoonGen_RandomBelow(3) - 1;
             if (x + dx > 2 && x + dx < cave->width - 3)
                 x += dx;
         }
@@ -332,9 +452,18 @@ static void CarvePath(const struct MtMoonCave *cave, s32 fromX, s32 fromY, s32 t
     ForceFloorRect(cave, toX - 1, toY - 1, toX + 1, toY + 1);
 }
 
-static void BuildCellularShape(const struct MtMoonCave *cave)
+/*
+ * See the overview at the top. Every pass that changes cells is followed
+ * by ReinforceKeyAreas, which puts the ladders' open floor and footprints
+ * back. The corridor carved at the end only ever adds floor,
+ * and stays between rows 2 and height - 4, so it can't break a footprint:
+ * the walls an up-ladder needs are the top border (rows 0 and 1), and the
+ * walls under 1F's door are the last two rows.
+ */
+static void BuildCellularShape(struct MtMoonCave *cave)
 {
-    s32 pass, x, y;
+    s32 pass;
+    s32 fromX, fromY, toX, toY;
 
     InitRandomGrid(cave);
 
@@ -344,11 +473,7 @@ static void BuildCellularShape(const struct MtMoonCave *cave)
         ReinforceKeyAreas(cave);
     }
 
-    /* Drop floor cells with fewer than 3 floor neighbours. */
-    for (y = 3; y < cave->height - 3; y++)
-        for (x = 3; x < cave->width - 3; x++)
-            if (CELL(x, y) == MT_MOON_CELL_FLOOR && (8 - MtMoonGen_CountWallNeighbors(x, y)) < 3)
-                SET_CELL(x, y, MT_MOON_CELL_WALL);
+    DropLoneFloor(cave);
     ReinforceKeyAreas(cave);
 
     RemoveThinWalls(cave);
@@ -360,18 +485,18 @@ static void BuildCellularShape(const struct MtMoonCave *cave)
     SmoothWallEdges(cave);
     ReinforceKeyAreas(cave);
 
-    if (!MtMoonGen_FloodFillReaches(cave->entranceX, cave->entranceY, cave->exitX, cave->exitY))
-        CarvePath(cave, cave->entranceX, cave->entranceY, cave->exitX, cave->exitY);
+    MtMoonGen_GetLadderFoot(&cave->entrance, &fromX, &fromY);
+    MtMoonGen_GetLadderFoot(&cave->exit, &toX, &toY);
+    if (!MtMoonGen_FloodFillReaches(fromX, fromY, toX, toY))
+        CarvePath(cave, fromX, fromY, toX, toY);
 }
 
 static u16 GetWallTile(s32 x, s32 y)
 {
-    bool8 floorN = IS_FLOOR(x, y - 1);
-    bool8 floorS = IS_FLOOR(x, y + 1);
-    bool8 floorW = IS_FLOOR(x - 1, y);
-    bool8 floorE = IS_FLOOR(x + 1, y);
+    u8 floorMask = FLOOR_MASK(x, y);
     /* One bit per side with floor: 8 = N, 4 = S, 2 = W, 1 = E. */
-    u8 sides = (floorN << 3) | (floorS << 2) | (floorW << 1) | floorE;
+    u8 sides = ((floorMask & MT_MOON_N) ? 8 : 0) | ((floorMask & MT_MOON_S) ? 4 : 0)
+             | ((floorMask & MT_MOON_W) ? 2 : 0) | ((floorMask & MT_MOON_E) ? 1 : 0);
 
     switch (sides)
     {
@@ -391,6 +516,10 @@ static u16 GetWallTile(s32 x, s32 y)
 
 static u16 PickCellularTile(const struct MtMoonCave *cave, s32 x, s32 y)
 {
+    u16 ladderTile = MtMoonGen_GetLadderTile(cave, x, y);
+
+    if (ladderTile != 0)
+        return ladderTile;
     if (IS_FLOOR(x, y))
     {
         /* A fixed hash of the position picks ~8% of floor cells (values
@@ -411,3 +540,5 @@ static u16 PickCellularTile(const struct MtMoonCave *cave, s32 x, s32 y)
 const struct MtMoonStyle gMtMoonStyle1F = { BuildCellularShape, PickCellularTile };
 
 const struct MtMoonStyle gMtMoonStyleB1F = { BuildCellularShape, PickCellularTile };
+
+const struct MtMoonStyle gMtMoonStyleB2F = { BuildCellularShape, PickCellularTile };

@@ -12,7 +12,8 @@
 --   2. For each floor in mt_moon.lua's FLOORS, for seeds 1..N:
 --        a. pick gRngValue = rng_for(i), a fixed, spread-out 32-bit value;
 --        b. enter the floor through its arrival warp with that random state
---           (mt_moon.enter_floor), which makes the game roll a cave seed;
+--           (mt_moon.enter_floor), which makes the game roll a cave seed,
+--           twice in a row (see the loop for why the second entry counts);
 --        c. snapshot the generated floor and run every check on it.
 --   3. Report one assertion per (check, floor): "P8 determinism on 1F:
 --      100/100 seeds". Every failure is also logged with the floor, the
@@ -107,10 +108,20 @@ fw.run(function()
             -- seed depends on the map being left (its scripts, objects and so
             -- on). Entering the floor once first means every checked entry,
             -- and every re-entry a check makes, leaves this same floor, so
-            -- the same gRngValue always rolls the same seed.
+            -- the same gRngValue rolls the same seed (together with the
+            -- double entry below, and mt_moon's start_warp waiting until
+            -- the game is idle).
             mm.enter_floor(floor, 0)
 
             for _, rng in ipairs(rngs) do
+                -- Enter twice with the same gRngValue and check the second
+                -- entry. Loading a map calls Random() about a hundred times
+                -- before the seed roll, and that count depends slightly on
+                -- the cave being LEFT (the objects in it, ...). The first
+                -- entry leaves the previous seed's cave; the second leaves
+                -- this seed's cave, exactly as every re-entry a check makes
+                -- does (P8 relies on re-entries rolling the same seed).
+                mm.enter_floor(floor, rng)
                 local snap = mm.enter_floor(floor, rng)
                 for _, check in ipairs(checks) do
                     local t = tally[check.id]
@@ -135,6 +146,9 @@ fw.run(function()
                 if t.applies then
                     fw.assert_true(t.fail == 0, string.format("%s %s on %s: %d/%d seeds passed",
                         check.id, check.title, floor.name, t.pass, t.pass + t.fail))
+                    -- A check may also report measurements for the floor.
+                    local line = check.summary and check.summary(floor)
+                    if line then fw.log(check.id .. " " .. line) end
                 end
             end
         end

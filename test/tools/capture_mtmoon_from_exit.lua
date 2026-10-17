@@ -23,14 +23,13 @@ local MTM_GROUP, MTM_NUM = 1, 1
 local MAP_OFFSET = 7
 
 -- mt_moon_gen.c keeps the floor being generated in `static struct
--- MtMoonCave sCave` (include/mt_moon_gen_style.h): s16 width, height,
--- entranceX, entranceY, exitX, exitY. Its address is looked up by name.
+-- MtMoonCave sCave` (include/mt_moon_gen_style.h): s16 width, s16 height,
+-- then two struct MtMoonLadder (u8 x, u8 y, u8 kind, u8 fixed): the
+-- entrance at +4 and the exit at +8. Its address is looked up by name.
 local symbols = dofile(project_dir .. "test/lib/symbols.lua")
 local S_CAVE = symbols.addr("sCave")
 local S_ENTRANCE_X = S_CAVE + 4
-local S_ENTRANCE_Y = S_CAVE + 6
-local S_EXIT_X     = S_CAVE + 8
-local S_EXIT_Y     = S_CAVE + 10
+local S_ENTRANCE_Y = S_CAVE + 5
 
 local function player_pos()
     local oeid = fw.read8(ADDR.gPlayerAvatar + ADDR.PA_OBJECT_EVENT_ID)
@@ -61,8 +60,8 @@ fw.run(function()
     fw.assert_true(cs.is_player_active(), "reached overworld")
     fw.wait_frames(60)
 
-    -- First warp loads Mt. Moon 1F and runs GenerateMtMoonCave which sets
-    -- sEntranceX/sEntranceY. warp.warp_to does NOT call WarpIntoMap, so
+    -- First warp loads Mt. Moon 1F, whose generator records the ladders in
+    -- sCave (the entrance at +4). warp.warp_to does NOT call WarpIntoMap, so
     -- SaveBlock1.pos stays at whatever the bedroom spawn left it
     -- (typically (6, 6)). That means DrawWholeMapView at case 10 of the
     -- map-load pipeline reads metatiles from virtual (6, 6) onwards --
@@ -74,15 +73,15 @@ fw.run(function()
     if not ok then fw.finish() return end
     fw.wait_frames(60)
 
-    local ex = fw.read16(S_ENTRANCE_X)
-    local ey = fw.read16(S_ENTRANCE_Y)
+    local ex = fw.read8(S_ENTRANCE_X)
+    local ey = fw.read8(S_ENTRANCE_Y)
     fw.log(string.format("procgen entrance at grid(%d,%d)", ex, ey))
 
     -- Patch SaveBlock1.pos to the entrance and re-trigger CB2_LoadMap.
     -- The second map-load runs DrawWholeMapView with pos = entrance, so
     -- the BG tilemap is centered on the entrance corridor instead of
     -- the warp-landing area. The procgen runs again (different random
-    -- seed) but sEntrance/sExit are hardcoded, so the new cave still
+    -- seed) but 1F's door is fixed at (18,37), so the new cave still
     -- has the entrance at (ex, ey).
     local sb1 = emu:read32(0x03005018)
     emu:write16(sb1 + 0, ex)       -- pos.x
@@ -92,10 +91,10 @@ fw.run(function()
     emu:write32(warp.G_MAIN_CB2, warp.CB2_LOAD_MAP + 1)
     fw.wait_frames(240)
 
-    -- Re-read entrance: procgen regenerates so sEntranceX/Y could shift
-    -- in future if the hardcoded values change; use the fresh ones.
-    ex = fw.read16(S_ENTRANCE_X)
-    ey = fw.read16(S_ENTRANCE_Y)
+    -- Re-read the entrance from the fresh generation (1F's door is fixed
+    -- at (18,37), so it should come back the same).
+    ex = fw.read8(S_ENTRANCE_X)
+    ey = fw.read8(S_ENTRANCE_Y)
     set_player_pos(ex, ey)
     fw.wait_frames(30)
 
