@@ -69,10 +69,13 @@ local VAR_MAP_SCENE_MT_MOON_B2F = mm.read_defines("include/constants/vars.h").VA
 -- B2F's own style (#30): the west walk crosses a different B2F, which
 -- changes the Random() calls before 1F's roll, and 0x81F53EA4 rolled 0x16a7;
 -- 0xEB0A448A, worked out with mt_moon.rng_for_seed from that walk, rolls
--- 0xf34c.)
+-- 0xf34c. And again with the decorations (#31): the west walk crosses the
+-- same B2F and B1F caves, but 1F's roll came 65 Random() calls after the
+-- write instead of 50, and 0xEB0A448A rolled 0x6e2b; 0x3EDD72E5, worked out
+-- the same way, rolls 0xf34c.)
 chain.RNG = {
     east = { ["1F"] = 0x151CC71A, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
-    west = { ["1F"] = 0xEB0A448A, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
+    west = { ["1F"] = 0x3EDD72E5, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
 }
 for name, value in (os.getenv("MT_MOON_WALK_RNG") or ""):gmatch("([%w]+)=(0?x?%x+)") do
     chain.RNG.east[name] = tonumber(value)
