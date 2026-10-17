@@ -49,9 +49,16 @@ local project_dir = script_dir .. "../../"
 local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
+local sym  = dofile(project_dir .. "test/lib/symbols.lua")
 
-local STATE_PATH       = "/tmp/pokefirered-follower-save-base.ss"
-local PARTY_BASE       = 0x02024284  -- gPlayerParty (from pokefirered.map)
+-- The fixture save state goes in this run's private output directory (see
+-- fw.out_path in test/lib/framework.lua). A fixed /tmp path would be shared
+-- by every worktree and build, and a state saved by a different ROM build
+-- would load here with stale RAM contents.
+local STATE_PATH       = fw.out_path("pokefirered-follower-save-base.ss")
+-- gPlayerParty's address comes from the pokefirered.elf built with the ROM
+-- (test/lib/symbols.lua), so it stays right when other RAM variables move.
+local PARTY_BASE       = sym.addr("gPlayerParty")
 local POKEMON_SIZE     = 100         -- sizeof(struct Pokemon)
 local LOCALID_FOLLOWER = 254         -- LOCALID_FOLLOWER from constants/event_objects.h
 -- Offset of objectEvents[] within SaveBlock1.
@@ -189,10 +196,14 @@ end
 -- Test runner
 -------------------------------------------------------------------------------
 
+-- Each check also goes through fw.assert_true, so it is counted in the
+-- results file test/run_test.sh reads. Logging it here alone left that file
+-- at 0 passed / 0 failed, and the run reported success even when a check
+-- failed.
 local results = {}
 local function check(name, cond)
     results[#results + 1] = {name = name, pass = cond}
-    fw.log((cond and "[PASS] " or "[FAIL] ") .. name)
+    fw.assert_true(cond, name)
 end
 
 fw.run(function()
