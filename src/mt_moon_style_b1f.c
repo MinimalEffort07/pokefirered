@@ -78,6 +78,21 @@
  * rubble is solid. It is stamped onto the grid (MtMoonGen_StampTile), so the
  * core treats those cells as obstacles, like a boulder.
  *
+ * HOW MUCH JUNCTION RUBBLE. Each link below makes at most one junction, so
+ * at most 2 rubble cells: EAST and WEST links when the new floor is 2+ rows
+ * higher or lower, DOWN and UP links always. A layout has up to 15 links
+ * (MAX_RECTS), so it could have up to 30 rubble cells. Test P10 wants B1F's
+ * rubble between half and one and a half times vanilla B1F's: 7 to 21
+ * tiles. The core's decoration step counts this rubble and only ever ADDS
+ * rubble, up to a target in that band (it can't remove any: the junctions
+ * need theirs to draw without a seam), so the junction rubble alone must
+ * stay at most 21. A layout with more is thrown away and grown again, like
+ * one that grew too small (MAX_JUNCTION_RUBBLE). In practice there are 4 to
+ * 20: a copy of this style in Python, checked against the game, measured
+ * the first shape of every one of the 65,536 seeds, and none had more than
+ * 20, so the limit has never changed a cave. It makes the band hold by
+ * construction instead of by measurement.
+ *
  * BUILDING THE SHAPE (BuildB1FShape)
  *
  * The shape is a list of rectangles (struct Layout), grown from a first room
@@ -128,7 +143,8 @@
  *     north wall, the hole in open floor, at least 24 steps apart;
  *   - HasRoomForContent() makes sure the core can place B1F's 6 hidden
  *     items without carving (see the function);
- *   - the junction rubble is stamped.
+ *   - the junction rubble is counted, at most MAX_JUNCTION_RUBBLE (see HOW
+ *     MUCH JUNCTION RUBBLE), and stamped.
  * A layout that fails any of these (in practice: one that stopped growing
  * too small) is thrown away and grown again; the last attempt uses a fixed
  * layout that passes every check (sFallbackLayout).
@@ -621,9 +637,10 @@ static void GrowLayout(const struct MtMoonCave *cave, struct Layout *layout)
  * The last attempt's layout, fixed: one the growth above produced, chosen
  * because it passes every check below for any choice of ladders (54 spots
  * for the up-ladder, each with a hole spot 24+ steps away; room for 60
- * hidden items; 491 floor cells, about 24% walkable). It only exists so
- * that B1F is always generated; on the 100 seeds of the property test the
- * random layouts never needed more than a few attempts.
+ * hidden items; 491 floor cells, about 24% walkable; 14 junction rubble
+ * tiles, inside P10's 7-21, and the ladders never change that count). It
+ * only exists so that B1F is always generated; on the 100 seeds of the
+ * property test the random layouts never needed more than a few attempts.
  */
 static const struct Rect sFallbackLayout[] =
 {
@@ -851,9 +868,42 @@ static bool8 HasRoomForContent(const struct MtMoonCave *cave, const struct Layou
 /* Putting it together                                                       */
 /* ------------------------------------------------------------------------- */
 
-/* Stamp every junction's rubble (see JUNCTIONS) onto the grid. Rubble is
- * floor with wall to its west, so it is always in the west column of its
+/*
+ * The most junction rubble a layout may have (see HOW MUCH JUNCTION
+ * RUBBLE): the top of test P10's band for B1F's rubble. Vanilla B1F has 14
+ * rubble tiles (metatile 0x283 in data/layouts/MtMoon_B1F/map.bin), and
+ * #22's design wants between half and one and a half times as many on a
+ * generated B1F, rounded inward to whole tiles: ceil(14 / 2) = 7 to
+ * floor(14 x 3 / 2) = 21, the same band the core's decoration step aims
+ * for (DECORATIONS, HOW MANY, in src/mt_moon_gen.c). The division is done
+ * by the compiler, so it costs nothing on the GBA.
+ */
+#define VANILLA_B1F_RUBBLE  14
+#define MAX_JUNCTION_RUBBLE (VANILLA_B1F_RUBBLE * 3 / 2)
+
+/* How many cells of the layout are junction rubble (see JUNCTIONS). Rubble
+ * is floor with wall to its west, so it is always in the west column of its
  * rectangle: only those columns are looked at. */
+static s32 CountJunctionRubble(const struct MtMoonCave *cave, const struct Layout *layout)
+{
+    s32 i, y;
+    s32 count = 0;
+
+    for (i = 0; i < layout->rectCount; i++)
+    {
+        const struct Rect *r = &layout->rects[i];
+
+        for (y = r->y1; y <= r->y2; y++)
+        {
+            if (GetRole(cave, r->x1, y) == ROLE_RUBBLE)
+                count++;
+        }
+    }
+    return count;
+}
+
+/* Stamp every junction's rubble (see JUNCTIONS) onto the grid, from the
+ * same west columns as CountJunctionRubble. */
 static void StampRubble(const struct MtMoonCave *cave, const struct Layout *layout)
 {
     s32 i, y;
@@ -888,7 +938,11 @@ static void BuildB1FShape(struct MtMoonCave *cave)
             UseFallbackLayout(&layout);
         }
         CarveLayout(&layout, MT_MOON_CELL_FLOOR);
-        if (IsDrawable(cave) && PlaceLadders(cave, &layout) && HasRoomForContent(cave, &layout))
+        /* The rubble count comes last, so it can only turn away a layout
+         * that passed everything else: no other layout, and no random
+         * number drawn for one, changes. */
+        if (IsDrawable(cave) && PlaceLadders(cave, &layout) && HasRoomForContent(cave, &layout)
+            && CountJunctionRubble(cave, &layout) <= MAX_JUNCTION_RUBBLE)
         {
             StampRubble(cave, &layout);
             return;
