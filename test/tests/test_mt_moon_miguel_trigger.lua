@@ -49,8 +49,6 @@ local RNG = 0x5EED2703
 -- Frames allowed from the step onto the trigger until the battle is set up.
 local BATTLE_FRAMES = 300
 
-local DIRS = { { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }
-
 -- Miguel's "defeated" flag: TRAINER_FLAGS_START + his trainer id
 -- (flags.h defines TRAINER_FLAGS_START as FLAG_0x4FF + 1).
 local MIGUEL_DEFEATED_FLAG = mm.read_defines("include/constants/flags.h").FLAG_0x4FF + 1 + chamber.TRAINER_MIGUEL
@@ -83,29 +81,14 @@ fw.run(function()
     fw.assert_true(t.var == chamber.VAR_MAP_SCENE_MT_MOON_B2F and t.value == 0,
         string.format("the trigger watches VAR_MAP_SCENE_MT_MOON_B2F for 0 (var 0x%x, value %d)", t.var, t.value))
 
-    -- The nearest tile next to the trigger the player can walk to without
-    -- stepping on it.
-    local avoid = { [mm.key(t.x, t.y)] = true }
-    local px, py = mm.player_tile()
-    local objects = mm.object_tiles(snap)
-    local dist = mm.bfs(snap.grid, px, py, function(x, y)
-        local k = mm.key(x, y)
-        return avoid[k] or objects[k]
-    end)
-    local near, near_d = nil, nil
-    for _, d in ipairs(DIRS) do
-        local k = mm.key(t.x + d[1], t.y + d[2])
-        if dist[k] and (near_d == nil or dist[k] < near_d) then near, near_d = { t.x + d[1], t.y + d[2] }, dist[k] end
-    end
-    fw.assert_true(near ~= nil, "a tile next to the trigger can be reached without stepping on it")
-    if near == nil then capture.stop() fw.finish() return end
-
-    local result = walk.to(near[1], near[2], { avoid = avoid })
+    -- Walk to the nearest tile next to the trigger, never stepping on the
+    -- trigger itself, and face it.
+    local result = walk.to_face(t.x, t.y, { avoid = { [mm.key(t.x, t.y)] = true } })
     if not result.ok then
-        for _, line in ipairs(walk.describe_map(near[1], near[2])) do fw.log(line) end
+        for _, line in ipairs(walk.describe_map(t.x, t.y)) do fw.log(line) end
     end
-    fw.assert_true(result.ok, string.format("walked to (%d,%d) next to the trigger%s", near[1], near[2],
-        result.why and (" (" .. result.why .. ")") or ""))
+    fw.assert_true(result.ok, string.format("walked next to the trigger (%d,%d) without stepping on it%s",
+        t.x, t.y, result.why and (" (" .. result.why .. ")") or ""))
     if not result.ok then capture.stop() fw.finish() return end
 
     capture.caption("B2F: stepping onto Miguel's trigger tile")

@@ -43,7 +43,7 @@ fw.run(function()
     chain.prepare()
 
     capture.start()
-    fossil.take("helix", RNG, fw)
+    fossil.take("helix", RNG, fw, capture)
     capture.stop()
     fw.finish()
 end)

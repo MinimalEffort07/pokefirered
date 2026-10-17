@@ -4,7 +4,10 @@
 --
 -- The two fossil scenarios mirror each other, so their flow lives here:
 --
---   take(which, rng, test_fw), with which = "dome" (S4) or "helix" (S5):
+--   take(which, rng, test_fw, test_capture), with which = "dome" (S4) or
+--   "helix" (S5), test_fw the calling test's framework (its assertions are
+--   the ones reported) and test_capture its frame_capture module (so the
+--   captions land in the test's recording; optional):
 --     1. Enter B2F through its entrance ladder with gRngValue = rng (a fixed
 --        value, so every run builds the same cave).
 --     2. Walk (real D-pad steps, test/lib/walk.lua) to the tile next to the
@@ -16,7 +19,7 @@
 --        "<PLAYER> obtained the DOME FOSSIL!", Miguel's walk to the other
 --        fossil and his "Then this one's mine!", until the player has
 --        control again. The text speed option is FAST
---        (mt_moon.set_text_speed_fast).
+--        (mt_moon.set_text_speed_fast), and A is held 3 frames out of 4.
 --     PASS when, with values read from RAM:
 --       - FLAG_GOT_<CHOSEN>_FOSSIL and FLAG_GOT_FOSSIL_FROM_MT_MOON are set;
 --       - the bag holds 1 of the chosen fossil item;
@@ -47,7 +50,6 @@ local fossil = {}
 -- Control must be back within this many frames of the first A press.
 fossil.CONTROL_FRAMES = 600
 
-
 local KINDS = {
     dome = {
         name = "Dome Fossil", local_id = chamber.LOCALID_DOME, item = chamber.ITEM_DOME_FOSSIL,
@@ -59,10 +61,11 @@ local KINDS = {
     },
 }
 
--- Press A every 4 frames, the way a player hurries through messages (a
--- press while text is printing shows the rest of it at once, and the next
--- press closes it), until done() holds and the player can move again.
--- Returns the frames that took, or nil if `limit` frames passed first.
+-- Hold A 3 frames out of 4, the way a player hurries through messages:
+-- while A is held the text prints faster, and each new press closes a
+-- message or answers the YES/NO menu (its cursor starts on YES). Stops when
+-- done() holds and the player can move again. Returns the frames that
+-- took, or nil if `limit` frames passed first.
 -- Most of the time is fixed waiting the presses can't shorten: the two
 -- key-item fanfares (170 frames each, sFanfares in src/sound.c) and
 -- Miguel's walk (16 frames a step).
@@ -79,11 +82,12 @@ local function press_a_until(done, limit)
     return nil
 end
 
--- Take fossil `which` ("dome" or "helix"); see the header. Asserts through
--- `T`, the calling test's framework. Returns the B2F snapshot taken on
--- arrival (before the fossil was taken), or nil if the scenario couldn't
--- run to the end.
-function fossil.take(which, rng, T)
+-- Take fossil `which` ("dome" or "helix"); see the header. Returns the B2F
+-- snapshot taken on arrival (before the fossil was taken), or nil if the
+-- scenario couldn't run to the end.
+function fossil.take(which, rng, test_fw, test_capture)
+    local T = test_fw
+    local cap = test_capture or capture
     local kind = KINDS[which]
     local other = KINDS[kind.other]
 
@@ -92,7 +96,7 @@ function fossil.take(which, rng, T)
     -- could never be back within CONTROL_FRAMES; at FAST the whole script
     -- takes about 520.
     mm.set_text_speed_fast()
-    capture.caption("B2F: walking to the " .. kind.name)
+    cap.caption("B2F: walking to the " .. kind.name)
     local snap = mm.enter_floor(chamber.FLOOR, rng)
     fw.log(string.format("B2F: cave seed 0x%04x", snap.seed))
     T.assert_true(fw.wait_until(walk.ready, 600, "control after arriving on B2F"), "control after arriving on B2F")
@@ -113,7 +117,7 @@ function fossil.take(which, rng, T)
         result.why and (" (" .. result.why .. ")") or ""))
     if not result.ok then return nil end
 
-    capture.caption("B2F: taking the " .. kind.name)
+    cap.caption("B2F: taking the " .. kind.name)
     local frames = press_a_until(function()
         return mm.get_flag(chamber.FLAG_GOT_FOSSIL_FROM_MT_MOON)
     end, fossil.CONTROL_FRAMES)

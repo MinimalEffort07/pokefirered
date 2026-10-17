@@ -100,7 +100,7 @@ fw.run(function()
     capture.start()
 
     -- S4.
-    local before = fossil.take("dome", RNG.s4, fw)
+    local before = fossil.take("dome", RNG.s4, fw, capture)
     if before == nil then capture.stop() fw.finish() return end
 
     -- S6 after S4.

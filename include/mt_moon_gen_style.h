@@ -262,7 +262,11 @@
 #define MT_MOON_CELL_VISITED 2  /* floor already reached by a flood fill */
 #define MT_MOON_CELL_BLOCKED 3  /* floor under a solid one-tile prefab (a
                                  * boulder, a sign): drawn by the prefab,
-                                 * not walkable; see ONE-TILE PREFABS */
+                                 * not walkable; see ONE-TILE PREFABS. (The
+                                 * core also uses it for a moment, inside
+                                 * its own steps, to hide the fossil
+                                 * chamber's floor from its flood fills; a
+                                 * style never sees that.) */
 
 /* Ladder kinds (see LADDERS above). */
 #define MT_MOON_LADDER_DOOR 0
@@ -426,7 +430,7 @@ struct MtMoonChamber *MtMoonGen_GetChamber(void);
 void MtMoonGen_MarkChamberSite(void);
 
 /* The chamber's foot: the landing cell in front of its stairs, where a
- * corridor should join it. */
+ * corridor should join it. (-1, -1) on a floor without a chamber. */
 void MtMoonGen_GetChamberFoot(s32 *x, s32 *y);
 
 /* --- One style object per generated floor --------------------------------- */
