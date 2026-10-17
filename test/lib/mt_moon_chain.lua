@@ -10,6 +10,9 @@
 -- every floor to Route 4's east door (S1); walk_chain("west") does the
 -- reverse (S2). Every step is a real D-pad press planned by walk.lua; the
 -- player is never moved by writing memory once the walk has started.
+-- A test that does more on the way (the demo, test/tests/demo_mt_moon.lua,
+-- takes a fossil on B2F) walks the legs itself, with chain.legs() and
+-- chain.walk_leg().
 --
 -- SETUP (prepare(), before the walk):
 --   * every Mt. Moon trainer is marked defeated, so none starts a battle
@@ -46,8 +49,12 @@ local chain = {}
 
 -- Assertions go through the TEST's framework instance (passed to
 -- walk_chain): every dofile() of framework.lua makes its own results table,
--- and only the test's own one is reported.
+-- and only the test's own one is reported. Captions likewise go through the
+-- test's frame_capture instance (also passed in): every dofile() of
+-- frame_capture.lua is a separate recorder, and only the one the test
+-- started writes captions.tsv.
 local T = fw
+local CAP = capture
 
 local VAR_MAP_SCENE_MT_MOON_B2F = mm.read_defines("include/constants/vars.h").VAR_MAP_SCENE_MT_MOON_B2F
 
@@ -83,8 +90,9 @@ for name, value in (os.getenv("MT_MOON_WALK_RNG") or ""):gmatch("([%w]+)=(0?x?%x
 end
 
 -- Where each walk starts on Route 4: a few tiles from the cave door it
--- walks into, clear of the NPCs that wander near the Pokemon Center.
-local START = {
+-- walks into, clear of the NPCs that wander near the Pokemon Center. A test
+-- may change them before walking.
+chain.START = {
     east = { x = 13, y = 8 },  -- west of the west door (19,5)
     west = { x = 37, y = 6 },  -- east of the east door (32,5)
 }
@@ -137,12 +145,12 @@ local function map_name(group, num)
     return string.format("map %d.%d", group, num)
 end
 
--- The legs of the walk, in order. Each leg starts on `from` (a map name) and
--- walks into warp `warp` there. A leg with `arrow` (1F's door) ends on an
--- arrow warp, entered by holding that direction while standing on it. The
--- player must arrive on map `to` at its warp `to_warp`; `x`/`y`, when
--- given, is where that warp must be.
-local function legs(direction)
+-- The legs of the walk toward `direction` ("east" or "west"), in order.
+-- Each leg starts on `from` (a map) and walks into warp `warp` there. A leg
+-- with `arrow` (1F's door) ends on an arrow warp, entered by holding that
+-- direction while standing on it. The player must arrive on map `to` at its
+-- warp `to_warp`; `x`/`y`, when given, is where that warp must be.
+function chain.legs(direction)
     local f1, b1, b2 = mm.floor_by_name("1F"), mm.floor_by_name("B1F"), mm.floor_by_name("B2F")
     local route4 = { name = "Route 4", group = mm.ROUTE4.group, num = mm.ROUTE4.num }
     if direction == "east" then
@@ -163,8 +171,13 @@ local function legs(direction)
     }
 end
 
--- Walk one leg. Returns false if the walk can't go on.
-local function walk_leg(leg, direction)
+-- Walk one leg (one of chain.legs(direction)), asserting through `test_fw`
+-- and captioning through `test_capture`, the calling test's framework and
+-- frame_capture instances (see T and CAP above). Returns false if the walk
+-- can't go on.
+function chain.walk_leg(leg, direction, test_fw, test_capture)
+    T = test_fw or fw
+    CAP = test_capture or capture
     local label = leg.from.name .. " -> " .. leg.to.name
     local group, num = mm.current_map()
     if group ~= leg.from.group or num ~= leg.from.num then
@@ -176,7 +189,7 @@ local function walk_leg(leg, direction)
     local px, py = mm.player_tile()
     fw.log(string.format("%s: walking from (%d,%d) to warp %d at (%d,%d)",
         label, px, py, leg.warp, target.x, target.y))
-    capture.caption(string.format("%s: walking to the %s", leg.from.name,
+    CAP.caption(string.format("%s: walking to the %s", leg.from.name,
         leg.arrow and "door" or "warp to " .. leg.to.name))
 
     local rng = chain.RNG[direction][leg.to.name]
@@ -214,24 +227,32 @@ local function walk_leg(leg, direction)
     if mm.floor_by_name(leg.to.name) then
         fw.log(string.format("%s: cave seed 0x%04x", leg.to.name, mm.seed()))
     end
-    capture.caption(string.format("Arrived on %s", leg.to.name))
+    CAP.caption(string.format("Arrived on %s", leg.to.name))
     local ready = fw.wait_until(walk.ready, 600, label .. ": control after arriving")
     T.assert_true(ready, label .. ": the player can move again after arriving")
     return ready
 end
 
+-- Put the player on Route 4 at chain.START[direction] and wait until they
+-- have control, asserting through `test_fw`. Returns true on success.
+function chain.go_to_start(direction, test_fw)
+    local start = chain.START[direction]
+    local ok = mm.warp_to_tile(mm.ROUTE4, start.x, start.y)
+    local t = test_fw or fw
+    t.assert_true(ok, string.format("start on Route 4 at (%d,%d)", start.x, start.y))
+    return ok
+end
+
 -- Walk the chain toward "east" (S1) or "west" (S2), asserting through
--- `test_fw`, the calling test's framework. Call after the game has reached
+-- `test_fw` and captioning through `test_capture`, the calling test's
+-- framework and frame_capture instances. Call after the game has reached
 -- the overworld.
-function chain.walk_chain(direction, test_fw)
-    local start = START[direction]
-    T = test_fw or fw
+function chain.walk_chain(direction, test_fw, test_capture)
     chain.prepare()
-    T.assert_true(mm.warp_to_tile(mm.ROUTE4, start.x, start.y),
-        string.format("start on Route 4 at (%d,%d)", start.x, start.y))
+    chain.go_to_start(direction, test_fw)
     fw.wait_frames(30)
-    for _, leg in ipairs(legs(direction)) do
-        if not walk_leg(leg, direction) then return false end
+    for _, leg in ipairs(chain.legs(direction)) do
+        if not chain.walk_leg(leg, direction, test_fw, test_capture) then return false end
     end
     return true
 end

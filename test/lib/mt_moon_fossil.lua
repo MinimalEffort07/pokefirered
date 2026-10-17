@@ -4,7 +4,8 @@
 --
 -- The two fossil scenarios mirror each other, so their flow lives here:
 --
---   take(which, rng, test_fw, test_capture), with which = "dome" (S4) or
+--   take(which, rng, test_fw, test_capture) (or take_here(), for a B2F the
+--   player has already walked into: steps 2 and 3), with which = "dome" (S4) or
 --   "helix" (S5), test_fw the calling test's framework (its assertions are
 --   the ones reported) and test_capture its frame_capture module (so the
 --   captions land in the test's recording; optional):
@@ -16,8 +17,8 @@
 --        by mt_moon_chain.prepare()).
 --     3. Press A: "...You want the DOME FOSSIL?" opens a YES/NO menu with the
 --        cursor on YES, so the next A answers YES. Keep pressing A through
---        "<PLAYER> obtained the DOME FOSSIL!", Miguel's walk to the other
---        fossil and his "Then this one's mine!", until the player has
+--        "Obtained the DOME FOSSIL!", Miguel's walk to the other fossil and
+--        his "All right. Then this fossil is mine!", until the player has
 --        control again. The text speed option is FAST
 --        (mt_moon.set_text_speed_fast), and A is held 3 frames out of 4.
 --     PASS when, with values read from RAM:
@@ -86,6 +87,22 @@ end
 -- snapshot taken on arrival (before the fossil was taken), or nil if the
 -- scenario couldn't run to the end.
 function fossil.take(which, rng, test_fw, test_capture)
+    local snap = mm.enter_floor(chamber.FLOOR, rng)
+    fw.log(string.format("B2F: cave seed 0x%04x", snap.seed))
+    test_fw.assert_true(fw.wait_until(walk.ready, 600, "control after arriving on B2F"),
+        "control after arriving on B2F")
+    if not fossil.take_here(which, test_fw, test_capture, snap) then return nil end
+    fw.wait_frames(60)
+    return snap
+end
+
+-- Steps 2 and 3 of take() (see the header) on the B2F the player is on now,
+-- however they got there (the demo, test/tests/demo_mt_moon.lua, climbs
+-- down from B1F). `snap` is an mt_moon snapshot of this B2F taken before
+-- any fossil was taken (default: one taken now). Returns true once the
+-- fossil is taken, false if the scenario couldn't run to the end; the
+-- PASS checks are asserted through `test_fw` either way.
+function fossil.take_here(which, test_fw, test_capture, snap)
     local T = test_fw
     local cap = test_capture or capture
     local kind = KINDS[which]
@@ -97,14 +114,12 @@ function fossil.take(which, rng, test_fw, test_capture)
     -- takes about 520.
     mm.set_text_speed_fast()
     cap.caption("B2F: walking to the " .. kind.name)
-    local snap = mm.enter_floor(chamber.FLOOR, rng)
-    fw.log(string.format("B2F: cave seed 0x%04x", snap.seed))
-    T.assert_true(fw.wait_until(walk.ready, 600, "control after arriving on B2F"), "control after arriving on B2F")
+    snap = snap or mm.snapshot()
 
     local p = chamber.pieces(snap.templates, snap.coord_events)
     local chosen, left = p[which], p[kind.other]
     T.assert_true(chosen ~= nil and left ~= nil and p.miguel ~= nil, "B2F has both fossils and Miguel")
-    if chosen == nil or left == nil or p.miguel == nil then return nil end
+    if chosen == nil or left == nil or p.miguel == nil then return false end
     fw.log(string.format("Dome Fossil (%d,%d), Helix Fossil (%d,%d), Miguel (%d,%d)",
         p.dome.x, p.dome.y, p.helix.x, p.helix.y, p.miguel.x, p.miguel.y))
     T.assert_true(not mm.get_flag(chamber.FLAG_GOT_FOSSIL_FROM_MT_MOON), "no fossil taken yet")
@@ -115,7 +130,7 @@ function fossil.take(which, rng, test_fw, test_capture)
     end
     T.assert_true(result.ok, string.format("walked next to the %s and faced it%s", kind.name,
         result.why and (" (" .. result.why .. ")") or ""))
-    if not result.ok then return nil end
+    if not result.ok then return false end
 
     cap.caption("B2F: taking the " .. kind.name)
     local frames = press_a_until(function()
@@ -135,8 +150,7 @@ function fossil.take(which, rng, test_fw, test_capture)
     T.assert_true(miguel ~= nil and miguel.x == left.x and miguel.y == left.y + 1, string.format(
         "Miguel stands right below the %s's old tile (%d,%d): at (%d,%d)", other.name, left.x, left.y + 1,
         miguel and miguel.x or -1, miguel and miguel.y or -1))
-    fw.wait_frames(60)
-    return snap
+    return frames ~= nil
 end
 
 return fossil
