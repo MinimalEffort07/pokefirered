@@ -162,16 +162,18 @@ fw.run(function()
     emu:write16(foa + ADDR.OE_PREV_X,    target_x)
     emu:write16(foa + ADDR.OE_PREV_Y,    py)
 
-    fw.wait_frames(2)   -- let UpdateFollowerPokemon see the new distance
-
     -- ------------------------------------------------------------------ --
     -- Monitor for 300 frames: assert no single-frame jump > 1 tile       --
     -- A jump > 1 means TeleportFollowerNearPlayer was called.             --
     -- Coords are read as unsigned u16 but Pallet bedroom tiles are small
     -- positive values, so no s16 sign-extension ambiguity arises here.   --
+    --
+    -- Monitoring starts from the tile we just wrote, with no frames run in
+    -- between: the old code teleported on the very next frame, so any
+    -- frames run before the first comparison would hide that jump.       --
     -- ------------------------------------------------------------------ --
     local teleport_detected = false
-    local prev_fx, prev_fy = read_follower_pos()
+    local prev_fx, prev_fy = target_x, py
 
     for i = 1, 300 do
         fw.yield()
