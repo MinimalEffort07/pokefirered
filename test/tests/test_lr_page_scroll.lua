@@ -71,16 +71,15 @@ end
 --   offset 0: u32 func pointer (stored as Thumb ptr with bit 0 set)
 --   offset 4: u8 isActive
 --
--- Task_BagMenu_HandleInput lives at 0x08109404 in this build; Thumb pointers
--- have bit 0 set, so gTasks stores 0x08109405.
---
--- NOTE: This address is ROM-build-specific. If the ROM is rebuilt with a
--- different code layout this constant must be updated. Cross-check with:
---   grep Task_BagMenu_HandleInput pokefirered.map
+-- Task_BagMenu_HandleInput's address is looked up in pokefirered.elf (see
+-- test/lib/symbols.lua), because it moves whenever code linked before it
+-- changes size (it was 0x08109404 in an older build). Thumb pointers have
+-- bit 0 set, so gTasks stores the address + 1.
 -------------------------------------------------------------------------------
+local symbols         = dofile(project_dir .. "test/lib/symbols.lua")
 local GTASKS_ADDR     = 0x030050a0
 local TASK_SIZE_B     = 40
-local BAG_INPUT_THUMB = 0x08109405  -- Task_BagMenu_HandleInput | 1 (Thumb bit)
+local BAG_INPUT_THUMB = (symbols.find("Task_BagMenu_HandleInput") or 0x08109404) | 1
 
 local function bag_input_handler_active()
     for i = 0, 15 do

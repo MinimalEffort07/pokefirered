@@ -85,6 +85,7 @@
 #include "scanline_effect.h"
 #include "save_failed_screen.h"
 #include "quest_log.h"
+#include "sloopsvc.h"
 
 /*
  * intr_main is the low-level ARM assembly interrupt dispatcher.
@@ -106,12 +107,20 @@ static void VCountIntr(void);
 static void SerialIntr(void);
 static void IntrDummy(void);
 
+#if REVISION >= 0xA && !MODERN
+const char OtherBuildDateTime[] = "2025 12 19 16:01";
+#endif
+
 /*
  * Game version and language constants.
  * Burned into ROM as const data. Used by the link system to verify
  * compatibility between connected cartridges (e.g., FireRed can't link
  * with Ruby for certain features).
  */
+#if REVISION >= 0xA
+// OtherBuildDateTime is probably in some other file?
+__attribute__((aligned(4)))
+#endif
 const u8 gGameVersion = GAME_VERSION;
 const u8 gGameLanguage = GAME_LANGUAGE;
 
@@ -120,8 +129,10 @@ const char BuildDateTime[] = __DATE__ " " __TIME__;
 #else
 #if REVISION == 0
 const char BuildDateTime[] = "2004 04 26 11:20";
-#else
+#elif REVISION == 1
 const char BuildDateTime[] = "2004 07 20 09:30";
+#elif REVISION == 0xA
+const char BuildDateTime[] = "2025 12 19 15:38 22afedd9";
 #endif //REVISION
 #endif //MODERN
 
@@ -274,6 +285,9 @@ void EnableVCountIntrAtLine150(void);
  */
 void AgbMain()
 {
+#if REVISION >= 0xA
+    svc_stubbed();
+#endif
 #if MODERN
     // Modern compilers are liberal with the stack on entry to this function,
     // so RegisterRamReset may crash if it resets IWRAM.
@@ -316,7 +330,8 @@ void AgbMain()
 #endif //MODERN
 
     /*
-     * Set the first palette entry (index 0) to white.
+     * Set the first palette entry (index 0) to white (black on the
+     * revision 10 ROM, GAME_REVISION=10).
      * BG_PLTT (0x05000000) is palette RAM. The first entry is the
      * "backdrop color" - shown wherever no BG or sprite is drawn.
      * Writing directly to palette RAM (memory-mapped I/O) is instant.
@@ -324,7 +339,11 @@ void AgbMain()
      *
      * Note: GBA uses BGR555 format: bit layout is 0BBBBBGGGGGRRRRR
      */
+#if REVISION >= 0xA
+    *(vu16 *)BG_PLTT = RGB_BLACK;
+#else
     *(vu16 *)BG_PLTT = RGB_WHITE;
+#endif
 
     /*
      * Initialize the GPU register buffer system.
@@ -438,7 +457,8 @@ void AgbMain()
 
     SetNotInSaveFailedScreen();
 
-#ifndef NDEBUG
+    // Revision 10 has no calls into libisagbprn except this one.
+#if !defined(NDEBUG) || REVISION >= 0xA
 #if (LOG_HANDLER == LOG_HANDLER_MGBA_PRINT)
     /*
      * mGBA-specific debug logging.
@@ -453,7 +473,7 @@ void AgbMain()
 #endif
 #endif
 
-#if REVISION == 1
+#if REVISION >= 1
     if (gFlashMemoryPresent != TRUE)
         SetMainCallback2(NULL);
 #endif
@@ -511,7 +531,9 @@ void AgbMain()
          && (gMain.heldKeysRaw & B_START_SELECT) == B_START_SELECT)
         {
             rfu_REQ_stopMode();
+#if REVISION < 0xA
             rfu_waitREQComplete();
+#endif
             DoSoftReset();
         }
 
@@ -651,6 +673,9 @@ static void InitMainCallbacks(void)
     gSaveBlock1Ptr = &gSaveBlock1;
     gSaveBlock2.encryptionKey = 0;
     gQuestLogPlaybackState = QL_PLAYBACK_STATE_STOPPED;
+#if REVISION >= 0xA
+    svc_SetSaveBlock2(&gSaveBlock2);
+#endif
 }
 
 /*
@@ -993,11 +1018,11 @@ static void VBlankIntr(void)
 
     gPcmDmaCounter = gSoundInfo.pcmDmaCounter;
 
-#ifndef NDEBUG
+#if !defined(NDEBUG) || REVISION >= 0xA
     sVcountBeforeSound = REG_VCOUNT;
 #endif
     m4aSoundMain();
-#ifndef NDEBUG
+#if !defined(NDEBUG) || REVISION >= 0xA
     sVcountAfterSound = REG_VCOUNT;
 #endif
 
@@ -1063,7 +1088,7 @@ static void HBlankIntr(void)
  */
 static void VCountIntr(void)
 {
-#ifndef NDEBUG
+#if !defined(NDEBUG) || REVISION >= 0xA
     sVcountAtIntr = REG_VCOUNT;
 #endif
     m4aSoundVSync();

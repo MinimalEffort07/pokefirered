@@ -456,6 +456,6 @@ fw.run(function()
     test_chain_break_off_grass()
     test_shiny_roll_count_at_chain_40()
 
-    fw.screenshot("/tmp/mgba-poke-radar.png")
+    fw.screenshot(fw.out_path("mgba-poke-radar.png"))
     fw.finish()
 end)
