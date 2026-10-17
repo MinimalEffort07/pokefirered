@@ -78,8 +78,13 @@ mm.VANILLA_CAVE = { name = "Rock Tunnel 1F", group = 1, num = 81, warp = 0 }
 --   "down"  a down-ladder: a hole (0x285 or 0x2af) in open floor, i.e. all
 --           8 tiles around it are walkable. Stepping onto it warps.
 --   "up"    an up-ladder: the ladder's foot (0x296, walkable) at the foot of
---           a north wall, with the ladder's top (0x28f or 0x28e, solid) set
---           into the wall above it. Stepping onto the foot warps.
+--           a north wall, with the ladder's top (0x28f, solid) set into the
+--           wall above it, as on vanilla B1F. Stepping onto the foot warps.
+--   "up_in_floor"
+--           an up-ladder standing in open floor, as all four of vanilla
+--           B2F's are: the foot 0x296 (walkable) with the ladder's top
+--           0x28e (solid) right above it, and walkable floor all around
+--           both. Stepping onto the foot warps.
 --
 -- `arrival_warp` and `exit_warp` are the entrance and exit warp indexes,
 -- kept under the names older tests use: mm.enter_floor() arrives through
@@ -98,8 +103,8 @@ mm.FLOORS = {
     },
     {
         name = "B2F", group = 1, num = 3,
-        entrance = { warp = 0, kind = "up",   to = { group = 1, num = 2, warp = 3 } },
-        exit     = { warp = 1, kind = "up",   to = { group = ROUTE4_GROUP, num = ROUTE4_NUM, warp = 1 } },
+        entrance = { warp = 0, kind = "up_in_floor", to = { group = 1, num = 2, warp = 3 } },
+        exit     = { warp = 1, kind = "up_in_floor", to = { group = ROUTE4_GROUP, num = ROUTE4_NUM, warp = 1 } },
     },
 }
 for _, floor in ipairs(mm.FLOORS) do

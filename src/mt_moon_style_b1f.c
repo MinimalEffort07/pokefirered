@@ -133,9 +133,10 @@
  * too small) is thrown away and grown again; the last attempt uses a fixed
  * layout that passes every check (sFallbackLayout).
  *
- * WHY NOT CELLULAR AUTOMATA: the cellular style's blobs have bumps, notches
- * and 1-cell strands that no vanilla tile arrangement draws, and B1F's
- * look is built from rectangles anyway.
+ * WHY NOT CELLULAR AUTOMATA: the cellular-automata style the generator
+ * started with (since removed) grew blobs with bumps, notches and 1-cell
+ * strands that no vanilla tile arrangement draws, and B1F's look is built
+ * from rectangles anyway.
  *
  * WHAT THE CORE DOES AFTERWARDS (see the style header): it fills pockets
  * (there are none: every rectangle joins the shape through its link, and

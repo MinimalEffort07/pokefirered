@@ -65,10 +65,14 @@ local VAR_MAP_SCENE_MT_MOON_B2F = mm.read_defines("include/constants/vars.h").VA
 -- spawns included, so the values changed when keep_roamers_away() came in;
 -- on master, east 0x5EED0001 and west 0x0D88ECFA rolled 0xf34c. The west
 -- value changed again with B1F's own style (#29): the walk now leaves a
--- different B1F, and 0xBF6E5E43 rolled 0x5b82 instead.)
+-- different B1F, and 0xBF6E5E43 rolled 0x5b82 instead. And again with
+-- B2F's own style (#30): the west walk crosses a different B2F, which
+-- changes the Random() calls before 1F's roll, and 0x81F53EA4 rolled 0x16a7;
+-- 0xEB0A448A, worked out with mt_moon.rng_for_seed from that walk, rolls
+-- 0xf34c.)
 chain.RNG = {
     east = { ["1F"] = 0x151CC71A, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
-    west = { ["1F"] = 0x81F53EA4, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
+    west = { ["1F"] = 0xEB0A448A, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
 }
 for name, value in (os.getenv("MT_MOON_WALK_RNG") or ""):gmatch("([%w]+)=(0?x?%x+)") do
     chain.RNG.east[name] = tonumber(value)
