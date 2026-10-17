@@ -12,7 +12,7 @@ This is a fork of the PRET project with custom features. Development is AI-assis
   - **Content:** Every trainer, NPC, item ball, hidden item and sign of vanilla Mt. Moon is on its own floor, and all of it is guaranteed reachable: from either ladder you can walk to the other ladder, to a tile facing every trainer, NPC, item, hidden item and sign, and to every floor tile of the cave. No object ever walls off part of a cave, not even a defeated trainer, who never moves again. Hidden items sit on a lone boulder as in vanilla, and trainers that stand still face down their longest straight corridor.
   - **Load time:** Entering a floor takes at most half a second longer than entering a vanilla cave of the same size.
   - **1F look:** 1F currently uses the shared cellular-automata cave style.
-  - **B1F look:** B1F currently uses the shared cellular-automata cave style.
+  - **B1F look:** B1F looks like vanilla B1F: rectangular rooms and corridors carved out of black void, each with a 2-row rock wall along its north side, and about a fifth of the map walkable (vanilla: 16%). Rooms at different heights join the way vanilla's do, with rubble where a lower wall ends beside a corridor. Every tile sits only next to tiles vanilla B1F also puts beside it, so there are no visible seams. The ladder up stands at the foot of a north wall and the hole down is in open floor.
   - **B2F look:** B2F currently uses the shared cellular-automata cave style.
   - **Fossil chamber:** Not built yet: Super Nerd Miguel and the two fossils are placed on B2F like any other object, and Miguel's battle trigger stays on vanilla's tile (14,11).
   - **Decorations:** None yet: no rubble, craters, puddles or stairs.
