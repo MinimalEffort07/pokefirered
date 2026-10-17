@@ -26,6 +26,13 @@
 --              north of it is the ladder top 0x28f or 0x28e (solid), set
 --              into a north wall: the tiles west and east of the top and
 --              the tile above it are solid too.
+--        up_in_floor (B2F)
+--              0x296, walkable, standing in open floor as vanilla B2F's
+--              ladders do: the tile north of it is the ladder top 0x28e
+--              (solid), and every other tile of the 3 x 4 block around the
+--              top and the ladder (the tiles west and east of both, the tile
+--              above the top and the tile below the ladder, and the
+--              corners) is walkable.
 --   4. The two warps are at least 24 tiles apart (Manhattan distance:
 --      steps east-west plus steps north-south).
 --   5. The exit can be reached on foot from the entrance (BFS over walkable
@@ -37,6 +44,7 @@ local MT_DOORFRAME = { 0x2c8, 0x2c9, 0x2ca }  -- west, middle, east
 local MT_HOLES = { [0x285] = true, [0x2af] = true }
 local MT_LADDER_FOOT = 0x296
 local MT_LADDER_TOPS = { [0x28f] = true, [0x28e] = true }
+local MT_LADDER_TOP_IN_FLOOR = 0x28e
 
 -- 1F's door stays where vanilla has it.
 local DOOR_1F_X, DOOR_1F_Y = 18, 37
@@ -106,6 +114,23 @@ local function check_tiles(h, floor, grid, w, kind)
             end
         end
         if not walkable(h, grid, x, y + 1) then return fmt("no walkable floor south of the ladder") end
+    elseif kind == "up_in_floor" then
+        if mt ~= MT_LADDER_FOOT then
+            return fmt(string.format("tile 0x%03x, expected the ladder foot 0x%03x", mt, MT_LADDER_FOOT))
+        end
+        local top = metatile_at(h, grid, x, y - 1)
+        if top ~= MT_LADDER_TOP_IN_FLOOR or not solid(h, grid, x, y - 1) then
+            return fmt(string.format("tile above is 0x%03x, expected the solid ladder top 0x%03x",
+                top or 0, MT_LADDER_TOP_IN_FLOOR))
+        end
+        for dy = -2, 1 do
+            for dx = -1, 1 do
+                local own = dx == 0 and (dy == -1 or dy == 0) -- the top and the ladder
+                if not own and not walkable(h, grid, x + dx, y + dy) then
+                    return fmt(string.format("not standing in open floor: (%d,%d) is solid", x + dx, y + dy))
+                end
+            end
+        end
     else
         return fmt("unknown kind")
     end
