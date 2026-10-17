@@ -381,9 +381,12 @@ ADDR.gPlayerPartyCount               = 0x02024029
 
 -------------------------------------------------------------------------------
 -- FOLLOWER STATE
--- sFollower is a static EWRAM_DATA struct in src/pokemon_follower.c.
--- Address from pokefirered.map (ewram_data section of pokemon_follower.o).
--- Struct layout after patch (12 bytes total):
+-- sFollower is a static EWRAM_DATA struct in src/pokemon_follower.c. The
+-- key is named after the symbol, so the live-address pass at the bottom of
+-- this file replaces the number below with sFollower's address in
+-- pokefirered.elf (symbols.lua reads static symbols too); the number is only
+-- a fallback for when the ELF can't be read.
+-- Struct layout (12 bytes total):
 --   offset 0: bool8 active
 --   offset 1: bool8 spriteSpawned
 --   offset 2: u8 partySlot
@@ -393,10 +396,7 @@ ADDR.gPlayerPartyCount               = 0x02024029
 --   offset 7: u8 objEventId   <- FOLLOWER_OBJ_EVENT_ID_OFF
 --   offset 8: s16 prevX       (position before last catch-up move)
 --   offset 10: s16 prevY
---
--- NOTE: Verify FOLLOWER_BASE from pokefirered.map after any rebuild that
--- adds new EWRAM symbols, as the EWRAM layout can shift.
-ADDR.FOLLOWER_BASE             = 0x0203f7a8
+ADDR.sFollower                 = 0x0203f624
 ADDR.FOLLOWER_OBJ_EVENT_ID_OFF = 0x07
 
 -- ObjectEvent previousCoords offsets (layout mirrors currentCoords at 0x10/0x12).

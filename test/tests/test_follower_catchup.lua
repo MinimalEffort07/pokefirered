@@ -16,8 +16,10 @@
 -- On first run, the test boots through Oak's speech, injects Pikachu into
 -- party slot 0, sets FLAG_SYS_POKEMON_GET, navigates the party menu to
 -- activate WALK (spawning the follower sprite), and saves a state to
--- /tmp/pokefirered-follower-catchup.ss. Subsequent runs reuse this fixture.
--- Delete the .ss file to force recreation after a ROM rebuild.
+-- fw.out_path("pokefirered-follower-catchup.ss"). Under test/run_test.sh that
+-- path is private to the run (MGBA_TEST_DIR), so a state saved by another
+-- ROM build or worktree is never loaded. Run by hand it is in /tmp and is
+-- reused; delete it after a ROM rebuild.
 --
 -- HOW TO RUN:
 --   bash test/run_test.sh test/tests/test_follower_catchup.lua
@@ -28,9 +30,10 @@ local project_dir = script_dir .. "../../"
 local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
+local sym  = dofile(project_dir .. "test/lib/symbols.lua")
 
-local STATE_PATH   = "/tmp/pokefirered-follower-catchup.ss"
-local PARTY_BASE   = 0x02024284  -- gPlayerParty (from pokefirered.map)
+local STATE_PATH   = fw.out_path("pokefirered-follower-catchup.ss")
+local PARTY_BASE   = sym.addr("gPlayerParty")  -- looked up in pokefirered.elf
 local POKEMON_SIZE = 100         -- sizeof(struct Pokemon)
 local SPECIES_PIKACHU = 25       -- Pokedex #25
 
@@ -53,7 +56,7 @@ end
 
 -- Read the follower's current tile position from gObjectEvents.
 local function read_follower_pos()
-    local oeid = fw.read8(ADDR.FOLLOWER_BASE + ADDR.FOLLOWER_OBJ_EVENT_ID_OFF)
+    local oeid = fw.read8(ADDR.sFollower + ADDR.FOLLOWER_OBJ_EVENT_ID_OFF)
     local oa   = ADDR.gObjectEvents + oeid * ADDR.OBJECT_EVENT_SIZE
     return fw.read16(oa + ADDR.OE_CURRENT_X),
            fw.read16(oa + ADDR.OE_CURRENT_Y),
