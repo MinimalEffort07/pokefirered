@@ -543,6 +543,15 @@ void HandleInputChooseMove(void)
             else
                 gMultiUsePlayerCursor = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
             gSprites[gBattlerSpriteIds[gMultiUsePlayerCursor]].callback = SpriteCB_ShowAsMoveTarget;
+            /*
+             * The target cursor has just been reset to its default. If the
+             * player earlier moved it to the other opponent and then backed
+             * out with B, the move names still show that opponent's colors,
+             * so recolor them for the opponent the cursor is on now.
+             * HandleInputChooseTarget does the same on every D-pad move.
+             */
+            if (GET_BATTLER_SIDE(gMultiUsePlayerCursor) == B_SIDE_OPPONENT)
+                MoveSelectionSetEffectivenessColors(gMultiUsePlayerCursor);
         }
     }
     else if (JOY_NEW(B_BUTTON))
