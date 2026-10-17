@@ -190,7 +190,7 @@ fw.run(function()
                 r.slot, r.gfx))
     end
 
-    fw.screenshot("/tmp/mgba-roaming-route1-spawned.png")
+    fw.screenshot(fw.out_path("mgba-roaming-route1-spawned.png"))
 
     -- ---------- ASSERTION 1.5: flyby animation is the flap cycle ----------
     -- CreateOneFlybySprite swaps sprite->anims to sFlybyFlapAnimTable and
@@ -232,7 +232,7 @@ fw.run(function()
     if not flyby_seen then
         fw.log("  WARNING: no flyby spawned in ~20s window; anim assertion skipped")
     else
-        fw.screenshot("/tmp/mgba-roaming-route1-flyby.png")
+        fw.screenshot(fw.out_path("mgba-roaming-route1-flyby.png"))
     end
 
     -- ---------- ASSERTION 2: bump into a real roamer ----------
@@ -276,7 +276,7 @@ fw.run(function()
 
     fw.assert_true(battle_started,
         "wild battle triggered by bumping a real engine-spawned roamer")
-    fw.screenshot("/tmp/mgba-roaming-route1-battle.png")
+    fw.screenshot(fw.out_path("mgba-roaming-route1-battle.png"))
 
     -- ---------- ASSERTION 3: cleanup on warp ----------
     fw.wait_frames(120)

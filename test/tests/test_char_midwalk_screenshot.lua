@@ -22,7 +22,7 @@ fw.run(function()
     cs.scroll_to(idx)
     cs.confirm_and_enter_overworld()
 
-    fw.screenshot(string.format("/tmp/mw-%s-rest.png", name))
+    fw.screenshot(fw.out_path(string.format("mw-%s-rest.png", name)))
 
     -- First, measure how many frames take the player from idle into a
     -- non-zero animCmdIndex (i.e. mid-step). Then snap at that instant.
@@ -36,22 +36,22 @@ fw.run(function()
         local an, ai = cs.read_player_anim()
         table.insert(samples, string.format("f%d:n%d,i%d", f, an, ai))
         if f == 3 or f == 7 or f == 11 or f == 15 then
-            fw.screenshot(string.format("/tmp/mw-%s-f%02d.png", name, f))
+            fw.screenshot(fw.out_path(string.format("mw-%s-f%02d.png", name, f)))
         end
         if f == 6 then
-            fw.screenshot(string.format("/tmp/mw-%s-step.png", name))
+            fw.screenshot(fw.out_path(string.format("mw-%s-step.png", name)))
         end
     end
     emu:clearKey(fw.KEY.DOWN)
     fw.log("samples: " .. table.concat(samples, " "))
     fw.wait_frames(24)
-    fw.screenshot(string.format("/tmp/mw-%s-post.png", name))
+    fw.screenshot(fw.out_path(string.format("mw-%s-post.png", name)))
 
     -- RUNNING: hold B+DOWN and capture mid-run.
     emu:addKey(fw.KEY.B)
     emu:addKey(fw.KEY.DOWN)
     for f = 1, 6 do coroutine.yield() end
-    fw.screenshot(string.format("/tmp/mw-%s-run.png", name))
+    fw.screenshot(fw.out_path(string.format("mw-%s-run.png", name)))
     fw.wait_frames(12)
     emu:clearKey(fw.KEY.DOWN)
     emu:clearKey(fw.KEY.B)

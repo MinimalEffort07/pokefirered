@@ -6,15 +6,15 @@
 --      cleanly (no artifact, game not frozen, party count unchanged).
 --   2. Party menu -> MOVE TO PC deposits a mon (party count decreases by 1).
 --
--- FIXTURE STATE (self-healing):
---   On first run the test boots through Oak's speech, injects 2 Bulbasaurs,
---   and saves a fixture state to /tmp/pokefirered-pc-anywhere.ss.
---   Subsequent runs skip the slow boot and load from the fixture directly.
---   The state is loaded *again* before Part B so Part A's menu navigation
---   cannot contaminate Part B's game state.
---
---   Delete the .ss file to force recreation (e.g., after a ROM rebuild that
---   shifts EWRAM symbol addresses).
+-- FIXTURE STATE:
+--   The test boots through Oak's speech, injects 2 Bulbasaurs, and saves a
+--   fixture state, pokefirered-pc-anywhere.ss, in the run's output directory
+--   (fw.out_path: private to each run_test.sh run, so parallel runs can't
+--   load each other's state or one from another ROM build). The state is
+--   loaded *again* before Part B so Part A's menu navigation cannot
+--   contaminate Part B's game state. Run outside run_test.sh, the file is
+--   /tmp/pokefirered-pc-anywhere.ss and later runs reuse it: delete it after
+--   a ROM rebuild that shifts EWRAM symbol addresses.
 --
 -- PARTY POKEMON INJECTION:
 --   A fresh game has no party Pokemon. Two Bulbasaurs are injected directly
@@ -35,7 +35,7 @@ local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 
-local STATE_PATH    = "/tmp/pokefirered-pc-anywhere.ss"
+local STATE_PATH    = fw.out_path("pokefirered-pc-anywhere.ss")
 local PARTY_BASE    = 0x02024284  -- gPlayerParty (from pokefirered.map)
 local POKEMON_SIZE  = 100         -- sizeof(struct Pokemon)
 
