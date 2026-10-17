@@ -47,7 +47,7 @@ fw.run(function()
     fw.assert_true(cs.is_player_active(), "reached overworld")
 
     capture.start()
-    chain.walk_chain("east", fw)
+    chain.walk_chain("east", fw, capture)
     fw.wait_frames(60)
     capture.stop()
     fw.finish()

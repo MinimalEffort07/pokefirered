@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Pokemon FireRed decompilation (forked from pret/pokefirered) with custom features: real-time 4-player multiplayer via GBA Serial I/O and procedural cave generation for Mt. Moon using cellular automata.
+Pokemon FireRed decompilation (forked from pret/pokefirered) with custom features: real-time 4-player multiplayer via GBA Serial I/O and a procedurally generated Mt. Moon (three seeded cave floors, each drawn in its vanilla style).
 
 ## Build Commands
 
@@ -96,11 +96,14 @@ This is bare-metal GBA code — no OS, no standard library (only `<string.h>` av
 - Remote player sprites are spawned/despawned based on map presence
 - Movement interpolation handles ~50ms transmission delay
 
-**Procedural Generation** (`src/mt_moon_gen.c`, `include/mt_moon_gen.h`):
-- Cellular automata cave generation on 48x40 grid
-- 2-bit packed grid representation (4 cells per byte): 0=wall, 1=floor, 2=visited
-- Flood-fill ensures walkable path between entrance and exit; force-carves corridors if needed
-- Wall metatiles selected by adjacency analysis (12 variations)
+**Procedurally generated Mt. Moon** (core `src/mt_moon_gen.c`, styles `src/mt_moon_style_{1f,b1f,b2f}.c`, contract `include/mt_moon_gen_style.h`). Read the core's OVERVIEW comment and the contract before changing either; the README's Mt. Moon entry and "Mt. Moon generator" section describe the design and list the tests.
+- Chain: Route 4 west door ⇄ 1F ⇄ B1F ⇄ B2F ⇄ Route 4 east door. Where warps lead is plain `map.json` data; the generator only moves each floor's two warps onto its ladders.
+- Floors: each style draws its floor's vanilla look (1F rock islands and sand, B1F rooms in black void, B2F ridges and walled rooms with stairs, its two up-ladders standing in open floor). B2F always carries vanilla's 13 × 9 fossil chamber as a prefab, because Miguel's walk scripts are hard-coded steps. The core places every vanilla object, hidden item and sign where it stays reachable (P2, P3; nothing is ever dropped), adds the decorations in one shared step (`DecorateCave`, P10), and on Continue moves a player standing off reachable floor onto it (the safety net, S9).
+- Determinism: a floor is a pure function of `VAR_MT_MOON_MAP_SEED`, rolled with `Random()` on a fresh entry (`InitMap`) and reused on Continue (`InitMapFromSavedGame`). Every later random choice uses `MtMoonGen_Random()`/`MtMoonGen_RandomBelow()`; one `Random()` call during generation makes Continue rebuild a different cave (tests P8, S6).
+- Memory: `mt_moon_gen.c`'s IWRAM statics stay at exactly 16 bytes (`sCave`, `sRngState`); growing them moves `gMain`, `gSaveBlock1Ptr` and `gRngValue`, whose addresses tests hard-code. EWRAM is nearly full: working memory goes in the heap block the core borrows per generation (`struct GenerationWork`, or a style's `workBytes`); only state that must outlive generation (the rewritten event tables) is `EWRAM_DATA`.
+- Looks: every N/S/E/W tile pair on a generated floor must occur in that floor's own vanilla `data/layouts/MtMoon_<floor>/map.bin` (P5, per floor); the one allowlisted exception is `v:2ce:29a` above B2F's fossil chamber (`p5_b2f.lua`).
+- Load time: generation runs in the warp's black screen; P9 allows +30 frames over a vanilla cave and the worst seeds sit at +20 to +25. A pass over the whole map costs about a frame on the GBA.
+- Tests: the 9 `test/tests/test_mt_moon_*.lua` files (property sweep P1–P10, FC, SAND-1F, B1F-W over 100 seeds × 3 floors, needing `MGBA_TEST_TIMEOUT=1500`; scenarios S1–S9). A new property check is a new file in `test/tests/mt_moon_checks/`. `test/tools/dump_mtmoon_grid.lua` dumps a cave by seed and `test/tools/render_cave.py` draws it (or any vanilla `map.bin`) to PNG.
 
 ## Documentation Standards
 
