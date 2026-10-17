@@ -32,21 +32,24 @@
  * signposts, and ask for memory of its own during generation (the optional
  * canStampAt and workBytes in struct MtMoonStyle).
  *
- * 1F has its own style (src/mt_moon_style_1f.c); the other floors use the
- * cellular-automata cave in src/mt_moon_style_cellular.c.
+ * Each floor has its own style, drawn in its vanilla look:
+ * src/mt_moon_style_1f.c (rock islands and sand), src/mt_moon_style_b1f.c
+ * (rooms and corridors in black void) and src/mt_moon_style_b2f.c (rooms
+ * divided by pink ridges, with stairs).
  *
- * GIVING A FLOOR ITS OWN STYLE
+ * GIVING A FLOOR A NEW STYLE
  *
  * Each generated floor has one style object named after it, declared at the
  * bottom of this file (gMtMoonStyle1F, gMtMoonStyleB1F, gMtMoonStyleB2F).
  * The core uses that name; whichever source file DEFINES it decides the
- * floor's look. To give B2F its own style, for example:
+ * floor's look. To give B2F a new style, for example:
  *
- *   1. Write src/mt_moon_style_b2f.c (it is compiled automatically) and
- *      define `const struct MtMoonStyle gMtMoonStyleB2F = { BuildB2FShape,
- *      PickB2FTile };` (plus any optional fields; 1F's style sets them).
- *   2. Delete the one gMtMoonStyleB2F line from the file that defined it
- *      before (today, src/mt_moon_style_cellular.c).
+ *   1. Write src/mt_moon_style_<name>.c (it is compiled automatically) and
+ *      define `const struct MtMoonStyle gMtMoonStyleB2F = { BuildShape,
+ *      PickTile };` (plus any optional fields; the 1F and B2F styles set
+ *      them).
+ *   2. Delete the definition from the file that had it before (today,
+ *      src/mt_moon_style_b2f.c).
  *
  * The linker connects the core to the one definition, and complains if
  * there are two or none, so no table in the core needs editing.
@@ -59,11 +62,13 @@
  * coordinates: (0,0) is the top-left tile, x grows east, y grows south.
  * Reading outside the grid returns MT_MOON_CELL_WALL.
  *
- * Only WALL, FLOOR and VISITED exist while buildShape runs. The core adds
- * BLOCKED cells afterwards, where it stamps a solid one-tile prefab onto
- * the floor (see ONE-TILE PREFABS below). A style's pickTile counts a
- * BLOCKED cell as floor (it is not WALL), so the tiles around a boulder
- * are drawn as open floor, the way vanilla draws them.
+ * buildShape works with WALL and FLOOR (and VISITED while one of the
+ * core's flood fills runs). BLOCKED cells appear where a solid one-tile
+ * prefab is stamped onto the floor (see ONE-TILE PREFABS below): by the
+ * core after buildShape, or by a style at the very end of its buildShape
+ * (B1F's junction rubble). A style's pickTile counts a BLOCKED cell as
+ * floor (it is not WALL), so the tiles around a boulder are drawn as open
+ * floor, the way vanilla draws them.
  *
  * LADDERS
  *
@@ -99,10 +104,19 @@
  *           W W W
  *           . U .        U = the ladder
  *           . F .
+ *   MT_MOON_LADDER_UP_IN_FLOOR  an up-ladder standing in open floor, as
+ *       all four of vanilla B2F's are: the ladder's top is a small rock on
+ *       the floor (0x28e) instead of a notch in a wall, and vanilla B2F only
+ *       ever puts floor around it. Wall: the top. Floor: the ladder and the
+ *       other 10 cells of the 3 x 4 block around the top and the ladder.
+ *           F F F
+ *           F T F        T = the ladder's top
+ *           F U F
+ *           F F F
  *
  * Each kind also has a FOOT (MtMoonGen_GetLadderFoot), the floor cell in
  * front of it where a corridor should join it: north of the door, the hole
- * itself, south of an up-ladder.
+ * itself, south of an up-ladder (of either kind).
  *
  * THE LADDER CONTRACT (what buildShape must do)
  *
@@ -119,7 +133,9 @@
  *          bottom).
  *      The style either ACCEPTS a proposal (keeps it and builds its shape
  *      around it) or MOVES the ladder wherever suits its shape (at the foot
- *      of a room's wall, ...). The cellular style accepts every proposal.
+ *      of a room's wall, ...). 1F's style keeps the core's proposal for its
+ *      hole unless sand is in the way; the B1F and B2F styles move both of
+ *      their ladders to spots that suit their rooms.
  *   2. On return, every ladder:
  *        - has its footprint carved into the grid (MtMoonGen_IsLadderSite
  *          holds; MtMoonGen_MarkLadderSite() writes a footprint),
@@ -133,8 +149,9 @@
  *   3. pickTile draws the ladders, usually by returning
  *      MtMoonGen_GetLadderTile() first. A style may draw its own vanilla
  *      variants instead, keeping the same cells walkable and solid: for
- *      example B1F's hole would be the map cell value 0x32af (metatile
- *      0x2af, walkable, elevation 3; see MAP CELL VALUES below).
+ *      example B1F's style draws its hole as vanilla B1F's own map cell
+ *      value 0x32af (metatile 0x2af, walkable, elevation 3; see MAP CELL
+ *      VALUES below).
  *
  * The core checks rule 2 after buildShape. A shape that breaks it is a bug
  * in the style: the core throws the shape away and calls buildShape again
@@ -186,9 +203,9 @@
  *      chamber, keeping those rules (for example to make it one of its
  *      rooms). A style that builds around the chamber may write its cells
  *      into the grid with MtMoonGen_MarkChamberSite() first, the way
- *      MtMoonGen_MarkLadderSite() writes a ladder's footprint. The
- *      cellular style ignores the chamber, which leaves everything to the
- *      core.
+ *      MtMoonGen_MarkLadderSite() writes a ladder's footprint. B2F's style
+ *      moves the chamber into one of its top rooms and marks it, so the
+ *      corridors of rule 2 are never needed.
  *   2. After buildShape, the core checks the rules of rule 1 against the
  *      final ladders (a broken one throws the shape away, as for broken
  *      ladders) and STAMPS the chamber: its cells become FLOOR or WALL as
@@ -288,6 +305,7 @@
 #define MT_MOON_LADDER_DOOR 0
 #define MT_MOON_LADDER_DOWN 1
 #define MT_MOON_LADDER_UP   2
+#define MT_MOON_LADDER_UP_IN_FLOOR 3
 
 /* Minimum distance between a floor's two ladders, in steps (east-west steps
  * plus north-south steps). */
@@ -424,7 +442,9 @@ void MtMoonGen_GetLadderFoot(const struct MtMoonLadder *ladder, s32 *x, s32 *y);
  *         0x06c9, 0x06ca (solid) below it and the wall 0x06a3 below that;
  *   down  the hole 0x3285 (walkable);
  *   up    the ladder 0x3296 (walkable), with its top 0x068f (solid) set
- *         into the wall above.
+ *         into the wall above;
+ *   up in floor  the ladder 0x3296, with its top 0x068e (solid) standing on
+ *         the floor above it.
  */
 u16 MtMoonGen_GetLadderTile(const struct MtMoonCave *cave, s32 x, s32 y);
 

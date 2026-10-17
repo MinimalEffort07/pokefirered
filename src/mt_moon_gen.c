@@ -160,6 +160,8 @@
 #define TILE_HOLE            0x3285  /* walkable; stepping on it warps down */
 #define TILE_UP_LADDER       0x3296  /* walkable; stepping on it warps up */
 #define TILE_UP_LADDER_TOP   0x068f  /* solid; the ladder's top, in the wall */
+#define TILE_UP_LADDER_TOP_IN_FLOOR 0x068e  /* solid; the ladder's top, a small
+                                             * rock standing on the floor */
 
 /* The one-tile prefabs for background events, exactly the vanilla cells:
  * every vanilla Mt. Moon hidden item sits on this lone boulder, and 1F's
@@ -229,8 +231,8 @@ static const struct MtMoonFloor sFloors[] =
         .layoutId = LAYOUT_MT_MOON_B2F,
         .floorNumber = 3,
         .hasChamber = TRUE,
-        .entrance = LADDER_ANYWHERE(0, MT_MOON_LADDER_UP),
-        .exit = LADDER_ANYWHERE(1, MT_MOON_LADDER_UP),
+        .entrance = LADDER_ANYWHERE(0, MT_MOON_LADDER_UP_IN_FLOOR),
+        .exit = LADDER_ANYWHERE(1, MT_MOON_LADDER_UP_IN_FLOOR),
         .style = &gMtMoonStyleB2F,
     },
 };
@@ -745,12 +747,33 @@ static const struct LadderCell sUpLadderCells[] =
     { 0, 1, MT_MOON_CELL_FLOOR, 0 },
 };
 
+/*  F F F
+ *  F T F      T = the ladder's top (0x28e), solid, standing on the floor
+ *  F U F      U = the up-ladder (0x296), walkable
+ *  F F F  */
+static const struct LadderCell sUpLadderInFloorCells[] =
+{
+    { -1, -2, MT_MOON_CELL_FLOOR, 0 },
+    { 0, -2, MT_MOON_CELL_FLOOR, 0 },
+    { 1, -2, MT_MOON_CELL_FLOOR, 0 },
+    { -1, -1, MT_MOON_CELL_FLOOR, 0 },
+    { 0, -1, MT_MOON_CELL_WALL, TILE_UP_LADDER_TOP_IN_FLOOR },
+    { 1, -1, MT_MOON_CELL_FLOOR, 0 },
+    { -1, 0, MT_MOON_CELL_FLOOR, 0 },
+    { 0, 0, MT_MOON_CELL_FLOOR, TILE_UP_LADDER },
+    { 1, 0, MT_MOON_CELL_FLOOR, 0 },
+    { -1, 1, MT_MOON_CELL_FLOOR, 0 },
+    { 0, 1, MT_MOON_CELL_FLOOR, 0 },
+    { 1, 1, MT_MOON_CELL_FLOOR, 0 },
+};
+
 static const struct LadderKind sLadderKinds[] =
 {
     /* The foot: north of the door, the hole itself, south of an up-ladder. */
     [MT_MOON_LADDER_DOOR] = { sDoorCells,     ARRAY_COUNT(sDoorCells),     0, -1 },
     [MT_MOON_LADDER_DOWN] = { sHoleCells,     ARRAY_COUNT(sHoleCells),     0,  0 },
     [MT_MOON_LADDER_UP]   = { sUpLadderCells, ARRAY_COUNT(sUpLadderCells), 0,  1 },
+    [MT_MOON_LADDER_UP_IN_FLOOR] = { sUpLadderInFloorCells, ARRAY_COUNT(sUpLadderInFloorCells), 0, 1 },
 };
 
 s32 MtMoonGen_LadderDistance(const struct MtMoonLadder *a, const struct MtMoonLadder *b)
@@ -835,10 +858,11 @@ static void InitLadder(struct MtMoonLadder *ladder, const struct MtMoonFloorLadd
 /*
  * The core's proposal for a ladder that isn't fixed (rule 1 of the ladder
  * contract in mt_moon_gen_style.h). x is in [4, width - 5]. An up-ladder
- * goes on row 2, right under a 2-row top border, which is its north wall;
- * any other kind gets y in [4, height - 7]. Those margins leave room for a
- * 5 x 5 patch of open floor around the ladder inside a 2-cell border (3 at
- * the bottom).
+ * at the foot of a wall (MT_MOON_LADDER_UP) goes on row 2, right under a
+ * 2-row top border, which is its north wall; any other kind (B2F's up-ladders
+ * standing in open floor included) gets y in [4, height - 7]. Those margins
+ * leave room for a 5 x 5 patch of open floor around the ladder inside a
+ * 2-cell border (3 at the bottom).
  */
 static void ProposeLadderSpot(struct MtMoonLadder *ladder)
 {
@@ -852,8 +876,7 @@ static void ProposeLadderSpot(struct MtMoonLadder *ladder)
 /*
  * Propose positions for the ladders that aren't fixed: random spots,
  * redrawn until the two are MT_MOON_LADDER_MIN_DISTANCE apart. That usually
- * takes a few draws (two up-ladders, both on row 2, need 24 columns between
- * them: about 1 draw in 6). The fallback after 200 draws, which practically
+ * takes a draw or two. The fallback after 200 draws, which practically
  * never runs, puts free ladders in opposite corners, which are far enough
  * apart on every Mt. Moon floor (1F's door is fixed at the bottom middle).
  */
@@ -922,7 +945,8 @@ static s32 MarkWalkableFromEntrance(void)
     sCaveGrid[CELL_INDEX(sCave.exit.x, sCave.exit.y)] = MT_MOON_CELL_BLOCKED;
     /* Start where the player stands right after arriving, in effect: the
      * first floor cell of the entrance's footprint that isn't the ladder
-     * (north of the door, north-west of a hole, south of an up-ladder). */
+     * (north of the door, north-west of a hole or of a ladder standing in
+     * open floor, south of an up-ladder at the foot of a wall). */
     for (i = 0; i < kind->cellCount; i++)
     {
         if (IsFootprintFloor(&kind->cells[i]))
@@ -1354,13 +1378,27 @@ static bool8 CarveCorridorToEntrance(s32 x, s32 y)
     return found;
 }
 
-/* Make every floor cell of `ladder`'s footprint (apart from the ladder
- * itself) reachable from the entrance. */
+/*
+ * Make every floor cell of `ladder`'s footprint (apart from the ladder
+ * itself) reachable from the entrance.
+ *
+ * Each CarveCorridorToEntrance call starts with a flood fill over the whole
+ * floor, and B2F's ladders have 10 such cells each, so the usual case (the
+ * style already connected them all) is checked with a single flood fill
+ * first: on a B2F that is half floor, one fill per cell cost several frames
+ * of load time (test P9). Only a footprint that isn't connected yet is
+ * carved cell by cell.
+ */
 static bool8 ConnectFootprint(const struct MtMoonLadder *ladder)
 {
     const struct LadderKind *kind = &sLadderKinds[ladder->kind];
     s32 i;
+    s32 marked = MarkWalkableFromEntrance();
+    bool8 connected = IsFootprintVisited(ladder);
 
+    ClearWalkableMarks(marked);
+    if (connected)
+        return TRUE;
     for (i = 0; i < kind->cellCount; i++)
     {
         if (IsFootprintFloor(&kind->cells[i])
