@@ -380,6 +380,32 @@ ADDR.ITEM_MAX_ELIXIR                 = 37
 ADDR.gPlayerPartyCount               = 0x02024029
 
 -------------------------------------------------------------------------------
+-- FOLLOWER STATE
+-- sFollower is a static EWRAM_DATA struct in src/pokemon_follower.c. The
+-- key is named after the symbol, so the live-address pass at the bottom of
+-- this file replaces the number below with sFollower's address in
+-- pokefirered.elf (symbols.lua reads static symbols too); the number is only
+-- a fallback for when the ELF can't be read.
+-- Struct layout (12 bytes total):
+--   offset 0: bool8 active
+--   offset 1: bool8 spriteSpawned
+--   offset 2: u8 partySlot
+--   offset 3: u8 stuckFrames  (catch-up stuck counter)
+--   offset 4: u16 species
+--   offset 6: u8 graphicsId
+--   offset 7: u8 objEventId   <- FOLLOWER_OBJ_EVENT_ID_OFF
+--   offset 8: s16 prevX       (position before last catch-up move)
+--   offset 10: s16 prevY
+ADDR.sFollower                 = 0x0203f624
+ADDR.FOLLOWER_OBJ_EVENT_ID_OFF = 0x07
+
+-- ObjectEvent previousCoords offsets (layout mirrors currentCoords at 0x10/0x12).
+-- Used to write both coord fields atomically when repositioning the follower
+-- in tests, preventing the movement system from seeing a stale prev position.
+ADDR.OE_PREV_X = 0x14
+ADDR.OE_PREV_Y = 0x16
+
+-------------------------------------------------------------------------------
 -- PREFER LIVE ADDRESSES FROM THE BUILT ROM
 -------------------------------------------------------------------------------
 -- The numbers above were copied from one particular build. Any change to a
