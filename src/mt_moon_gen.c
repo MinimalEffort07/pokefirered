@@ -45,7 +45,9 @@
 #include "fieldmap.h"
 #include "overworld.h"
 #include "random.h"
+#include "event_data.h"
 #include "mt_moon_gen.h"
+#include "constants/vars.h"
 #include "constants/map_groups.h"
 #include "constants/maps.h"
 #include "constants/layouts.h"
@@ -919,6 +921,8 @@ void GenerateMtMoonCave(void)
     }
 }
 
-void RelocateMtMoonNPCs(void)
+void MtMoonGen_GenerateOnFreshEntry(void)
 {
+    VarSet(VAR_MT_MOON_MAP_SEED, Random());
+    GenerateMtMoonCave();
 }

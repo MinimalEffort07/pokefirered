@@ -188,7 +188,7 @@ void InitMap(void)
 {
     InitMapLayoutData(&gMapHeader);
     if (gMapHeader.mapLayoutId == LAYOUT_MT_MOON_1F || gMapHeader.mapLayoutId == LAYOUT_MT_MOON_B1F)
-        GenerateMtMoonCave();
+        MtMoonGen_GenerateOnFreshEntry();
     RunOnLoadMapScript();
 }
 

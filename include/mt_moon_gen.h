@@ -2,6 +2,6 @@
 #define GUARD_MT_MOON_GEN_H
 
 void GenerateMtMoonCave(void);
-void RelocateMtMoonNPCs(void);
+void MtMoonGen_GenerateOnFreshEntry(void);
 
 #endif // GUARD_MT_MOON_GEN_H
