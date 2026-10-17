@@ -19,8 +19,14 @@
 --      can be reached and is not a warp;
 --   3. for every hidden item and sign, the same: a reachable non-warp tile
 --      next to it;
---   4. every hidden item sits on a boulder, metatile 0x282 (as every
+--   4. every coordinate event's tile (a trigger tile, such as the one next
+--      to Super Nerd Miguel in B2F's fossil chamber) can itself be reached:
+--      a trigger only fires when the player steps onto it;
+--   5. every hidden item sits on a boulder, metatile 0x282 (as every
 --      vanilla Mt. Moon hidden item does).
+--
+-- Miguel and the two fossils are objects like any other, so rule 2 covers
+-- them too.
 -------------------------------------------------------------------------------
 
 -- Some tile in `tiles` is reachable (in dist) and not a warp.
@@ -62,6 +68,11 @@ return {
                 if not any_reachable(h, dist, h.facing_tiles(bg.x, bg.y, bg.x, bg.y), warp_tile) then
                     return false, string.format("%s: no reachable tile next to the %s at (%d,%d)", label,
                         bg.kind == h.BG_EVENT.BG_EVENT_HIDDEN_ITEM and "hidden item" or "sign", bg.x, bg.y)
+                end
+            end
+            for _, c in ipairs(snap.coord_events) do
+                if not any_reachable(h, dist, { { c.x, c.y } }, warp_tile) then
+                    return false, string.format("%s: the trigger tile (%d,%d) can't be reached", label, c.x, c.y)
                 end
             end
             return true
