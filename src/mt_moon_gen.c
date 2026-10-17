@@ -563,6 +563,97 @@ static void PutPlayerOnArrivalWarp(void)
     gSaveBlock1Ptr->pos.y = warp->y;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Continue safety net                                                       */
+/* ------------------------------------------------------------------------- */
+
+/* TRUE if a warp or an object (its template or a live one) is on the tile. */
+static bool8 IsTileTaken(s32 x, s32 y)
+{
+    s32 i;
+    const struct MapEvents *events = gMapHeader.events;
+
+    for (i = 0; i < events->warpCount; i++)
+        if (events->warps[i].x == x && events->warps[i].y == y)
+            return TRUE;
+    for (i = 0; i < events->objectEventCount; i++)
+        if (gSaveBlock1Ptr->objectEventTemplates[i].x == x && gSaveBlock1Ptr->objectEventTemplates[i].y == y)
+            return TRUE;
+    for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
+        if (gObjectEvents[i].active && !gObjectEvents[i].isPlayer
+            && gObjectEvents[i].currentCoords.x - MAP_OFFSET == x
+            && gObjectEvents[i].currentCoords.y - MAP_OFFSET == y)
+            return TRUE;
+    return FALSE;
+}
+
+/*
+ * After Continue rebuilds a floor, the player's saved tile should be floor
+ * the player can walk away from. It might not be: a save made before cave
+ * seeds existed (the seed var reads 0 there, so a different cave is built),
+ * or a future generator change that alters what a seed produces. In that
+ * case move the player to the nearest floor tile that is reachable on foot
+ * from the entrance and holds no warp or object. "Nearest" is by Manhattan
+ * distance (steps east-west plus steps north-south); ties go to the first
+ * tile in reading order, top row first.
+ *
+ * On Continue the player is drawn from the saved object events, which were
+ * copied into gObjectEvents when the save was loaded, so the player's
+ * object moves as well as SaveBlock1.pos (the map position the view is
+ * drawn around). Object coordinates include the 7-tile MAP_OFFSET margin.
+ */
+static void MovePlayerOntoReachableFloor(void)
+{
+    s32 px = gSaveBlock1Ptr->pos.x;
+    s32 py = gSaveBlock1Ptr->pos.y;
+    s32 x, y, i;
+    s32 bestX = -1, bestY = -1, bestDist = 0;
+
+    MarkReachableFrom(sCave.entranceX, sCave.entranceY);
+    if (MtMoonGen_GetCell(px, py) == MT_MOON_CELL_VISITED)
+    {
+        ClearVisited();
+        return;
+    }
+
+    for (y = 0; y < sCave.height; y++)
+    {
+        for (x = 0; x < sCave.width; x++)
+        {
+            s32 dist;
+
+            if (MtMoonGen_GetCell(x, y) != MT_MOON_CELL_VISITED || IsTileTaken(x, y))
+                continue;
+            dist = abs(x - px) + abs(y - py);
+            if (bestX < 0 || dist < bestDist)
+            {
+                bestX = x;
+                bestY = y;
+                bestDist = dist;
+            }
+        }
+    }
+    ClearVisited();
+    if (bestX < 0)
+        return;
+
+    gSaveBlock1Ptr->pos.x = bestX;
+    gSaveBlock1Ptr->pos.y = bestY;
+    for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
+    {
+        struct ObjectEvent *player = &gObjectEvents[i];
+
+        if (!player->active || !player->isPlayer)
+            continue;
+        player->currentCoords.x = bestX + MAP_OFFSET;
+        player->currentCoords.y = bestY + MAP_OFFSET;
+        player->previousCoords = player->currentCoords;
+        player->initialCoords = player->currentCoords;
+        player->currentElevation = MapGridGetElevationAt(bestX + MAP_OFFSET, bestY + MAP_OFFSET);
+        player->previousElevation = player->currentElevation;
+    }
+}
+
 bool8 MtMoonGen_IsGeneratedMap(void)
 {
     return GetCurrentFloor() != NULL;
@@ -586,6 +677,7 @@ void MtMoonGen_RegenerateFromSave(void)
 
     if (floor == NULL)
         return;
-    GenerateFloor(floor, VarGet(VAR_MT_MOON_MAP_SEED));
+    if (GenerateFloor(floor, VarGet(VAR_MT_MOON_MAP_SEED)))
+        MovePlayerOntoReachableFloor();
     FreeCaveGrid();
 }

@@ -202,13 +202,23 @@ void InitMap(void)
 void InitMapFromSavedGame(void)
 {
     InitMapLayoutData(&gMapHeader);
+    LoadSavedMapView();
     /* Rebuild a generated Mt. Moon floor from the seed stored in the save.
      * Without this, the map would revert to the original ROM layout while
      * the NPC positions and the player's saved coordinates still belong to
-     * the generated cave. */
+     * the generated cave.
+     *
+     * This runs AFTER LoadSavedMapView on purpose. The saved map view is a
+     * 15x14 patch of tiles around the player, copied from the map at save
+     * time. The rebuild redraws every tile of the floor, so the patch never
+     * survives: with the same seed it is identical anyway, and with a
+     * different cave (a save from before seeds existed) a stale patch would
+     * leave a block of the old cave around the player. The rebuild may also
+     * move the player (its safety net), and the patch is placed around the
+     * player's position, so pasting it afterwards would put it in the
+     * wrong place. */
     if (MtMoonGen_IsGeneratedMap())
         MtMoonGen_RegenerateFromSave();
-    LoadSavedMapView();
     RunOnLoadMapScript();
 }
 

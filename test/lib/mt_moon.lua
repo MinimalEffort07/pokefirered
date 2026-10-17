@@ -151,6 +151,12 @@ function mm.seed()
     return emu:read16(mm.sb1() + SB1_VARS + (mm.VAR_MT_MOON_MAP_SEED - VARS_START) * 2)
 end
 
+-- Overwrite the stored seed (e.g. 0, to imitate a save made before cave
+-- seeds existed). Takes effect at the next Continue.
+function mm.set_seed(value)
+    emu:write16(mm.sb1() + SB1_VARS + (mm.VAR_MT_MOON_MAP_SEED - VARS_START) * 2, value & 0xFFFF)
+end
+
 -- The game's global random number state. Random() advances it with
 -- state = state * 1103515245 + 24691 and returns the top 16 bits.
 function mm.rng()
@@ -516,20 +522,39 @@ local function inverse32(a)
     return x
 end
 
+-- How many Random() calls it took to get from `rng` to the roll of `seed`
+-- (the k above), or nil if not found within 4096 calls.
+function mm.rng_steps(rng, seed)
+    local state = rng & MASK32
+    for k = 1, 4096 do
+        state = lcg(state)
+        if (state >> 16) == seed then return k, state end
+    end
+    return nil
+end
+
 -- Returns a gRngValue different from `rng` that rolls the same `seed`, or nil
 -- if the seed can't be traced back to `rng` within 4096 Random() calls.
 function mm.rng_with_same_seed(rng, seed)
-    local state, k = rng & MASK32, 0
-    repeat
-        state = lcg(state)
-        k = k + 1
-    until (state >> 16) == seed or k > 4096
-    if k > 4096 then return nil end
+    local k, state = mm.rng_steps(rng, seed)
+    if k == nil then return nil end
     -- Bump state_k by +1, or by -1 if +1 would carry into the top 16 bits.
     local bump = ((state & 0xFFFF) == 0xFFFF) and MASK32 or 1
     local a_pow_k = 1
     for _ = 1, k do a_pow_k = mul32(a_pow_k, LCG_A) end
     return (rng + mul32(inverse32(a_pow_k), bump)) & MASK32
+end
+
+-- A gRngValue that rolls `seed` when the seed is the k-th Random() call
+-- after the write (measure k with rng_steps on an identical entry). Runs the
+-- generator backwards: state_{n-1} = (state_n - C) * A^-1 mod 2^32.
+function mm.rng_for_seed(k, seed)
+    local inv_a = inverse32(LCG_A)
+    local state = ((seed & 0xFFFF) << 16) | 0x1234
+    for _ = 1, k do
+        state = mul32((state - LCG_C) & MASK32, inv_a)
+    end
+    return state
 end
 
 -------------------------------------------------------------------------------
