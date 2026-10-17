@@ -50,14 +50,18 @@ local T = fw
 local VAR_MAP_SCENE_MT_MOON_B2F = mm.read_defines("include/constants/vars.h").VAR_MAP_SCENE_MT_MOON_B2F
 
 -- Random state written before the step that leads into each floor, per walk
--- direction. Until #26 lands, the generator can still put a trainer or an
--- item ball in the only passage between a floor's two ladders (defeated
--- trainers stay solid), which blocks the walk on that cave. These values
--- give caves where that doesn't happen. Override them to try others, e.g.
+-- direction. Override them to try others, e.g.
 --   MT_MOON_WALK_RNG=1F=0x1234,B2F=0x99 bash test/run_test.sh ...
+--
+-- The 1F values are a regression case. Both roll 1F cave seed 0xf34c (the
+-- two walks reach 1F after a different number of Random() calls, so they
+-- need different values for the same seed). Before every object's
+-- reachability was guaranteed (#26), that cave had a defeated trainer
+-- standing in the only gap between the door corridor and the down-ladder
+-- room, at (23,25), and both walks got stuck there.
 chain.RNG = {
-    east = { ["1F"] = 0x5EED0101, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
-    west = { ["1F"] = 0x5EED0201, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
+    east = { ["1F"] = 0x5EED0001, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
+    west = { ["1F"] = 0x0D88ECFA, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
 }
 for name, value in (os.getenv("MT_MOON_WALK_RNG") or ""):gmatch("([%w]+)=(0?x?%x+)") do
     chain.RNG.east[name] = tonumber(value)

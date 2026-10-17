@@ -281,6 +281,107 @@ function walk.to(tx, ty, opts)
     return result
 end
 
+-------------------------------------------------------------------------------
+-- Talking to things
+-------------------------------------------------------------------------------
+
+-- struct ObjectEvent (include/global.fieldmap.h): facingDirection is the low
+-- 4 bits of the byte at +0x18. Direction values from include/constants/
+-- global.h: DIR_SOUTH 1, DIR_NORTH 2, DIR_WEST 3, DIR_EAST 4.
+local OE_FACING = 0x18
+local DIR_VALUE = { DOWN = 1, UP = 2, LEFT = 3, RIGHT = 4 }
+
+-- struct PlayerAvatar (include/global.fieldmap.h): runningState is the byte
+-- at +2; NOT_MOVING (0) once the player has stood still with no direction
+-- held for a frame (CheckMovementInputNotOnBike in field_player_avatar.c).
+local PLAYER_RUNNING_STATE = 2
+local NOT_MOVING = 0
+
+local function player_facing()
+    for _, o in ipairs(mm.live_objects()) do
+        if o.is_player then
+            return emu:read8(sym.addr("gObjectEvents") + o.index * 0x24 + OE_FACING) & 0xF
+        end
+    end
+    return nil
+end
+
+-- Walk to the reachable tile next to (tx, ty) (north, south, west or east
+-- of it) that is closest to the player, then turn to face (tx, ty), ready
+-- to press A. (tx, ty) is usually solid: an object or a boulder. Returns a
+-- walk.to() result, with ok = false if no neighbour can be reached or the
+-- player doesn't end up facing the target.
+function walk.to_face(tx, ty, opts)
+    local px, py = mm.player_tile()
+    if px == nil then return { ok = false, steps = 0, replans = 0, why = "no player" } end
+    local objects = object_tiles()
+    local warps = {}
+    for _, w in ipairs(mm.read_warps()) do warps[mm.key(w.x, w.y)] = true end
+    local dist = mm.bfs(mm.read_grid(), px, py, function(x, y)
+        return objects[mm.key(x, y)] or warps[mm.key(x, y)]
+    end)
+    local best, best_d = nil, nil
+    for _, d in ipairs(DIRS) do
+        -- The player stands at target - d and faces along d.
+        local k = mm.key(tx - d.dx, ty - d.dy)
+        if dist[k] and (best_d == nil or dist[k] < best_d) then best, best_d = d, dist[k] end
+    end
+    if best == nil then
+        return { ok = false, steps = 0, replans = 0,
+                 why = string.format("no reachable tile next to (%d,%d)", tx, ty) }
+    end
+    local result = walk.to(tx - best.dx, ty - best.dy, opts)
+    if not result.ok then return result end
+    -- Turn. The game can still see the last step's direction as held on
+    -- the frame the walk ends, and then starts one more step that way (a
+    -- 16-frame walk in place if it is blocked), ignoring other input until
+    -- it ends. So first release every key and wait until the player has
+    -- been standing idle for a few frames (gPlayerAvatar.runningState back
+    -- to NOT_MOVING). Then a press turns the player in place within a frame
+    -- or two; the key is released as soon as they face the target, so they
+    -- never step onto it even when it is free floor.
+    fw.clear_all_keys()
+    local idle = 0
+    for _ = 1, 90 do
+        if walk.ready() and emu:read8(sym.addr("gPlayerAvatar") + PLAYER_RUNNING_STATE) == NOT_MOVING then
+            idle = idle + 1
+            if idle >= 3 then break end
+        else
+            idle = 0
+        end
+        fw.yield()
+    end
+    local idx = fw.KEY[best.key]
+    emu:addKey(idx)
+    for _ = 1, 30 do
+        fw.yield()
+        if player_facing() == DIR_VALUE[best.key] then break end
+    end
+    emu:clearKey(idx)
+    fw.wait_until(walk.ready, 60, "standing still after turning")
+    local facing = player_facing()
+    local px2, py2 = mm.player_tile()
+    if facing ~= DIR_VALUE[best.key] or px2 ~= tx - best.dx or py2 ~= ty - best.dy then
+        result.ok = false
+        result.why = string.format("not facing %s from (%d,%d) after turning: facing %s, player at (%d,%d)",
+            best.key, tx - best.dx, ty - best.dy, tostring(facing), px2 or -1, py2 or -1)
+    end
+    result.facing = best.key
+    return result
+end
+
+-- Press A (to talk, read, pick up) and keep pressing A to page through the
+-- messages that follow, until `done()` is true and the player has control
+-- again, or `timeout` frames pass. Returns true on success.
+function walk.press_a_until(done, timeout)
+    for _ = 1, math.floor((timeout or 900) / 16) do
+        fw.press("A")
+        fw.wait_frames(14)
+        if done() and walk.ready() then return true end
+    end
+    return false
+end
+
 -- Hold `key` (an arrow warp's direction) until the map changes. Returns
 -- true if it did within `timeout` frames.
 function walk.hold_into_warp(key, timeout)

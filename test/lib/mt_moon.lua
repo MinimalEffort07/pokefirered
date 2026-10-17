@@ -155,8 +155,9 @@ local OE_PREVIOUS   = 0x14  -- previousCoords
 --   +0x04 s16 x          +0x06 s16 y
 --   +0x08 u8 elevation   +0x09 u8 movementType
 --   +0x0A u16 with movementRangeX in bits 0-3 and movementRangeY in bits 4-7
+--   +0x0C u16 trainerType (0 = TRAINER_TYPE_NONE: not a trainer)
 --   +0x10 script pointer +0x14 u16 flagId (object hidden while the flag is set)
--- read_templates() below reads these offsets in this order.
+-- read_template() below reads these offsets in this order.
 local TEMPLATE_SIZE = 0x18
 
 -- struct MapHeader: mapLayout at +0, events at +4, mapLayoutId (u16) at +0x12.
@@ -241,14 +242,17 @@ end
 
 -- Reads `#define NAME value` constants from a header in the repo, so tests
 -- use the same numbers as the game instead of copying them.
--- Returns name -> number for every define whose value is a plain number.
+-- Returns name -> number for every define whose value is a plain number
+-- (optionally followed by a // or /* comment).
 function mm.read_defines(path)
     local defines = {}
     local f = io.open(project_dir .. path, "r")
     if f == nil then error("can't read " .. path) end
     for line in f:lines() do
-        local name, value = line:match("^#define%s+([%w_]+)%s+(0?x?%x+)%s*$")
-        if name then defines[name] = tonumber(value) end
+        local name, value, rest = line:match("^#define%s+([%w_]+)%s+(0?x?%x+)%s*(.*)$")
+        if name and (rest == "" or rest:match("^//") or rest:match("^/%*")) then
+            defines[name] = tonumber(value)
+        end
     end
     f:close()
     return defines
@@ -279,6 +283,33 @@ function mm.mark_mt_moon_trainers_defeated()
         end
     end
     return names
+end
+
+-- How many of item `item_id` (include/constants/items.h) the bag holds,
+-- over all its pockets. gBagPockets (src/item.c) is an array of
+-- NUM_BAG_POCKETS { struct ItemSlot *itemSlots; u8 capacity; } entries,
+-- 8 bytes each (the u8 is padded to 4 bytes). Each ItemSlot is
+-- { u16 itemId; u16 quantity; }, and the quantity is stored XORed with the
+-- low 16 bits of SaveBlock2.encryptionKey (offset 0xF20, include/global.h),
+-- a per-save number the game uses so cheat devices can't find item counts
+-- by searching memory for them.
+local NUM_BAG_POCKETS = 5
+local SB2_ENCRYPTION_KEY = 0xF20
+
+function mm.bag_quantity(item_id)
+    local pockets = sym.addr("gBagPockets")
+    local key = emu:read16(emu:read32(sym.addr("gSaveBlock2Ptr")) + SB2_ENCRYPTION_KEY)
+    local total = 0
+    for p = 0, NUM_BAG_POCKETS - 1 do
+        local slots = emu:read32(pockets + p * 8)
+        local capacity = emu:read8(pockets + p * 8 + 4)
+        for i = 0, capacity - 1 do
+            if emu:read16(slots + i * 4) == item_id then
+                total = total + (emu:read16(slots + i * 4 + 2) ~ key)
+            end
+        end
+    end
+    return total
 end
 
 -- The game's global random number state. Random() advances it with
@@ -369,11 +400,8 @@ function mm.read_warps()
     return warps
 end
 
--- The current map's background events (signs and hidden items).
-function mm.read_bg_events()
-    local events = map_events()
-    local count = emu:read8(events + 3)
-    local base = emu:read32(events + 16)
+-- `count` background events (signs and hidden items) starting at `base`.
+local function read_bg_event_array(base, count)
     local bgs = {}
     for i = 0, count - 1 do
         local a = base + i * BG_EVENT_SIZE
@@ -388,6 +416,30 @@ function mm.read_bg_events()
     return bgs
 end
 
+-- The current map's background events (signs and hidden items).
+function mm.read_bg_events()
+    local events = map_events()
+    return read_bg_event_array(emu:read32(events + 16), emu:read8(events + 3))
+end
+
+-- One struct ObjectEventTemplate at address `a` (layout above).
+local function read_template(a)
+    local ranges = emu:read16(a + 10)
+    return {
+        local_id = emu:read8(a + 0),
+        graphics_id = emu:read8(a + 1),
+        kind = emu:read8(a + 2),
+        x = s16(emu:read16(a + 4)),
+        y = s16(emu:read16(a + 6)),
+        elevation = emu:read8(a + 8),
+        movement_type = emu:read8(a + 9),
+        range_x = ranges & 0xF,
+        range_y = (ranges >> 4) & 0xF,
+        trainer_type = emu:read16(a + 0x0C),
+        flag = emu:read16(a + 0x14),
+    }
+end
+
 -- The object templates for the current map: where each trainer, NPC and item
 -- ball starts. They live in the save block, so they survive save/Continue.
 function mm.read_templates()
@@ -395,22 +447,100 @@ function mm.read_templates()
     local base = mm.sb1() + SB1_OBJECT_TEMPLATES
     local templates = {}
     for i = 0, count - 1 do
-        local a = base + i * TEMPLATE_SIZE
-        local ranges = emu:read16(a + 10)
-        templates[#templates + 1] = {
-            local_id = emu:read8(a + 0),
-            graphics_id = emu:read8(a + 1),
-            kind = emu:read8(a + 2),
-            x = s16(emu:read16(a + 4)),
-            y = s16(emu:read16(a + 6)),
-            elevation = emu:read8(a + 8),
-            movement_type = emu:read8(a + 9),
-            range_x = ranges & 0xF,
-            range_y = (ranges >> 4) & 0xF,
-            flag = emu:read16(a + 0x14),
-        }
+        templates[#templates + 1] = read_template(base + i * TEMPLATE_SIZE)
     end
     return templates
+end
+
+-- A map's events exactly as the ROM stores them: the vanilla map.json data,
+-- before the generator rewrites anything. Every map's header is reached
+-- through gMapGroups[group][num] (an array of header pointers per map
+-- group); the header's `events` (+4) points at struct MapEvents (layout
+-- above). Returns { objects = {...}, bg_events = {...} } in map.json order.
+function mm.rom_events(map)
+    local group_list = emu:read32(sym.addr("gMapGroups") + map.group * 4)
+    local header = emu:read32(group_list + map.num * 4)
+    local events = emu:read32(header + 4)
+    local objects = {}
+    local object_base = emu:read32(events + 4)
+    for i = 0, emu:read8(events + 0) - 1 do
+        objects[#objects + 1] = read_template(object_base + i * TEMPLATE_SIZE)
+    end
+    return {
+        objects = objects,
+        bg_events = read_bg_event_array(emu:read32(events + 16), emu:read8(events + 3)),
+    }
+end
+
+-------------------------------------------------------------------------------
+-- Where an object can be
+-------------------------------------------------------------------------------
+--
+-- Most Mt. Moon objects stand still. A few move around inside a box set by
+-- the template's movement range (the game refuses any step that would leave
+-- it: COLLISION_OUTSIDE_RANGE in src/event_object_movement.c):
+--
+--   wanderers (MOVEMENT_TYPE_WANDER_*, walkers, copiers) can be anywhere in
+--       [x - range_x, x + range_x] x [y - range_y, y + range_y];
+--   MOVEMENT_TYPE_WALK_SEQUENCE_LEFT_DOWN_RIGHT_UP (1F's Lass Miriam) walks
+--       west to x - range_x, south to y + range_y, east back to x and north
+--       back to y (MovementType_WalkSequenceLeftDownRightUp_Step1), so she
+--       stays in [x - range_x, x] x [y, y + range_y].
+--
+-- Reachability checks treat that whole box as solid: the object could be
+-- standing on any tile of it.
+
+mm.MOVEMENT = mm.read_defines("include/constants/event_object_movement.h")
+
+local MOVING_TYPES = {}
+for name, value in pairs(mm.MOVEMENT) do
+    if name:match("^MOVEMENT_TYPE_WANDER_") or name:match("^MOVEMENT_TYPE_WALK_UP_AND_DOWN")
+        or name:match("^MOVEMENT_TYPE_WALK_DOWN_AND_UP") or name:match("^MOVEMENT_TYPE_WALK_LEFT_AND_RIGHT")
+        or name:match("^MOVEMENT_TYPE_WALK_RIGHT_AND_LEFT") or name:match("^MOVEMENT_TYPE_WALK_SEQUENCE_")
+        or name:match("^MOVEMENT_TYPE_COPY_PLAYER") then
+        MOVING_TYPES[value] = true
+    end
+end
+
+-- The box of tiles object template `t` can stand on: x1, y1, x2, y2
+-- (inclusive). A standing object's box is its own tile.
+function mm.roaming_box(t)
+    local rx, ry = t.range_x, t.range_y
+    if t.movement_type == mm.MOVEMENT.MOVEMENT_TYPE_WALK_SEQUENCE_LEFT_DOWN_RIGHT_UP then
+        return t.x - rx, t.y, t.x, t.y + ry
+    elseif MOVING_TYPES[t.movement_type] then
+        return t.x - rx, t.y - ry, t.x + rx, t.y + ry
+    end
+    return t.x, t.y, t.x, t.y
+end
+
+-- Every tile any object of the snapshot could stand on, as a set of
+-- key(x, y): each object's tile, and each mover's whole box.
+function mm.object_tiles(snap)
+    local set = {}
+    for _, t in ipairs(snap.templates) do
+        local x1, y1, x2, y2 = mm.roaming_box(t)
+        for y = y1, y2 do
+            for x = x1, x2 do set[key(x, y)] = true end
+        end
+    end
+    return set
+end
+
+-- The tiles a player can stand on to face the box x1..x2, y1..y2: the
+-- tiles just outside it to the north, south, west and east (not the
+-- diagonal corners: you can't face anything diagonally).
+function mm.facing_tiles(x1, y1, x2, y2)
+    local tiles = {}
+    for x = x1, x2 do
+        tiles[#tiles + 1] = { x, y1 - 1 }
+        tiles[#tiles + 1] = { x, y2 + 1 }
+    end
+    for y = y1, y2 do
+        tiles[#tiles + 1] = { x1 - 1, y }
+        tiles[#tiles + 1] = { x2 + 1, y }
+    end
+    return tiles
 end
 
 -- Address of live object event `i` (0-15). `saved` = true reads the copy in
@@ -541,8 +671,10 @@ end
 
 -- Distance in steps from (sx, sy) to every tile reachable by walking N/S/E/W
 -- over walkable tiles. `blocked(x, y)` (optional) marks extra solid tiles,
--- such as tiles under objects. Returns dist[key(x, y)] = steps.
-function mm.bfs(grid, sx, sy, blocked)
+-- such as tiles under objects. `stop(x, y)` (optional) marks tiles that can
+-- be reached but not walked through, such as a warp: stepping onto a ladder
+-- leaves the map. Returns dist[key(x, y)] = steps.
+function mm.bfs(grid, sx, sy, blocked, stop)
     local dist = { [key(sx, sy)] = 0 }
     local queue, head = { { sx, sy } }, 1
     local steps = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
@@ -557,11 +689,35 @@ function mm.bfs(grid, sx, sy, blocked)
                 and mm.passable(grid.cells[k])
                 and not (blocked and blocked(nx, ny)) then
                 dist[k] = d + 1
-                queue[#queue + 1] = { nx, ny }
+                if not (stop and stop(nx, ny)) then
+                    queue[#queue + 1] = { nx, ny }
+                end
             end
         end
     end
     return dist
+end
+
+-- The floor's two active warps from a snapshot, as { entrance = warp,
+-- exit = warp } (see FLOORS).
+function mm.ladder_warps(floor, snap)
+    return {
+        entrance = snap.warps[floor.entrance.warp + 1],
+        exit = snap.warps[floor.exit.warp + 1],
+    }
+end
+
+-- Reachability as the player has it after arriving through warp `from`
+-- (one of mm.ladder_warps): the BFS distances from the arrival tile, where
+-- every tile an object could stand on is solid (mm.object_tiles) and the
+-- floor's other warp `to` can be reached but not walked through. Returns
+-- dist (see mm.bfs) and the object tile set.
+function mm.reach_from_warp(snap, from, to)
+    local objects = mm.object_tiles(snap)
+    local dist = mm.bfs(snap.grid, from.x, from.y,
+        function(x, y) return objects[key(x, y)] end,
+        function(x, y) return x == to.x and y == to.y end)
+    return dist, objects
 end
 
 -- The warp the player arrives through on `floor`, from a snapshot.
