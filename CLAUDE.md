@@ -68,7 +68,7 @@ Finer-grained cleans: `clean-tools`, `clean-generated` (headers generated from J
 
 ### GBA Hardware Context
 
-This is bare-metal GBA code — no OS, no standard library (only `<string.h>` available). All code runs on ARM7TDMI at 16.78 MHz with 256KB IWRAM + 32KB EWRAM. Graphics use tile-based backgrounds and hardware sprites (OAM). I/O is memory-mapped registers.
+This is bare-metal GBA code — no OS, no standard library (only `<string.h>` available). All code runs on ARM7TDMI at 16.78 MHz with 32KB IWRAM + 256KB EWRAM. Graphics use tile-based backgrounds and hardware sprites (OAM). I/O is memory-mapped registers.
 
 ### Header Hierarchy
 
