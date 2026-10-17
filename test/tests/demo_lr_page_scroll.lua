@@ -43,11 +43,13 @@ local function bag_open()
     return fw.read8(ADDR.gBagMenuState + BAG_OFF_BAG_OPEN) ~= 0
 end
 
--- gTasks scanner: find Task_BagMenu_HandleInput in the task table.
--- Address is ROM-build-specific; cross-check with pokefirered.map.
+-- gTasks scanner: find Task_BagMenu_HandleInput in the task table. Its
+-- address moves between builds, so it is looked up in pokefirered.elf (see
+-- test/lib/symbols.lua); + 1 is the Thumb bit stored in function pointers.
+local symbols         = dofile(project_dir .. "test/lib/symbols.lua")
 local GTASKS_ADDR     = 0x030050a0
 local TASK_SIZE_B     = 40
-local BAG_INPUT_THUMB = 0x08109405  -- Task_BagMenu_HandleInput | 1 (Thumb bit)
+local BAG_INPUT_THUMB = (symbols.find("Task_BagMenu_HandleInput") or 0x08109404) | 1
 
 local function bag_input_handler_active()
     for i = 0, 15 do

@@ -44,12 +44,15 @@ if [ "$CURRENT_GEOM" != "${VIRT_W}x${VIRT_H}" ]; then
     pkill -x Xvfb 2>/dev/null || true
     pkill -x openbox 2>/dev/null || true
     sleep 1
-    Xvfb :1 -screen 0 "${VIRT_W}x${VIRT_H}x24" &
+    # Xvfb and openbox outlive this script. Detach their stdout/stderr so a
+    # caller piping our output (e.g. `record_test.sh ... | tail`) isn't held
+    # open forever by these background processes inheriting the pipe.
+    Xvfb :1 -screen 0 "${VIRT_W}x${VIRT_H}x24" > /dev/null 2>&1 &
     sleep 1
 fi
 
 if ! DISPLAY=:1 pgrep -x openbox > /dev/null 2>&1; then
-    DISPLAY=:1 openbox &
+    DISPLAY=:1 openbox > /dev/null 2>&1 &
     sleep 1
 fi
 
@@ -135,7 +138,12 @@ ffmpeg -f x11grab -r 30 -s "${VIRT_W}x${VIRT_H}" -i :1 \
 FFMPEG_PID=$!
 
 # Step 2: launch mGBA with the private config dir.
-DISPLAY=:1 XDG_CONFIG_HOME="$RECORDING_XDG" LD_LIBRARY_PATH="$MGBA_BUILD" \
+#
+# QT_QPA_PLATFORM=xcb forces Qt onto X11. Under WSL, WSLg exports
+# WAYLAND_DISPLAY (e.g. wayland-0), and Qt prefers Wayland when it is set, so
+# without this the mGBA window opens on the WSLg desktop instead of Xvfb's
+# DISPLAY=:1 and ffmpeg's x11grab records a black screen.
+DISPLAY=:1 QT_QPA_PLATFORM=xcb XDG_CONFIG_HOME="$RECORDING_XDG" LD_LIBRARY_PATH="$MGBA_BUILD" \
     "$MGBA_BUILD/qt/mgba-qt" "$ROM" --script "$TEST_SCRIPT" \
     > /tmp/mgba-gui.log 2>&1 &
 MGBA_PID=$!

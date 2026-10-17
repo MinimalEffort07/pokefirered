@@ -85,7 +85,18 @@
 // Used by Quest Log.
 #define VAR_QUEST_LOG_MON_COUNTS           0x4027
 #define VAR_WONDER_NEWS_STEP_COUNTER       0x4028
-#define VAR_0x4029                         0x4029
+
+/*
+ * Seed of the current Mt. Moon visit's cave (custom; see src/mt_moon_gen.c).
+ * Mt. Moon's floors are generated, and the whole cave is a function of this
+ * 16-bit number. Walking into a floor rolls a new value from Random();
+ * Continue rebuilds the cave from the stored value, so the player loads into
+ * the cave they saved in. It is saved with the other game vars, which is why
+ * a seed is stored rather than the cave itself (a floor's grid is ~480
+ * bytes, and growing the save structs would break existing saves).
+ * This var was unused in vanilla FireRed (it was VAR_0x4029).
+ */
+#define VAR_MT_MOON_MAP_SEED               0x4029
 #define VAR_0x402A                         0x402A
 #define VAR_0x402B                         0x402B
 #define VAR_0x402C                         0x402C

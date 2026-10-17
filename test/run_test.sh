@@ -47,8 +47,32 @@ TEST_SCRIPT="${1:-$PROJECT_DIR/test/tests/test_player_sprite.lua}"
 RESULTS_FILE="/tmp/mgba-test-results.json"
 EXITCODE_FILE="/tmp/mgba-test-exitcode"
 
+# Longest a test may run, in seconds. Most tests finish in under 15 s; long
+# sweeps (e.g. the Mt. Moon property test) raise it:
+#   MGBA_TEST_TIMEOUT=900 bash test/run_test.sh test/tests/<long_test>.lua
+TIMEOUT_SECONDS="${MGBA_TEST_TIMEOUT:-60}"
+
 # Clean up previous test results so we don't accidentally read stale data.
 rm -f "$RESULTS_FILE" "$EXITCODE_FILE" /tmp/mgba-test-screenshot.png
+
+# mGBA keeps the game's save memory in pokefirered.sav next to the ROM. A test
+# that saves in-game (START > SAVE) writes that file, and a valid save makes the
+# next test boot to CONTINUE instead of NEW GAME, which breaks every test that
+# starts a new game. So each run starts without a .sav and leaves none behind:
+# an existing one (e.g. the user's own) is moved aside and put back on exit.
+ROM_SAV="${ROM%.gba}.sav"
+SAV_BACKUP=""
+if [ -f "$ROM_SAV" ]; then
+    SAV_BACKUP="$(mktemp --suffix=.sav)"
+    mv "$ROM_SAV" "$SAV_BACKUP"
+fi
+restore_save() {
+    rm -f "$ROM_SAV"
+    if [ -n "$SAV_BACKUP" ] && [ -f "$SAV_BACKUP" ]; then
+        mv "$SAV_BACKUP" "$ROM_SAV"
+    fi
+}
+trap restore_save EXIT
 
 # --- Prerequisite checks ---
 
@@ -88,10 +112,11 @@ echo ""
 # from grep onward is also line-buffered.
 #
 # timeout prevents runaway tests from hanging forever. The Seel test
-# takes about 10 seconds in headless mode. 60 seconds is a generous limit.
+# takes about 10 seconds in headless mode; the default 60 seconds is a
+# generous limit (override with MGBA_TEST_TIMEOUT, see above).
 cd "$PROJECT_DIR"
 set +e
-stdbuf -oL -eL timeout 60 "$MGBA_HEADLESS" "$ROM" --script "$TEST_SCRIPT" 2>&1 \
+stdbuf -oL -eL timeout "$TIMEOUT_SECONDS" "$MGBA_HEADLESS" "$ROM" --script "$TEST_SCRIPT" 2>&1 \
     | grep --line-buffered -E "^Scripting:"
 MGBA_EXIT=${PIPESTATUS[0]}
 set -e
@@ -104,7 +129,7 @@ echo ""
 # If the file doesn't exist, the test crashed or timed out before finishing.
 if [ ! -f "$RESULTS_FILE" ]; then
     if [ "$MGBA_EXIT" -eq 124 ]; then
-        echo "ERROR: Test timed out after 60 seconds"
+        echo "ERROR: Test timed out after $TIMEOUT_SECONDS seconds"
     else
         echo "ERROR: Test did not produce results (mGBA exit code: $MGBA_EXIT)"
     fi

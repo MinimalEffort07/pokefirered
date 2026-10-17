@@ -4,9 +4,9 @@
 -- After the programmatic warp into Mt Moon 1F, the player lands at the
 -- bedroom's stale OE coords (13,13) which is INSIDE a wall of the new
 -- cave -- explains why hold() walks did nothing in earlier captures. This
--- script reads sExitX/sExitY out of mt_moon_gen.c's .bss (known addresses
--- from pokefirered.map: sExitX=0x030028e8, sExitY=0x030028ec -- 4 bytes
--- each), writes the player's OE coords there so they're standing on the
+-- script reads the cave's entrance/exit out of mt_moon_gen.c's sCave
+-- (address looked up in pokefirered.elf), writes the player's OE coords
+-- there so they're standing on the
 -- exit ladder (which the procgen guarantees is reachable floor), THEN
 -- screenshots and walks.
 -------------------------------------------------------------------------------
@@ -22,12 +22,15 @@ local warp = dofile(project_dir .. "test/lib/warp.lua")
 local MTM_GROUP, MTM_NUM = 1, 1
 local MAP_OFFSET = 7
 
--- mt_moon_gen.c .bss layout (from nm on build/firered/src/mt_moon_gen.o
--- with section base 0x030028e0 per pokefirered.map):
-local S_ENTRANCE_X = 0x030028e0
-local S_ENTRANCE_Y = 0x030028e4
-local S_EXIT_X     = 0x030028e8
-local S_EXIT_Y     = 0x030028ec
+-- mt_moon_gen.c keeps the floor being generated in `static struct
+-- MtMoonCave sCave` (include/mt_moon_gen_style.h): s16 width, height,
+-- entranceX, entranceY, exitX, exitY. Its address is looked up by name.
+local symbols = dofile(project_dir .. "test/lib/symbols.lua")
+local S_CAVE = symbols.addr("sCave")
+local S_ENTRANCE_X = S_CAVE + 4
+local S_ENTRANCE_Y = S_CAVE + 6
+local S_EXIT_X     = S_CAVE + 8
+local S_EXIT_Y     = S_CAVE + 10
 
 local function player_pos()
     local oeid = fw.read8(ADDR.gPlayerAvatar + ADDR.PA_OBJECT_EVENT_ID)
@@ -71,8 +74,8 @@ fw.run(function()
     if not ok then fw.finish() return end
     fw.wait_frames(60)
 
-    local ex = fw.read32(S_ENTRANCE_X)
-    local ey = fw.read32(S_ENTRANCE_Y)
+    local ex = fw.read16(S_ENTRANCE_X)
+    local ey = fw.read16(S_ENTRANCE_Y)
     fw.log(string.format("procgen entrance at grid(%d,%d)", ex, ey))
 
     -- Patch SaveBlock1.pos to the entrance and re-trigger CB2_LoadMap.
@@ -91,8 +94,8 @@ fw.run(function()
 
     -- Re-read entrance: procgen regenerates so sEntranceX/Y could shift
     -- in future if the hardcoded values change; use the fresh ones.
-    ex = fw.read32(S_ENTRANCE_X)
-    ey = fw.read32(S_ENTRANCE_Y)
+    ex = fw.read16(S_ENTRANCE_X)
+    ey = fw.read16(S_ENTRANCE_Y)
     set_player_pos(ex, ey)
     fw.wait_frames(30)
 
