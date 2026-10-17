@@ -6,7 +6,7 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
 - **Real-Time 4-Player Multiplayer** — Multi-player position sync via GBA Serial I/O, with remote player sprites on shared maps.
 
-- **Procedurally Generated Mt. Moon** — Cellular automata cave generation with guaranteed walkable paths.
+- **Procedurally Generated Mt. Moon** — Cellular automata cave generation with guaranteed walkable paths. Every visit rolls a new cave seed, stored in the save, and the whole cave is built from that seed alone, so a cave survives save and reload: Continue puts you back in the same cave, on the same tile, with every trainer and item where you left them. If a save's tile isn't walkable in the rebuilt cave (for example a save made before seeds existed), you are moved to the nearest reachable floor.
 
   ![Procedurally Generated Mt. Moon](gifs/procedurallyGenerated.gif)
 

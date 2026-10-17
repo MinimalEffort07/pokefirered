@@ -36,13 +36,17 @@
  *
  * GENERATION STEPS (GenerateFloor)
  *   1. Seed the private random generator.
- *   2. Clear the grid to all wall and let the floor's style carve the shape.
+ *   2. Borrow an all-wall grid the size of the floor's layout and let the
+ *      floor's style carve the shape.
  *   3. Draw every map cell with the style's tile picker, then stamp the
  *      entrance doorway and the exit ladder.
  *   4. Rewrite the floor's warp table: the arrival warp sits on the entrance
  *      tile, the exit warp on the ladder; every other vanilla warp is parked
  *      at (0,0), a solid tile nobody can stand on.
  *   5. Place the floor's NPCs and item balls on open floor.
+ * Then, on a fresh entry, the player is put on the generated arrival warp
+ * (PutPlayerOnArrivalWarp); on Continue, the safety net makes sure the
+ * player stands on reachable floor (MovePlayerOntoReachableFloor).
  *
  * GBA CONTEXT
  *
