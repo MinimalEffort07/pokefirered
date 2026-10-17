@@ -62,19 +62,21 @@
  * JUNCTIONS
  *
  * Where a lower room's north wall ends against floor on its EAST side,
- * vanilla B1F covers the floor cells beside the wall with rubble (at
- * (41,31)-(41,33), where a corridor comes down beside the bottom room): the
- * pairs CAP|RUBBLE and FACE|RUBBLE exist in vanilla. The mirror image (a
- * wall ending against floor on its WEST side) only exists in vanilla behind
- * a patch of sand with special sand-wall tiles, which this style doesn't
- * draw. So:
+ * vanilla B1F covers the floor cells beside the wall with rubble: the
+ * corridor coming down at x = 41-44 meets the bottom room's wall (rows
+ * 32-33), and (41,32) and (41,33) are rubble (with one more above, at
+ * (41,31)). So the pairs CAP|RUBBLE and FACE|RUBBLE exist in vanilla.
+ * The mirror image (a wall ending against floor on its WEST side) only
+ * exists in vanilla behind a patch of sand with special sand-wall tiles,
+ * which this style doesn't draw. So:
  *
  *   going east across connected floor, the top of the floor may rise (by 2
  *   rows or more, because a 1-row step would put a CAP beside a FACE), but
  *   never drop.
  *
- * The rubble is solid. It is stamped onto the grid (MtMoonGen_StampTile), so
- * the core treats those 2 cells as obstacles, like a boulder.
+ * This style puts rubble on the 2 floor cells beside the wall's 2 rows. The
+ * rubble is solid. It is stamped onto the grid (MtMoonGen_StampTile), so the
+ * core treats those cells as obstacles, like a boulder.
  *
  * BUILDING THE SHAPE (BuildB1FShape)
  *
@@ -220,36 +222,58 @@ static const u8 sSouthOk[ROLE_COUNT] =
  * boulders and this style's rubble count as floor, see the style header). */
 #define FLOOR_AT(row, x) ((row)[x] != MT_MOON_CELL_WALL)
 
-/* TRUE if cell x of `row` is part of a north wall (FACE or CAP): a wall
- * cell with floor 1 or 2 cells below it. */
-#define IS_WALL_ROW(row, below, below2, x) \
-    (!FLOOR_AT(row, x) && (FLOOR_AT(below, x) || FLOOR_AT(below2, x)))
-
 /*
- * The role of cell x, given its row and the two rows below it (rows from
- * MtMoonGen_GetRow, which reads past the grid's edges as wall, and past the
- * bottom frame row as the all-wall top frame row).
+ * A cell's role depends on the cell, the two cells below it and the cell
+ * west of it, so the code reads three grid rows at a time: row y and the
+ * two rows below it, as pointers from MtMoonGen_GetRow (row[x] is cell
+ * (x, y); x may be -1 or width, the grid's frame of wall cells).
  */
-static u8 RoleAt(const u8 *row, const u8 *below, const u8 *below2, s32 x)
+struct RowWindow
 {
-    if (FLOOR_AT(row, x))
-        return IS_WALL_ROW(row, below, below2, x - 1) ? ROLE_RUBBLE : ROLE_FLOOR;
-    if (FLOOR_AT(below, x))
+    const u8 *row;
+    const u8 *below;
+    const u8 *below2;
+};
+
+/* Point `rows` at row y (0 to height - 1) and the two rows below it. Below
+ * the grid's last row comes its frame row, all wall, and MtMoonGen_GetRow
+ * may read no further, so both lower rows stop there. */
+static void ReadRows(const struct MtMoonCave *cave, s32 y, struct RowWindow *rows)
+{
+    rows->row = MtMoonGen_GetRow(y);
+    rows->below = MtMoonGen_GetRow(min(y + 1, cave->height));
+    rows->below2 = MtMoonGen_GetRow(min(y + 2, cave->height));
+}
+
+/* TRUE if cell x of the window's row is part of a north wall (FACE or
+ * CAP): a wall cell with floor 1 or 2 cells below it. */
+#define IS_NORTH_WALL(rows, x) \
+    (!FLOOR_AT((rows)->row, x) && (FLOOR_AT((rows)->below, x) || FLOOR_AT((rows)->below2, x)))
+
+/* The role of cell x of the window's row. */
+static u8 RoleAt(const struct RowWindow *rows, s32 x)
+{
+    if (FLOOR_AT(rows->row, x))
+        return IS_NORTH_WALL(rows, x - 1) ? ROLE_RUBBLE : ROLE_FLOOR;
+    if (FLOOR_AT(rows->below, x))
         return ROLE_FACE;
-    if (FLOOR_AT(below2, x))
+    if (FLOOR_AT(rows->below2, x))
         return ROLE_CAP;
     return ROLE_VOID;
 }
 
-static u8 GetRole(s32 x, s32 y)
+static u8 GetRole(const struct MtMoonCave *cave, s32 x, s32 y)
 {
-    return RoleAt(MtMoonGen_GetRow(y), MtMoonGen_GetRow(y + 1), MtMoonGen_GetRow(y + 2), x);
+    struct RowWindow rows;
+
+    ReadRows(cave, y, &rows);
+    return RoleAt(&rows, x);
 }
 
 /* TRUE for a floor cell that is drawn as plain floor (not rubble). */
-static bool8 IsPlainFloor(s32 x, s32 y)
+static bool8 IsPlainFloor(const struct MtMoonCave *cave, s32 x, s32 y)
 {
-    return GetRole(x, y) == ROLE_FLOOR;
+    return GetRole(cave, x, y) == ROLE_FLOOR;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -264,7 +288,8 @@ static bool8 IsPlainFloor(s32 x, s32 y)
 #define MAX_X(cave) ((cave)->width - 3)
 #define MAX_Y(cave) ((cave)->height - 4)
 
-/* The widest layout IsDrawable() can check (one row of roles per column). */
+/* The widest map IsDrawable() can check: it keeps the roles of two rows,
+ * one byte per column, on the stack. */
 #define MAX_WIDTH 64
 
 /*
@@ -284,14 +309,13 @@ static bool8 IsDrawable(const struct MtMoonCave *cave)
         return FALSE;
     for (y = 0; y < cave->height; y++)
     {
-        const u8 *row = MtMoonGen_GetRow(y);
-        const u8 *below = MtMoonGen_GetRow(y + 1);
-        const u8 *below2 = MtMoonGen_GetRow(y + 2);
+        struct RowWindow rows;
         bool8 inRows = (y >= MIN_Y && y <= MAX_Y(cave));
 
+        ReadRows(cave, y, &rows);
         for (x = 0; x < cave->width; x++)
         {
-            u8 role = RoleAt(row, below, below2, x);
+            u8 role = RoleAt(&rows, x);
 
             roles[x] = role;
             if ((role == ROLE_FLOOR || role == ROLE_RUBBLE)
@@ -344,15 +368,23 @@ struct Layout
     s16 floorCount;        /* floor cells in all rects (they never overlap) */
 };
 
-/* Growth: how many link attempts per layout, the floor area it aims for
- * (a random target in [GROW_TARGET, GROW_TARGET + GROW_TARGET_SPAN)) and the
- * least it must reach. B1F has 49 x 40 = 1960 cells; 330 floor cells less
- * the rubble and the 6 boulders is still above test P6's 15% (294 walkable
- * cells), and the largest layouts stay under its 30%. */
+/*
+ * Growth: how many link attempts per layout, the floor area it aims for
+ * (a random target in [GROW_TARGET, GROW_TARGET + GROW_TARGET_SPAN)), and
+ * the least and most floor a layout may have. They keep the walkable share
+ * of B1F's 49 x 40 = 1960 cells inside test P6's 15-30% (294-588 cells):
+ *   - at least 340 floor cells, of which at most 36 end up solid: 6
+ *     boulders and the rubble, 2 cells per link at most, with at most 15
+ *     links (MAX_RECTS). So at least 304 are walkable;
+ *   - at most 580 floor cells (a link that would pass that isn't added),
+ *     and ladders count as walkable, so at most 580 are.
+ * The prototype of this style averaged about 20% walkable (vanilla: 16%).
+ */
 #define GROW_TRIES        200
-#define GROW_TARGET       330
+#define GROW_TARGET       340
 #define GROW_TARGET_SPAN  150
-#define MIN_FLOOR_CELLS   330
+#define MIN_FLOOR_CELLS   340
+#define MAX_FLOOR_CELLS   580
 
 /* How often a link starts from the newest room rather than a random one
  * (percent): about half, so the cave strings out into chains of rooms
@@ -405,7 +437,7 @@ static bool8 RectsTouch(const struct Rect *a, const struct Rect *b)
 }
 
 /* TRUE if `r` is inside the bounds and touches no rectangle of the layout
- * except number `parent` (which the link joins on purpose). */
+ * except number `parent` (-1 for none), which the link joins on purpose. */
 static bool8 FitsLayout(const struct MtMoonCave *cave, const struct Layout *layout, const struct Rect *r, s32 parent)
 {
     s32 i;
@@ -463,11 +495,11 @@ static bool8 MakeLink(u8 kind, const struct Rect *p, struct Rect *corridor, stru
          * and a corridor 2-3 rows tall level with the room's top that
          * meets P within P's rows. */
         height = RandomBetween(2, 3);
-        drop = MtMoonGen_RandomBelow(ph - height + 2);
+        if (height > ph)
+            return FALSE;
+        drop = MtMoonGen_RandomBelow(ph - height + 1);
         if (drop == 1)
             drop = 0;
-        if (drop + height > ph)
-            return FALSE;
         length = RandomBetween(2, 7);
         roomW = RandomBetween(4, 11);
         roomH = RandomBetween(max(3, height), height + 3);
@@ -475,10 +507,11 @@ static bool8 MakeLink(u8 kind, const struct Rect *p, struct Rect *corridor, stru
         SetRect(room, p->x1 - length - roomW, p->y1 + drop, p->x1 - length - 1, p->y1 + drop + roomH - 1);
         return TRUE;
     case LINK_DOWN:
-        /* A corridor 3-4 columns wide anywhere under P, going down 4-9
-         * rows below P's bottom (at least 4, so the room's wall has a row
-         * of void between it and P), then a room hanging west from the
-         * corridor's foot, flush with its east side. */
+        /* A corridor 3-4 columns wide anywhere under P, then a room
+         * hanging west from the corridor's foot, flush with its east side.
+         * The room's top is 4-9 rows below P's bottom (so the corridor is
+         * 3-8 rows long): at least 4, so a row of void separates the
+         * room's wall from P. */
         width = RandomBetween(3, 4);
         if (width > pw)
             return FALSE;
@@ -491,9 +524,10 @@ static bool8 MakeLink(u8 kind, const struct Rect *p, struct Rect *corridor, stru
         SetRect(corridor, c1, p->y2 + 1, c2, p->y2 + depth - 1);
         return TRUE;
     case LINK_UP:
-        /* A corridor 3-4 columns wide at P's east end, going up 4-9 rows
-         * above P's top, into a room above that spans it. P keeps at
-         * least 2 columns west of the corridor. */
+        /* A corridor 3-4 columns wide at P's east end, going up into a
+         * room above that spans it. The room's bottom is 4-9 rows above
+         * P's top (so the corridor is 3-8 rows long). P keeps at least 2
+         * columns west of the corridor. */
         width = RandomBetween(3, 4);
         if (width > pw - 2)
             return FALSE;
@@ -543,13 +577,22 @@ static bool8 TryLink(const struct MtMoonCave *cave, struct Layout *layout)
     }
     if (!MakeLink(kind, &layout->rects[parent], &corridor, &room))
         return FALSE;
-    /* The corridor and the room touch each other and the parent on
-     * purpose; the link's geometry makes those contacts drawable. */
-    if (!FitsLayout(cave, layout, &corridor, parent) || !FitsLayout(cave, layout, &room, parent))
+    /* The corridor touches the parent (and the room) on purpose; the link's
+     * geometry makes those contacts drawable. The room keeps clear of
+     * everything, the parent included. */
+    if (!FitsLayout(cave, layout, &corridor, parent) || !FitsLayout(cave, layout, &room, -1)
+        || layout->floorCount + RectArea(&corridor) + RectArea(&room) > MAX_FLOOR_CELLS)
         return FALSE;
     AddRect(layout, &corridor, FALSE);
     AddRect(layout, &room, TRUE);
     return TRUE;
+}
+
+static void ClearLayout(struct Layout *layout)
+{
+    layout->rectCount = 0;
+    layout->roomCount = 0;
+    layout->floorCount = 0;
 }
 
 /* Grow a random layout from a first room on the top row. */
@@ -562,9 +605,7 @@ static void GrowLayout(const struct MtMoonCave *cave, struct Layout *layout)
     s32 target = GROW_TARGET + MtMoonGen_RandomBelow(GROW_TARGET_SPAN);
     s32 tries;
 
-    layout->rectCount = 0;
-    layout->roomCount = 0;
-    layout->floorCount = 0;
+    ClearLayout(layout);
     SetRect(&first, x, MIN_Y, x + width - 1, MIN_Y + height - 1);
     AddRect(layout, &first, TRUE);
     for (tries = 0; tries < GROW_TRIES && layout->floorCount < target; tries++)
@@ -591,9 +632,7 @@ static void UseFallbackLayout(struct Layout *layout)
 {
     s32 i;
 
-    layout->rectCount = 0;
-    layout->roomCount = 0;
-    layout->floorCount = 0;
+    ClearLayout(layout);
     for (i = 0; i < ARRAY_COUNT(sFallbackLayout); i++)
         AddRect(layout, &sFallbackLayout[i], FALSE);
 }
@@ -627,7 +666,7 @@ static void CarveLayout(const struct Layout *layout, u8 cell)
  * the ladder cuts nothing off: the player can't walk through a ladder, and
  * its neighbours still meet below it.
  */
-static bool8 IsUpLadderSpot(s32 x, s32 y)
+static bool8 IsUpLadderSpot(const struct MtMoonCave *cave, s32 x, s32 y)
 {
     const u8 *above = MtMoonGen_GetRow(y - 1);
     const u8 *row = MtMoonGen_GetRow(y);
@@ -641,7 +680,7 @@ static bool8 IsUpLadderSpot(s32 x, s32 y)
         return FALSE;
     /* All six cells are floor, so only the west column can be rubble (a
      * cell is rubble when its west neighbour is wall). */
-    return IsPlainFloor(x - 1, y) && IsPlainFloor(x - 1, y + 1);
+    return IsPlainFloor(cave, x - 1, y) && IsPlainFloor(cave, x - 1, y + 1);
 }
 
 /*
@@ -650,20 +689,20 @@ static bool8 IsUpLadderSpot(s32 x, s32 y)
  * a hole in open floor), and for a hidden item's boulder (the core stamps
  * those into open floor only).
  */
-static bool8 IsOpenSpot(s32 x, s32 y)
+static bool8 IsOpenSpot(const struct MtMoonCave *cave, s32 x, s32 y)
 {
     if (!MtMoonGen_IsFloor(x, y) || MtMoonGen_GetFloorMask(x, y) != 0xFF)
         return FALSE;
     /* As above, only the west column of the 3 x 3 can be rubble. */
-    return IsPlainFloor(x - 1, y - 1) && IsPlainFloor(x - 1, y) && IsPlainFloor(x - 1, y + 1);
+    return IsPlainFloor(cave, x - 1, y - 1) && IsPlainFloor(cave, x - 1, y) && IsPlainFloor(cave, x - 1, y + 1);
 }
 
-static bool8 IsLadderSpot(const struct MtMoonLadder *ladder, s32 x, s32 y)
+static bool8 IsLadderSpot(const struct MtMoonCave *cave, const struct MtMoonLadder *ladder, s32 x, s32 y)
 {
     if (ladder->kind == MT_MOON_LADDER_UP)
-        return IsUpLadderSpot(x, y);
+        return IsUpLadderSpot(cave, x, y);
     if (ladder->kind == MT_MOON_LADDER_DOWN)
-        return IsOpenSpot(x, y);
+        return IsOpenSpot(cave, x, y);
     return FALSE; /* B1F has no door */
 }
 
@@ -684,7 +723,7 @@ static bool8 PlaceLadder(const struct MtMoonCave *cave, struct MtMoonLadder *lad
     {
         for (x = MIN_X; x <= MAX_X(cave); x++)
         {
-            if (!IsLadderSpot(ladder, x, y))
+            if (!IsLadderSpot(cave, ladder, x, y))
                 continue;
             spot.x = x;
             spot.y = y;
@@ -701,6 +740,9 @@ static bool8 PlaceLadder(const struct MtMoonCave *cave, struct MtMoonLadder *lad
     return found > 0;
 }
 
+/* How many entrance spots PlaceLadders tries before giving up on a shape. */
+#define ENTRANCE_TRIES 4
+
 /*
  * Put both ladders on the shape, replacing the core's proposals (which
  * assume nothing about the shape): the entrance first, then the exit far
@@ -711,7 +753,7 @@ static bool8 PlaceLadders(struct MtMoonCave *cave)
 {
     s32 i;
 
-    for (i = 0; i < 4; i++)
+    for (i = 0; i < ENTRANCE_TRIES; i++)
     {
         if (!PlaceLadder(cave, &cave->entrance, NULL))
             return FALSE;
@@ -753,7 +795,7 @@ static s32 KingDistance(s32 x1, s32 y1, s32 x2, s32 y2)
 
 static bool8 HasRoomForContent(const struct MtMoonCave *cave)
 {
-    u8 spotX[MIN_OPEN_SPOTS], spotY[MIN_OPEN_SPOTS];
+    struct { u8 x, y; } spots[MIN_OPEN_SPOTS];
     s32 count = 0;
     s32 x, y, i;
 
@@ -763,17 +805,17 @@ static bool8 HasRoomForContent(const struct MtMoonCave *cave)
         {
             if (KingDistance(x, y, cave->entrance.x, cave->entrance.y) < 3
                 || KingDistance(x, y, cave->exit.x, cave->exit.y) < 3
-                || !IsOpenSpot(x, y))
+                || !IsOpenSpot(cave, x, y))
                 continue;
             for (i = 0; i < count; i++)
             {
-                if (KingDistance(x, y, spotX[i], spotY[i]) < 2)
+                if (KingDistance(x, y, spots[i].x, spots[i].y) < 2)
                     break;
             }
             if (i < count)
                 continue;
-            spotX[count] = x;
-            spotY[count] = y;
+            spots[count].x = x;
+            spots[count].y = y;
             if (++count == MIN_OPEN_SPOTS)
                 return TRUE;
         }
@@ -792,13 +834,12 @@ static void StampRubble(const struct MtMoonCave *cave)
 
     for (y = MIN_Y; y <= MAX_Y(cave); y++)
     {
-        const u8 *row = MtMoonGen_GetRow(y);
-        const u8 *below = MtMoonGen_GetRow(y + 1);
-        const u8 *below2 = MtMoonGen_GetRow(y + 2);
+        struct RowWindow rows;
 
+        ReadRows(cave, y, &rows);
         for (x = MIN_X; x <= MAX_X(cave); x++)
         {
-            if (RoleAt(row, below, below2, x) == ROLE_RUBBLE)
+            if (RoleAt(&rows, x) == ROLE_RUBBLE)
                 MtMoonGen_StampTile(x, y, sRoleTiles[ROLE_RUBBLE]);
         }
     }
@@ -842,7 +883,7 @@ static u16 PickB1FTile(const struct MtMoonCave *cave, s32 x, s32 y)
         return TILE_B1F_HOLE;
     if (tile != 0)
         return tile;
-    return sRoleTiles[GetRole(x, y)];
+    return sRoleTiles[GetRole(cave, x, y)];
 }
 
 const struct MtMoonStyle gMtMoonStyleB1F = { BuildB1FShape, PickB1FTile };
