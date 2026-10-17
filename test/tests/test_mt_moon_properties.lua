@@ -102,6 +102,14 @@ fw.run(function()
                 end
             end
 
+            -- Warm-up entry, not checked. How many times Random() runs
+            -- between the test writing gRngValue and the game rolling the
+            -- seed depends on the map being left (its scripts, objects and so
+            -- on). Entering the floor once first means every checked entry,
+            -- and every re-entry a check makes, leaves this same floor, so
+            -- the same gRngValue always rolls the same seed.
+            mm.enter_floor(floor, 0)
+
             for _, rng in ipairs(rngs) do
                 local snap = mm.enter_floor(floor, rng)
                 for _, check in ipairs(checks) do

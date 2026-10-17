@@ -53,11 +53,15 @@ symbols.ELF_PATH = project_dir .. "pokefirered.elf"
 -- name -> address, or false when two different `static` symbols share the
 -- name (for example several files each have a `static ... sGame`). An
 -- ambiguous name can't be resolved safely, so lookups treat it as missing.
-local table_cache = nil
-
+--
+-- Libraries load each other with dofile(), which re-runs this file each
+-- time, so the parsed table is kept in a global to read the ELF only once
+-- per test run.
 local function load()
+    local table_cache = _G.__pokefirered_symbol_table
     if table_cache then return table_cache end
     table_cache = {}
+    _G.__pokefirered_symbol_table = table_cache
     local pipe = io.popen("arm-none-eabi-nm '" .. symbols.ELF_PATH .. "' 2>/dev/null")
     if pipe == nil then return table_cache end
     for line in pipe:lines() do
