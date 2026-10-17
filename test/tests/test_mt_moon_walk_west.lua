@@ -37,6 +37,9 @@ fw.run(function()
     cs.confirm_and_enter_overworld()
     fw.assert_true(cs.is_player_active(), "reached overworld")
 
+    -- In the mGBA window (record_test.sh), show the walk at normal speed;
+    -- headless runs ignore this.
+    fw.slow_down("walking the Mt. Moon chain")
     capture.start()
     chain.walk_chain("west", fw)
     fw.wait_frames(60)
