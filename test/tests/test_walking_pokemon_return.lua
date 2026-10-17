@@ -33,9 +33,14 @@ local project_dir = script_dir .. "../../"
 local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
+local sym  = dofile(project_dir .. "test/lib/symbols.lua")
 
-local STATE_PATH   = "/tmp/pokefirered-walking-pokemon.ss"
-local PARTY_BASE   = 0x02024284  -- gPlayerParty (from pokefirered.map)
+-- fw.out_path: private to each run_test.sh run, so a state saved by another
+-- run (or another worktree's ROM) is never loaded by mistake.
+local STATE_PATH   = fw.out_path("pokefirered-walking-pokemon.ss")
+-- gPlayerParty's address comes from the built pokefirered.elf, so it stays
+-- right when RAM variables move between builds.
+local PARTY_BASE   = sym.addr("gPlayerParty")
 local POKEMON_SIZE = 100         -- sizeof(struct Pokemon)
 
 -- sFollower field offsets defined in test/lib/addresses.lua
@@ -62,12 +67,10 @@ local function inject_pokemon(base, species, level)
     emu:write8(base + 0x58, 20)                         -- maxHP
 end
 
-local results = {}
--- check() logs PASS/FAIL but does not set a non-zero shell exit code on failure.
--- This matches the convention used by all tests in this project (see test_pc_anywhere.lua).
+-- check() records each result with fw.assert_true, so a failed check makes
+-- fw.finish() write a non-zero exit code and test/run_test.sh exit 1.
 local function check(name, cond)
-    results[#results + 1] = {name = name, pass = cond}
-    fw.log((cond and "[PASS] " or "[FAIL] ") .. name)
+    fw.assert_true(cond, name)
 end
 
 fw.run(function()
@@ -182,11 +185,5 @@ fw.run(function()
     check("Phase 4: follower species is Meowth",
           fw.read16(FOLLOWER_SPECIES) == SPECIES_MEOWTH)
 
-    -- ------------------------------------------------------------------ --
-    -- Report
-    -- ------------------------------------------------------------------ --
-    local passed = 0
-    for _, r in ipairs(results) do if r.pass then passed = passed + 1 end end
-    fw.log(string.format("Results: %d/%d passed", passed, #results))
     fw.finish()
 end)
