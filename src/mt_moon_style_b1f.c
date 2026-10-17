@@ -81,17 +81,21 @@
  * HOW MUCH JUNCTION RUBBLE. Each link below makes at most one junction, so
  * at most 2 rubble cells: EAST and WEST links when the new floor is 2+ rows
  * higher or lower, DOWN and UP links always. A layout has up to 15 links
- * (MAX_RECTS), so it could have up to 30 rubble cells. Test P10 wants B1F's
- * rubble between half and one and a half times vanilla B1F's: 7 to 21
- * tiles. The core's decoration step counts this rubble and only ever ADDS
- * rubble, up to a target in that band (it can't remove any: the junctions
- * need theirs to draw without a seam), so the junction rubble alone must
- * stay at most 21. A layout with more is thrown away and grown again, like
- * one that grew too small (MAX_JUNCTION_RUBBLE). In practice there are 4 to
- * 20: a copy of this style in Python, checked against the game, measured
- * the first shape of every one of the 65,536 seeds, and none had more than
- * 20, so the limit has never changed a cave. It makes the band hold by
- * construction instead of by measurement.
+ * (the first room plus 2 rectangles per link, at most MAX_RECTS = 32
+ * rectangles), so it could have up to 30 rubble cells. Test P10 wants
+ * B1F's rubble between half and one and a half times vanilla B1F's: 7 to
+ * 21 tiles. The core's decoration step counts this rubble and only ever
+ * ADDS rubble, up to a target in that band (it can't remove any: the
+ * junctions need theirs to draw without a seam), so the junction rubble
+ * alone must stay at most 21. A layout with more is thrown away and grown
+ * again, like one that grew too small (MAX_JUNCTION_RUBBLE).
+ *
+ * In practice there are 4 to 20. A copy of this style in Python, checked
+ * against the game, measured the first shape of every one of the 65,536
+ * seeds: none has more than 20, so the limit changes none of them. A shape
+ * the core asks for again (see THE LADDER CONTRACT in the style header)
+ * starts from other random numbers, and about 1 in 100,000 of those grows
+ * a layout with 22; the limit is what keeps P10's band by construction.
  *
  * BUILDING THE SHAPE (BuildB1FShape)
  *
@@ -735,9 +739,9 @@ static bool8 IsLadderSpot(const struct MtMoonCave *cave, const struct MtMoonLadd
  * replaces the choice so far with probability 1/k), in one pass over the
  * layout's floor. Returns FALSE if there is no such spot.
  *
- * LOAD TIME: the passes over the shape (here, HasRoomForContent and
- * StampRubble) only visit the layout's rectangles, about a fifth of the
- * map, instead of every map cell. The rectangles never overlap, so each
+ * LOAD TIME: the passes over the shape (here, HasRoomForContent,
+ * CountJunctionRubble and StampRubble) only visit the layout's rectangles,
+ * about a fifth of the map, instead of every map cell. The rectangles never overlap, so each
  * floor cell is visited once. An up-ladder's cell has wall above it, so it
  * is on the top row of its rectangle (any lower row has floor above it, in
  * the same rectangle): only top rows are visited for one.
@@ -871,12 +875,12 @@ static bool8 HasRoomForContent(const struct MtMoonCave *cave, const struct Layou
 /*
  * The most junction rubble a layout may have (see HOW MUCH JUNCTION
  * RUBBLE): the top of test P10's band for B1F's rubble. Vanilla B1F has 14
- * rubble tiles (metatile 0x283 in data/layouts/MtMoon_B1F/map.bin), and
- * #22's design wants between half and one and a half times as many on a
- * generated B1F, rounded inward to whole tiles: ceil(14 / 2) = 7 to
- * floor(14 x 3 / 2) = 21, the same band the core's decoration step aims
- * for (DECORATIONS, HOW MANY, in src/mt_moon_gen.c). The division is done
- * by the compiler, so it costs nothing on the GBA.
+ * rubble tiles (metatile 0x283 in data/layouts/MtMoon_B1F/map.bin), and P10
+ * wants between half and one and a half times as many on a generated B1F,
+ * rounded inward to whole tiles: ceil(14 / 2) = 7 to floor(14 x 3 / 2) =
+ * 21, the same band the core's decoration step aims for (DECORATIONS, HOW
+ * MANY, in src/mt_moon_gen.c). The division is done by the compiler, so it
+ * costs nothing on the GBA.
  */
 #define VANILLA_B1F_RUBBLE  14
 #define MAX_JUNCTION_RUBBLE (VANILLA_B1F_RUBBLE * 3 / 2)

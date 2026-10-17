@@ -65,10 +65,9 @@
  *
  * buildShape works with WALL and FLOOR only (VISITED is the core's mark
  * inside its own flood fills, which never run during buildShape). BLOCKED
- * cells appear where a solid one-tile
- * prefab is stamped onto the floor (see ONE-TILE PREFABS below): by the
- * core after buildShape, or by a style at the very end of its buildShape
- * (B1F's junction rubble). A style's pickTile counts a BLOCKED cell as
+ * cells appear where a solid one-tile prefab is stamped onto the floor (see
+ * ONE-TILE PREFABS below): by the core after buildShape, or by a style at
+ * the very end of its buildShape (B1F's junction rubble). A style's pickTile counts a BLOCKED cell as
  * floor (it is not WALL), so the tiles around a boulder are drawn as open
  * floor, the way vanilla draws them. The core draws the floor while its
  * content placement still marks the tiles objects stand on with a value of
