@@ -36,16 +36,22 @@ local project_dir = script_dir .. "../../"
 local fw = dofile(project_dir .. "test/lib/framework.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 
+-- The three addresses below move whenever a source change adds or removes
+-- RAM variables or code, so they are looked up by symbol name in the
+-- pokefirered.elf built next to the ROM (see symbols.lua). The numbers are
+-- only a fallback for when the ELF can't be read.
+local symbols = dofile(project_dir .. "test/lib/symbols.lua")
+
 -- sWarpDestination is static EWRAM, immediately after gLastUsedWarp
 -- (see src/overworld.c:139-140). Layout: 8 bytes of struct WarpData.
-warp.S_WARP_DESTINATION = 0x02031de4
+warp.S_WARP_DESTINATION = symbols.find("sWarpDestination") or 0x02031de4
 
--- gMain.callback2 slot in IWRAM + the CB2_LoadMap entry point.
--- The |1 we OR in is the ARM thumb bit (all game code here is thumb).
--- CB2_LOAD_MAP is a ROM code address that SHIFTS with every rebuild; re-extract
--- it from pokefirered.map after any change that adds/removes code.
-warp.G_MAIN_CB2   = 0x03003104
-warp.CB2_LOAD_MAP = 0x080569d4
+-- gMain.callback2 slot in IWRAM (gMain + 4) + the CB2_LoadMap entry point.
+-- The |1 we OR in is the ARM thumb bit (all game code here is thumb); nm
+-- prints code addresses without it.
+local gMain = symbols.find("gMain")
+warp.G_MAIN_CB2   = gMain and (gMain + 4) or 0x03003104
+warp.CB2_LOAD_MAP = symbols.find("CB2_LoadMap") or 0x080569d4
 
 -- Read the currently-loaded map from SaveBlock1->location as a packed
 -- (mapGroup*256 + mapNum) value, for easy equality checks.
