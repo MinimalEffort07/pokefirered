@@ -134,8 +134,13 @@ function warp.warp_to_pos(map_group, map_num, x, y)
     emu:write16(warp.S_WARP_DESTINATION + 4, x)
     emu:write16(warp.S_WARP_DESTINATION + 6, y)
 
-    -- 2. Apply to SaveBlock1->location.
+    -- 2. Apply to SaveBlock1->location AND pos.
+    --    CB2_LoadMap bypasses WarpIntoMap/SetPlayerCoordsFromWarp, so pos is
+    --    never updated from location. Write pos directly so InitPlayerAvatar
+    --    (via GetCameraFocusCoords) places the OE at the correct tile.
     local sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    emu:write16(sb1 + 0x00, x)  -- SaveBlock1.pos.x
+    emu:write16(sb1 + 0x02, y)  -- SaveBlock1.pos.y
     emu:write8(sb1 + ADDR.SB1_LOC_MAP_GROUP, map_group)
     emu:write8(sb1 + ADDR.SB1_LOC_MAP_NUM,   map_num)
     emu:write8(sb1 + 0x06,                   WARP_ID_NONE)
