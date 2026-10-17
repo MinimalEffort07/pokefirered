@@ -78,11 +78,15 @@
  *   If step 3 or 6 fails, the shape is thrown away and the style builds a
  *   new one (back to step 2), up to 4 times; after that the floor stays
  *   the vanilla map. So nothing is ever dropped.
- *   7. Turn each stationary trainer toward its longest straight run of
- *      open floor (FaceStationaryTrainers).
- *   8. Draw every map cell with the style's tile picker, then the stamped
+ *   7. Draw every map cell with the style's tile picker, then the stamped
  *      one-tile prefabs on top, and the fossil chamber's vanilla tiles
- *      over everything.
+ *      over everything (DrawCave).
+ *   8. Add vanilla's decorations (rubble, craters, puddles) wherever they
+ *      fit without a seam, about as many as the floor's vanilla map has,
+ *      and check again that everything can be reached (DecorateCave; see
+ *      DECORATIONS below).
+ *   9. Turn each stationary trainer toward its longest straight run of
+ *      open floor (FaceStationaryTrainers).
  * Then, on a fresh entry, the player is put on the generated tile of the
  * warp they came through (PutPlayerOnArrivalWarp); on Continue, the safety
  * net makes sure the player stands on reachable floor
@@ -139,7 +143,9 @@
 
 /* One-tile prefabs per floor (see MtMoonGen_StampTile). They are kept in
  * the heap block borrowed for the grid, 4 bytes each, so room for many
- * costs nothing once generation is over. */
+ * costs nothing once generation is over. The most a floor can use is 77
+ * (1F: its sign, 28 rubble tiles, 9 craters and 3 puddles of 4 tiles each;
+ * see DECORATIONS), and the decorations stop at a full list. */
 #define MAX_STAMPS 128
 
 /* How many shapes a style gets to produce valid ladders (see CheckLadders). */
@@ -189,6 +195,71 @@ struct MtMoonFloorLadder
 #define LADDER_AT(warp, ladderKind, x, y) \
     { .warpId = (warp), .kind = (ladderKind), .fixedX = (x), .fixedY = (y) }
 
+/* The decoration kinds, in the order DecorateCave places them (see
+ * DECORATIONS). */
+enum
+{
+    DECORATION_PUDDLE,
+    DECORATION_CRATER,
+    DECORATION_RUBBLE,
+    DECORATION_KINDS
+};
+
+/* A decoration in a floor's vanilla map: its kind and its top-left tile. */
+struct VanillaDecoration
+{
+    u8 kind;  /* DECORATION_* */
+    u8 x;
+    u8 y;
+};
+
+/*
+ * Every decoration of each floor's vanilla map (data/layouts/MtMoon_<floor>/
+ * map.bin), listed by a script: each puddle by its west drip tile (0x2ee),
+ * each crater by its top-left tile (0x2d5), each rubble tile (0x283). They
+ * tell the decoration step how many of each kind vanilla has and where to
+ * read what vanilla puts around them (see THE VANILLA NEIGHBOURS); the step
+ * checks that the map really has that decoration at each place, so a wrong
+ * entry is skipped, never trusted.
+ */
+static const struct VanillaDecoration sVanillaDecorations1F[] =
+{
+    { DECORATION_PUDDLE, 4, 21 }, { DECORATION_PUDDLE, 25, 31 },
+    { DECORATION_CRATER, 10, 4 }, { DECORATION_CRATER, 35, 5 }, { DECORATION_CRATER, 8, 12 },
+    { DECORATION_CRATER, 36, 26 }, { DECORATION_CRATER, 4, 28 }, { DECORATION_CRATER, 37, 35 },
+    { DECORATION_RUBBLE, 11, 2 }, { DECORATION_RUBBLE, 12, 2 }, { DECORATION_RUBBLE, 12, 3 },
+    { DECORATION_RUBBLE, 17, 5 }, { DECORATION_RUBBLE, 16, 7 }, { DECORATION_RUBBLE, 42, 9 },
+    { DECORATION_RUBBLE, 24, 13 }, { DECORATION_RUBBLE, 32, 13 }, { DECORATION_RUBBLE, 23, 14 },
+    { DECORATION_RUBBLE, 23, 15 }, { DECORATION_RUBBLE, 6, 22 }, { DECORATION_RUBBLE, 7, 22 },
+    { DECORATION_RUBBLE, 7, 23 }, { DECORATION_RUBBLE, 24, 32 }, { DECORATION_RUBBLE, 24, 33 },
+    { DECORATION_RUBBLE, 25, 33 }, { DECORATION_RUBBLE, 24, 34 }, { DECORATION_RUBBLE, 25, 34 },
+    { DECORATION_RUBBLE, 24, 35 },
+};
+
+static const struct VanillaDecoration sVanillaDecorationsB1F[] =
+{
+    { DECORATION_PUDDLE, 21, 1 }, { DECORATION_PUDDLE, 13, 15 },
+    { DECORATION_CRATER, 41, 25 },
+    { DECORATION_RUBBLE, 37, 2 }, { DECORATION_RUBBLE, 38, 2 }, { DECORATION_RUBBLE, 39, 2 },
+    { DECORATION_RUBBLE, 40, 2 }, { DECORATION_RUBBLE, 16, 3 }, { DECORATION_RUBBLE, 37, 3 },
+    { DECORATION_RUBBLE, 46, 3 }, { DECORATION_RUBBLE, 36, 4 }, { DECORATION_RUBBLE, 6, 9 },
+    { DECORATION_RUBBLE, 5, 11 }, { DECORATION_RUBBLE, 41, 31 }, { DECORATION_RUBBLE, 41, 32 },
+    { DECORATION_RUBBLE, 41, 33 }, { DECORATION_RUBBLE, 38, 34 },
+};
+
+/* B2F's puddle at (10,12) and rubble at (8,13) are inside the fossil
+ * chamber's vanilla block, so the generated B2F has them too (see HOW
+ * MANY). */
+static const struct VanillaDecoration sVanillaDecorationsB2F[] =
+{
+    { DECORATION_PUDDLE, 39, 5 }, { DECORATION_PUDDLE, 10, 12 },
+    { DECORATION_CRATER, 5, 4 }, { DECORATION_CRATER, 24, 6 }, { DECORATION_CRATER, 34, 19 },
+    { DECORATION_CRATER, 10, 23 },
+    { DECORATION_RUBBLE, 6, 10 }, { DECORATION_RUBBLE, 7, 12 }, { DECORATION_RUBBLE, 8, 13 },
+    { DECORATION_RUBBLE, 27, 21 }, { DECORATION_RUBBLE, 26, 22 }, { DECORATION_RUBBLE, 15, 28 },
+    { DECORATION_RUBBLE, 16, 31 },
+};
+
 /* One generated floor and how it connects to the rest of the game. */
 struct MtMoonFloor
 {
@@ -198,6 +269,8 @@ struct MtMoonFloor
     struct MtMoonFloorLadder entrance;  /* toward Route 4 west */
     struct MtMoonFloorLadder exit;      /* toward Route 4 east */
     const struct MtMoonStyle *style;
+    const struct VanillaDecoration *decorations;  /* the vanilla map's */
+    u8 decorationCount;
 };
 
 /*
@@ -219,6 +292,8 @@ static const struct MtMoonFloor sFloors[] =
         .entrance = LADDER_AT(3, MT_MOON_LADDER_DOOR, 18, 37),
         .exit = LADDER_ANYWHERE(0, MT_MOON_LADDER_DOWN),
         .style = &gMtMoonStyle1F,
+        .decorations = sVanillaDecorations1F,
+        .decorationCount = ARRAY_COUNT(sVanillaDecorations1F),
     },
     {
         .layoutId = LAYOUT_MT_MOON_B1F,
@@ -226,6 +301,8 @@ static const struct MtMoonFloor sFloors[] =
         .entrance = LADDER_ANYWHERE(0, MT_MOON_LADDER_UP),
         .exit = LADDER_ANYWHERE(3, MT_MOON_LADDER_DOWN),
         .style = &gMtMoonStyleB1F,
+        .decorations = sVanillaDecorationsB1F,
+        .decorationCount = ARRAY_COUNT(sVanillaDecorationsB1F),
     },
     {
         .layoutId = LAYOUT_MT_MOON_B2F,
@@ -234,6 +311,8 @@ static const struct MtMoonFloor sFloors[] =
         .entrance = LADDER_ANYWHERE(0, MT_MOON_LADDER_UP_IN_FLOOR),
         .exit = LADDER_ANYWHERE(1, MT_MOON_LADDER_UP_IN_FLOOR),
         .style = &gMtMoonStyleB2F,
+        .decorations = sVanillaDecorationsB2F,
+        .decorationCount = ARRAY_COUNT(sVanillaDecorationsB2F),
     },
 };
 
@@ -360,8 +439,58 @@ struct Placement
 };
 
 /*
+ * The decoration tiles (see DECORATIONS below): rubble, the 4 tiles of a
+ * crater and the 4 of a puddle, numbered for the tables of the decoration
+ * step.
+ */
+enum
+{
+    DTILE_RUBBLE,
+    DTILE_CRATER_NW,
+    DTILE_CRATER_NE,
+    DTILE_CRATER_SW,
+    DTILE_CRATER_SE,
+    DTILE_DRIP_W,
+    DTILE_DRIP_E,
+    DTILE_PUDDLE_W,
+    DTILE_PUDDLE_E,
+    DTILE_COUNT
+};
+
+/*
+ * A SET OF METATILES, one bit per metatile of the cave tileset's block
+ * 0x280..0x33f (192 metatiles in 6 words; the cave tileset has 161, from
+ * 0x280 to 0x320, and every Mt. Moon map uses only those). Metatile m is
+ * bit (m - 0x280) % 32 of word (m - 0x280) / 32; a metatile outside the
+ * block is never in a set. Testing a bit is a subtraction, a shift and a
+ * mask, much quicker on the GBA than searching a list.
+ */
+#define METATILE_SET_BASE  0x280
+#define METATILE_SET_WORDS 6
+
+/* TRUE if metatile `metatile` is in metatile set `set` (u32[6]). */
+#define IN_METATILE_SET(set, metatile) \
+    ((u32)((metatile) - METATILE_SET_BASE) < METATILE_SET_WORDS * 32 \
+     && (((set)[((metatile) - METATILE_SET_BASE) >> 5] >> (((metatile) - METATILE_SET_BASE) & 31)) & 1))
+
+/*
+ * What the floor's vanilla map has around its decorations (see THE VANILLA
+ * NEIGHBOURS under DECORATIONS): allowed[t][side] is the set of metatiles
+ * vanilla puts on that side of decoration tile t (DTILE_*; the sides are
+ * numbered like sStepDx: north, south, west, east). Plus the set of the
+ * decoration metatiles themselves, and how many decorations of each kind
+ * the vanilla map has. 891 bytes.
+ */
+struct VanillaNeighbours
+{
+    u32 allowed[DTILE_COUNT][4][METATILE_SET_WORDS];
+    u32 decorationTiles[METATILE_SET_WORDS];  /* the 9 decoration metatiles */
+    u8 vanillaCount[DECORATION_KINDS];
+};
+
+/*
  * The fixed-size work areas of one generation, kept in the borrowed heap
- * block after the grid and the flood queue (about 1.1 KB). They are too big
+ * block after the grid and the flood queue (about 1.7 KB). They are too big
  * for the stack: the CPU's stack lives in IWRAM, between the last IWRAM
  * variable and IWRAM_END - 0x1C0, which leaves it under 2.5 KB for the
  * whole chain of calls that loads a map.
@@ -372,6 +501,7 @@ struct GenerationWork
     struct Placement placement;
     bool8 hasChamber;              /* the floor table's hasChamber */
     struct MtMoonChamber chamber;  /* where the fossil chamber goes */
+    struct VanillaNeighbours neighbours;  /* for the decorations */
 };
 
 /* ------------------------------------------------------------------------- */
@@ -1529,7 +1659,8 @@ bool8 MtMoonGen_StampTile(s32 x, s32 y, u16 tile)
  *
  * The stamped one-tile prefabs (MtMoonGen_StampTile) are written on top of
  * whatever the style drew there, and the fossil chamber (DrawChamber) last
- * of all.
+ * of all. The decorations come after this (DecorateCave), drawn straight
+ * into the map buffer.
  */
 static void DrawCave(const struct MtMoonFloor *floor)
 {
@@ -1707,8 +1838,9 @@ static void SetUpEvents(const struct MtMoonFloor *floor, const struct MapEvents 
  *
  * While placement runs, the tiles an object covers are marked OCCUPIED in
  * the grid, so the rules see them as taken. They stay marked until the
- * trainers have been turned (FaceStationaryTrainers: objects block sight
- * lines), then become floor again (ReleaseObjectTiles), because the
+ * decorations are placed (DecorateCave keeps them free) and the trainers
+ * have been turned (FaceStationaryTrainers: objects block sight lines),
+ * then become floor again (ReleaseObjectTiles), because the
  * Continue safety net needs the real terrain. Hidden items and signs stay
  * BLOCKED: their boulder and signpost tiles are solid.
  *
@@ -1719,8 +1851,11 @@ static void SetUpEvents(const struct MtMoonFloor *floor, const struct MapEvents 
  */
 
 /* An object's tile while content is placed: not FLOOR, so flood fills and
- * the rules above treat it as taken, and not WALL. Gone before the floor is
- * drawn, so a style never sees it. */
+ * the rules above treat it as taken, and not WALL. It is still there while
+ * the floor is drawn and decorated (DrawCave, DecorateCave), where the
+ * style's pickTile counts it as floor, as it must every cell that isn't
+ * WALL (THE GRID in mt_moon_gen_style.h), and gone afterwards
+ * (ReleaseObjectTiles). */
 #define CELL_OCCUPIED 4
 
 #define LADDER_CLEARANCE 3   /* rule 2 */
@@ -2425,6 +2560,585 @@ static void FaceStationaryTrainers(void)
 }
 
 /* ------------------------------------------------------------------------- */
+/* Decorations                                                               */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * DECORATIONS
+ *
+ * Vanilla Mt. Moon's caves are dotted with small decorations. Each one is a
+ * PREFAB: a few vanilla tiles in a fixed arrangement, copied tile for tile
+ * (full map cell values, see MAP CELL VALUES in mt_moon_gen_style.h):
+ *
+ *   RUBBLE  loose rocks on the floor, one solid tile:  0x0683
+ *   CRATER  a 2 x 2 dent in the floor, walkable:       0x32d5 0x32d6
+ *                                                      0x32dd 0x32de
+ *   PUDDLE  water dripping from a wall: two drip       0x06ee 0x06ef  (wall)
+ *           tiles take the place of two tiles of a     0x32f6 0x32f7  (floor)
+ *           wall's bottom row (solid), over a 2-wide
+ *           puddle on the floor below them (walkable).
+ *
+ * Their metatile behaviours (data/tilesets/secondary/cave/
+ * metatile_attributes.bin) are those of plain wall and cave floor: MB_NORMAL
+ * for the solid rubble and drips, MB_CAVE (like floor 0x281) for the
+ * craters and the puddle. None of them is one-way or special in any other
+ * way, so the grid, which only knows wall and floor, describes them fully.
+ *
+ * HOW MANY. For each floor and kind, a random TARGET between half and one
+ * and a half times as many as the floor's vanilla map has, rounded inward
+ * to whole numbers: from ceil(v / 2) to floor(3v / 2) for a vanilla count
+ * v (1F has 19 rubble tiles, 6 craters and 2 puddles, B1F 14 / 1 / 2, B2F
+ * 7 / 4 / 2; so 1F gets 10-28 rubble tiles, 3-9 craters and 1-3 puddles).
+ * What the player sees is what counts, so decorations already on the
+ * floor count too and the target is only topped up, never cut: B1F's
+ * junction rubble (its style stamps it, see JUNCTIONS in
+ * src/mt_moon_style_b1f.c) and the rubble and puddle inside B2F's fossil
+ * chamber (part of the vanilla prefab, and of vanilla's counts). Test P10
+ * checks the counts.
+ *
+ * WHERE (DecorationFits). A decoration may go anywhere it fits:
+ *   D1. each of its walkable tiles and its rubble covers free floor (not a
+ *       tile an object may stand on, a boulder, a signpost or another
+ *       decoration), and each drip tile covers wall;
+ *   D2. its box is 3+ tiles (king moves, diagonal steps counting as one)
+ *       from both ladders (LADDER_CLEARANCE), so it never touches a
+ *       ladder's footprint, B2F's 3 x 4 block of floor included;
+ *   D3. its box is 2+ tiles from the fossil chamber's box
+ *       (CHAMBER_SPACING), so it stays out of the chamber and the free ring
+ *       around it, like every piece of content (rule 5 of CONTENT
+ *       PLACEMENT);
+ *   D4. no seams: every tile north, south, west or east of it is a tile the
+ *       floor's own vanilla map puts on that side of that decoration tile
+ *       (THE VANILLA NEIGHBOURS below), which is what test P5 checks. This
+ *       rule is what decides where each kind goes on each floor. On 1F,
+ *       rubble always hangs below a rock face, more rubble or a puddle
+ *       (vanilla 1F never has floor north of rubble), and puddles drip from
+ *       the south face of a rock island. On B1F, puddles drip from north
+ *       walls and the crater lies against the void west of a room (vanilla
+ *       B1F's one crater does). On B2F, rubble stands alone (B2F never puts
+ *       rubble beside rubble) and puddles drip from a room's south wall.
+ *   D5. rubble, which is solid, keeps the floor in one piece (rule 4 of
+ *       CONTENT PLACEMENT, KeepsFloorConnected; its ring lies outside the
+ *       chamber by D3, so the chamber still never becomes the only way
+ *       across) and never covers a tile north, south, west or east of a
+ *       piece of content, so every piece can still be faced from every tile
+ *       it could before.
+ * Rubble comes in small clusters, as in vanilla: after each one, up to two
+ * more may follow beside it (east, west or south), if they fit too.
+ *
+ * Puddles are placed first, as they fit in the fewest places, then craters,
+ * then rubble (which may then also hang below a puddle, as on vanilla 1F).
+ *
+ * FINDING SPOTS (PlaceDecorations). For each kind, random tiles first:
+ * cheap where the kind fits on many tiles (rubble and craters fit on 1
+ * tile in 4 to 15, except B1F's crater). If those don't find enough, one pass
+ * over the map lists the tiles where the decoration may fit, by the
+ * quickest tests (the grid cells under its first and last tile, the tiles
+ * north and west of its first tile), and the rest are picked from that
+ * list at random. Puddles and B1F's crater fit on about 1 tile in 100, so
+ * they mostly come from the list. Every pick is checked against every rule
+ * before it is put down.
+ *
+ * WHEN: AFTER DRAWING, BEFORE THE FINAL CHECK. D4 compares a decoration
+ * with the tiles drawn around it: the style's, the stamped boulders and
+ * signposts, earlier decorations. Once the cave is drawn (DrawCave), all of
+ * those are in the map buffer (VMap), so DecorateCave reads them there, and
+ * writes each decoration both into the map buffer and into the stamp list
+ * (MtMoonGen_StampTile, which keeps the grid's walls and floor matching
+ * what is drawn: rubble cells become BLOCKED). GenerateFloor calls it right
+ * after DrawCave, with the objects' tiles still marked taken
+ * (CELL_OCCUPIED), and then runs content placement's final reachability
+ * check (IsContentReachable) with the rubble in place. D5 makes that check
+ * pass by construction; if it ever failed, the shape would be thrown away
+ * like any other failure (the next attempt draws the map afresh).
+ * The step draws its random numbers after every step of the shape and the
+ * content, so a seed builds the same shape, ladders and content with or
+ * without decorations (the attempt that succeeds draws the same numbers up
+ * to here); only the trainers' facing can change (FaceStationaryTrainers
+ * runs after it, so rubble in a trainer's line of sight counts).
+ *
+ * THE VANILLA NEIGHBOURS (ReadVanillaNeighbours). D4 needs, for each of
+ * the 9 decoration tiles and each side of it, the metatiles the floor's
+ * vanilla map puts there. They are read at the start of the step from that
+ * map itself (data/layouts/MtMoon_<floor>/map.bin, which is in ROM as
+ * gMapHeader.mapLayout->map), around each of the map's decorations, which
+ * the floor table lists (sVanillaDecorations1F, ...), so the counts of HOW
+ * MANY come from the same list. So the rule is exactly the floor's own
+ * vanilla pairs, and no table of pairs is written by hand.
+ *
+ * LOAD TIME: the step costs about 1.5 to 3 frames on average (test P9
+ * allows a floor 30 frames more than loading a vanilla cave, and the
+ * floors took at most 22 before it). On the GBA every pass over the map's
+ * ~2,000 tiles costs most of a frame however little it does per tile (a
+ * function call per tile costs a few), so the step reads only the listed
+ * vanilla decorations, counts the decorations already drawn from the stamp
+ * list and the chamber, places most decorations by random tries, and makes
+ * a pass over the map only for a kind that random tries don't place, with
+ * the quickest tests written out in its loop.
+ */
+
+/* The decoration tiles (DTILE_*) as full map cell values: solid tiles are
+ * collision 1, elevation 0 (0x06xx); walkable ones collision 0, elevation
+ * 3 (0x32xx), the floor's height. */
+static const u16 sDecorationTiles[DTILE_COUNT] =
+{
+    [DTILE_RUBBLE]    = 0x0683,
+    [DTILE_CRATER_NW] = 0x32d5,
+    [DTILE_CRATER_NE] = 0x32d6,
+    [DTILE_CRATER_SW] = 0x32dd,
+    [DTILE_CRATER_SE] = 0x32de,
+    [DTILE_DRIP_W]    = 0x06ee,
+    [DTILE_DRIP_E]    = 0x06ef,
+    [DTILE_PUDDLE_W]  = 0x32f6,
+    [DTILE_PUDDLE_E]  = 0x32f7,
+};
+
+/* A decoration prefab: `width` x `height` tiles, listed row by row. Bit i
+ * of `onWall` is set if tile i covers a wall cell (a drip tile) instead of
+ * a floor cell. */
+struct Decoration
+{
+    u8 width;
+    u8 height;
+    u8 tiles[4];  /* DTILE_* */
+    u8 onWall;
+};
+
+static const struct Decoration sDecorations[DECORATION_KINDS] =
+{
+    [DECORATION_PUDDLE] = { 2, 2, { DTILE_DRIP_W, DTILE_DRIP_E, DTILE_PUDDLE_W, DTILE_PUDDLE_E }, 0x3 },
+    [DECORATION_CRATER] = { 2, 2, { DTILE_CRATER_NW, DTILE_CRATER_NE, DTILE_CRATER_SW, DTILE_CRATER_SE }, 0 },
+    [DECORATION_RUBBLE] = { 1, 1, { DTILE_RUBBLE }, 0 },
+};
+
+/* The sides of a tile, numbered like sStepDx and sStepDy. */
+#define SIDE_NORTH 0
+#define SIDE_WEST  2
+
+/* The most rubble tiles in one cluster (see DECORATIONS). */
+#define RUBBLE_CLUSTER 3
+
+/* How many random tiles PlaceDecorations tries per decoration it needs
+ * before it lists the spots (see FINDING SPOTS in DECORATIONS). */
+#define DECORATION_RANDOM_TRIES 16
+
+/* The metatile id of a map cell value (bits 0-9). */
+#define METATILE_OF(value) ((value) & MAPGRID_METATILE_ID_MASK)
+
+/* The grid cell decoration tile i of `decoration` must cover (D1): wall for
+ * a drip tile, floor for the rest. */
+#define CELL_UNDER(decoration, i) \
+    ((((decoration)->onWall >> (i)) & 1) ? MT_MOON_CELL_WALL : MT_MOON_CELL_FLOOR)
+
+/* Add metatile `metatile` to metatile set `set` (see A SET OF METATILES). */
+static void AddToMetatileSet(u32 *set, u16 metatile)
+{
+    u32 i = metatile - METATILE_SET_BASE;
+
+    if (i < METATILE_SET_WORDS * 32)
+        set[i >> 5] |= 1u << (i & 31);
+}
+
+/* The metatile of vanilla map tile (x, y), or 0 off the map. */
+static u16 GetVanillaMetatile(s32 x, s32 y)
+{
+    const struct MapLayout *layout = gMapHeader.mapLayout;
+
+    if (x < 0 || y < 0 || x >= layout->width || y >= layout->height)
+        return 0;
+    return METATILE_OF(layout->map[y * layout->width + x]);
+}
+
+/* TRUE if the floor's vanilla map has a decoration of `kind` with its
+ * top-left tile on (x, y). */
+static bool8 IsVanillaDecoration(s32 kind, s32 x, s32 y)
+{
+    const struct Decoration *decoration = &sDecorations[kind];
+    s32 dx, dy, i;
+
+    for (i = 0, dy = 0; dy < decoration->height; dy++)
+    {
+        for (dx = 0; dx < decoration->width; dx++, i++)
+        {
+            if (GetVanillaMetatile(x + dx, y + dy) != METATILE_OF(sDecorationTiles[decoration->tiles[i]]))
+                return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+/*
+ * Read THE VANILLA NEIGHBOURS (see DECORATIONS) from the floor's vanilla
+ * map: for each decoration the floor table lists for it (and which the map
+ * really has there), count it, and add the metatile on every outer side of
+ * each of its tiles to that tile's sets.
+ *
+ * LOAD TIME: only the listed decorations are read, about 50 tiles and
+ * their neighbours. Scanning the whole map for them instead cost about a
+ * frame (on the GBA every pass over the map's ~2,000 tiles does).
+ */
+static void ReadVanillaNeighbours(const struct MtMoonFloor *floor, struct VanillaNeighbours *nb)
+{
+    s32 n, dx, dy, i, side;
+
+    memset(nb, 0, sizeof(*nb));
+    for (i = 0; i < DTILE_COUNT; i++)
+        AddToMetatileSet(nb->decorationTiles, METATILE_OF(sDecorationTiles[i]));
+    for (n = 0; n < floor->decorationCount; n++)
+    {
+        const struct VanillaDecoration *vanilla = &floor->decorations[n];
+        const struct Decoration *decoration = &sDecorations[vanilla->kind];
+
+        if (!IsVanillaDecoration(vanilla->kind, vanilla->x, vanilla->y))
+            continue;
+        nb->vanillaCount[vanilla->kind]++;
+        for (i = 0, dy = 0; dy < decoration->height; dy++)
+        {
+            for (dx = 0; dx < decoration->width; dx++, i++)
+            {
+                for (side = 0; side < 4; side++)
+                {
+                    s32 nx = dx + sStepDx[side];
+                    s32 ny = dy + sStepDy[side];
+
+                    if (nx >= 0 && ny >= 0 && nx < decoration->width && ny < decoration->height)
+                        continue; /* inside the prefab */
+                    AddToMetatileSet(nb->allowed[decoration->tiles[i]][side],
+                                     GetVanillaMetatile(vanilla->x + nx, vanilla->y + ny));
+                }
+            }
+        }
+    }
+}
+
+/* Map tile (x, y) in the map buffer, as DrawCave drew it. Row y + 1 is
+ * VMap.Xsize cells further on. */
+static u16 *DrawnCell(s32 x, s32 y)
+{
+    return &VMap.map[(y + MAP_OFFSET) * VMap.Xsize + x + MAP_OFFSET];
+}
+
+/* Count `tile` (a map cell value) into `counts` if it is the first tile
+ * of a decoration kind (each decoration is counted by its top-left tile). */
+static void CountDecorationTile(u16 tile, s32 *counts)
+{
+    s32 kind;
+
+    for (kind = 0; kind < DECORATION_KINDS; kind++)
+    {
+        if (METATILE_OF(tile) == METATILE_OF(sDecorationTiles[sDecorations[kind].tiles[0]]))
+            counts[kind]++;
+    }
+}
+
+/*
+ * How many decorations of each kind the floor already has before this
+ * step (see HOW MANY): B1F's junction rubble and the fossil chamber's
+ * rubble and puddle. Decoration tiles only reach the drawn map through the
+ * stamp list and the chamber's vanilla block (a style that draws one also
+ * stamps it, see ONE-TILE PREFABS in mt_moon_gen_style.h), so those are
+ * counted, rather than the ~2,000 drawn tiles.
+ */
+static void CountDrawnDecorations(s32 *counts)
+{
+    const struct StampList *list = Stamps();
+    const struct MtMoonChamber *chamber = MtMoonGen_GetChamber();
+    s32 i, dx, dy;
+
+    for (i = 0; i < DECORATION_KINDS; i++)
+        counts[i] = 0;
+    for (i = 0; i < list->count; i++)
+        CountDecorationTile(list->stamps[i].tile, counts);
+    if (chamber == NULL)
+        return;
+    for (dy = 0; dy < MT_MOON_CHAMBER_HEIGHT; dy++)
+    {
+        for (dx = 0; dx < MT_MOON_CHAMBER_WIDTH; dx++)
+            CountDecorationTile(GetChamberTile(dx, dy), counts);
+    }
+}
+
+/*
+ * TRUE if a tile north, south, west or east of map tile (x, y) belongs to a
+ * piece of content, so (x, y) is a tile the player may stand on to face it
+ * (D5): an object's tile (CELL_OCCUPIED, a wanderer's whole roaming box
+ * included), or a hidden item's boulder or a sign's signpost, stamped as
+ * TILE_BOULDER and TILE_SIGNPOST. (The fossil chamber's objects are far
+ * away, by D3.)
+ */
+static bool8 IsNextToContent(s32 x, s32 y)
+{
+    s32 side;
+
+    for (side = 0; side < 4; side++)
+    {
+        s32 nx = x + sStepDx[side];
+        s32 ny = y + sStepDy[side];
+        u16 tile = *DrawnCell(nx, ny);
+
+        if (GRID_ROW(ny)[nx] == CELL_OCCUPIED || tile == TILE_BOULDER || tile == TILE_SIGNPOST)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/*
+ * Rules D1-D5 (see DECORATIONS): can a decoration of `kind` go with its
+ * top-left tile on map tile (x, y)? Changes nothing.
+ *
+ * LOAD TIME: random tries ask this about many tiles where nothing fits, so
+ * it first makes the tests that rule out nearly every such tile, with as
+ * little set-up as possible: the grid cell under the first tile (D1), and
+ * the tiles north and west of the first tile (D4). Only then the rest.
+ */
+static bool8 DecorationFits(s32 kind, s32 x, s32 y, const struct Placement *placement,
+                            const struct VanillaNeighbours *nb)
+{
+    const struct Decoration *decoration = &sDecorations[kind];
+    s32 w = decoration->width;
+    s32 h = decoration->height;
+    s32 stride = VMap.Xsize;
+    const u16 *drawn;
+    s32 dx, dy, side, i;
+    struct Box box;
+
+    /* Inside the grid with a tile to spare all round (D4 and D5 read the
+     * tiles around it). */
+    if (x < 1 || y < 1 || x + w > sCave.width - 1 || y + h > sCave.height - 1)
+        return FALSE;
+
+    /* The quick tests. */
+    drawn = DrawnCell(x, y);
+    if (GRID_ROW(y)[x] != CELL_UNDER(decoration, 0)
+        || !IN_METATILE_SET(nb->allowed[decoration->tiles[0]][SIDE_NORTH], METATILE_OF(drawn[-stride]))
+        || !IN_METATILE_SET(nb->allowed[decoration->tiles[0]][SIDE_WEST], METATILE_OF(drawn[-1])))
+        return FALSE;
+
+    /* D1: floor under the floor tiles, wall under the drips, and no
+     * decoration this step already put down. (Rubble makes its cell
+     * BLOCKED, which the grid test rules out; a crater or a puddle leaves
+     * its cells FLOOR and WALL, and an exact copy on top of one would pass
+     * D4.) */
+    for (i = 0, dy = 0; dy < h; dy++)
+    {
+        const u8 *row = GRID_ROW(y + dy);
+
+        for (dx = 0; dx < w; dx++, i++)
+        {
+            if (row[x + dx] != CELL_UNDER(decoration, i)
+                || IN_METATILE_SET(nb->decorationTiles, METATILE_OF(drawn[dy * stride + dx])))
+                return FALSE;
+        }
+    }
+
+    /* D4: every outer side of the prefab against the tile drawn there. */
+    for (i = 0, dy = 0; dy < h; dy++)
+    {
+        for (dx = 0; dx < w; dx++, i++)
+        {
+            const u32 (*allowed)[METATILE_SET_WORDS] = nb->allowed[decoration->tiles[i]];
+
+            for (side = 0; side < 4; side++)
+            {
+                s32 nx = dx + sStepDx[side];
+                s32 ny = dy + sStepDy[side];
+
+                if (nx >= 0 && ny >= 0 && nx < w && ny < h)
+                    continue; /* inside the prefab: copied from vanilla */
+                if (!IN_METATILE_SET(allowed[side], METATILE_OF(drawn[ny * stride + nx])))
+                    return FALSE; /* vanilla never puts that tile there */
+            }
+        }
+    }
+
+    /* D2 and D3. */
+    box.x1 = x;
+    box.y1 = y;
+    box.x2 = x + w - 1;
+    box.y2 = y + h - 1;
+    if (IsNearLadder(&box, &sCave.entrance, LADDER_CLEARANCE) || IsNearLadder(&box, &sCave.exit, LADDER_CLEARANCE))
+        return FALSE;
+    if (placement->hasChamber && BOXES_CLOSER_THAN(&box, &placement->chamberBox, CHAMBER_SPACING))
+        return FALSE;
+
+    /* D5. */
+    if (kind == DECORATION_RUBBLE)
+        return !IsNextToContent(x, y) && KeepsFloorConnected(&box, FALSE);
+    return TRUE;
+}
+
+/* Draw a decoration of `kind` with its top-left tile on map tile (x, y):
+ * into the map buffer, and as stamps, so the grid follows (rubble cells
+ * become BLOCKED; drip tiles leave their wall cells WALL). PlaceDecorations
+ * has made sure the stamp list has room. */
+static void PutDecoration(s32 kind, s32 x, s32 y)
+{
+    const struct Decoration *decoration = &sDecorations[kind];
+    s32 dx, dy, i;
+
+    for (i = 0, dy = 0; dy < decoration->height; dy++)
+    {
+        for (dx = 0; dx < decoration->width; dx++, i++)
+        {
+            u16 tile = sDecorationTiles[decoration->tiles[i]];
+
+            MtMoonGen_StampTile(x + dx, y + dy, tile);
+            *DrawnCell(x + dx, y + dy) = tile;
+        }
+    }
+}
+
+/* Put a decoration on (x, y), which fits, and for rubble maybe up to
+ * RUBBLE_CLUSTER - 1 more next to it (east, west or south of the last one,
+ * each with a 1 in 2 chance, while they fit), never more than `room`.
+ * Returns how many it put. */
+static s32 PutDecorationGroup(s32 kind, s32 x, s32 y, s32 room, const struct Placement *placement,
+                              const struct VanillaNeighbours *nb)
+{
+    s32 put = 1;
+    s32 step;
+
+    PutDecoration(kind, x, y);
+    if (kind != DECORATION_RUBBLE)
+        return put;
+    while (put < room && put < RUBBLE_CLUSTER && MtMoonGen_RandomBelow(2) == 0)
+    {
+        step = 1 + MtMoonGen_RandomBelow(3);  /* sStepDx/Dy: south, west or east */
+        x += sStepDx[step];
+        y += sStepDy[step];
+        if (!DecorationFits(kind, x, y, placement, nb))
+            break;
+        PutDecoration(kind, x, y);
+        put++;
+    }
+    return put;
+}
+
+/*
+ * List every tile where a decoration of `kind` may fit, into `spots`
+ * (packed as x | y << 8, both under 256), and return how many there are.
+ * A tile is listed if the grid cells under the decoration's first and last
+ * tile are right (D1) and the tiles north and west of its first tile are
+ * ones vanilla puts there (D4); the other rules are checked when a spot is
+ * picked. These tests are written out in the loop: a DecorationFits call
+ * per map tile would cost a few frames.
+ */
+static s32 ListDecorationSpots(s32 kind, u16 *spots, const struct VanillaNeighbours *nb)
+{
+    const struct Decoration *decoration = &sDecorations[kind];
+    s32 w = decoration->width;
+    s32 h = decoration->height;
+    u8 firstCell = CELL_UNDER(decoration, 0);
+    u8 lastCell = CELL_UNDER(decoration, w * h - 1);
+    const u32 *northOk = nb->allowed[decoration->tiles[0]][SIDE_NORTH];
+    const u32 *westOk = nb->allowed[decoration->tiles[0]][SIDE_WEST];
+    s32 count = 0;
+    s32 x, y;
+
+    for (y = 1; y + h <= sCave.height - 1; y++)
+    {
+        const u8 *top = GRID_ROW(y);
+        const u8 *bottom = GRID_ROW(y + h - 1);
+        const u16 *above = DrawnCell(0, y - 1);
+        const u16 *here = DrawnCell(0, y);
+
+        for (x = 1; x + w <= sCave.width - 1; x++)
+        {
+            if (top[x] == firstCell && bottom[x + w - 1] == lastCell
+                && IN_METATILE_SET(northOk, METATILE_OF(above[x]))
+                && IN_METATILE_SET(westOk, METATILE_OF(here[x - 1])))
+                spots[count++] = x | (y << 8);
+        }
+    }
+    return count;
+}
+
+/*
+ * Put `need` decorations of `kind` where they fit (see FINDING SPOTS in
+ * DECORATIONS), or as many as there is room for: first at random tiles;
+ * then, if those didn't find enough, list the tiles where one may fit and
+ * pick from the list at random. Every pick is checked against every rule
+ * (DecorationFits), as earlier ones may have covered a spot or changed the
+ * tiles around it.
+ *
+ * The list lives in the flood-fill queue's memory, which has room for one
+ * spot per map tile: no flood fill runs while decorations are placed.
+ */
+static void PlaceDecorations(s32 kind, s32 need, const struct Placement *placement,
+                             const struct VanillaNeighbours *nb)
+{
+    s32 size = sDecorations[kind].width * sDecorations[kind].height;
+    s32 stampsLeft = MAX_STAMPS - Stamps()->count;
+    u16 *spots = FloodQueue();
+    s32 placed = 0;
+    s32 tries, count, j, x, y;
+    u16 random;
+
+    /* Never more than the stamp list has room for (worked out once here:
+     * the loops below run hundreds of times). */
+    for (count = 0; stampsLeft >= size; stampsLeft -= size)
+        count++;
+    if (need > count)
+        need = count;
+
+    for (tries = need * DECORATION_RANDOM_TRIES; tries > 0 && placed < need; tries--)
+    {
+        /* One random number gives both coordinates: its low byte (0-255)
+         * scaled to the width, its high byte to the height (byte * size /
+         * 256, with a shift instead of a division). */
+        random = MtMoonGen_Random();
+        x = ((random & 0xFF) * sCave.width) >> 8;
+        y = ((random >> 8) * sCave.height) >> 8;
+        if (DecorationFits(kind, x, y, placement, nb))
+            placed += PutDecorationGroup(kind, x, y, need - placed, placement, nb);
+    }
+    if (placed == need)
+        return;
+
+    count = ListDecorationSpots(kind, spots, nb);
+    while (placed < need && count > 0)
+    {
+        j = MtMoonGen_RandomBelow(count);
+        x = spots[j] & 0xFF;
+        y = spots[j] >> 8;
+        spots[j] = spots[--count];
+        if (DecorationFits(kind, x, y, placement, nb))
+            placed += PutDecorationGroup(kind, x, y, need - placed, placement, nb);
+    }
+}
+
+/*
+ * Add the floor's decorations to the drawn cave (see DECORATIONS): choose
+ * each kind's target and place what is missing. Called right after
+ * DrawCave, with the objects' tiles still CELL_OCCUPIED and before
+ * content placement's final check (IsContentReachable).
+ */
+static void DecorateCave(const struct MtMoonFloor *floor)
+{
+    struct VanillaNeighbours *nb = &Work()->neighbours;
+    const struct Placement *placement = &Work()->placement;
+    s32 drawn[DECORATION_KINDS];
+    s32 target[DECORATION_KINDS];
+    s32 kind, low, high;
+
+    ReadVanillaNeighbours(floor, nb);
+    CountDrawnDecorations(drawn);
+    /* The targets: from ceil(v / 2) to floor(3v / 2) for vanilla's count
+     * v. Shifting right by 1 halves a number, rounding down. */
+    for (kind = 0; kind < DECORATION_KINDS; kind++)
+    {
+        low = (nb->vanillaCount[kind] + 1) >> 1;
+        high = (nb->vanillaCount[kind] * 3) >> 1;
+        target[kind] = low + MtMoonGen_RandomBelow(high - low + 1);
+    }
+    for (kind = 0; kind < DECORATION_KINDS; kind++)
+    {
+        if (target[kind] > drawn[kind])
+            PlaceDecorations(kind, target[kind] - drawn[kind], placement, nb);
+    }
+}
+
+/* ------------------------------------------------------------------------- */
 /* Putting it together                                                       */
 /* ------------------------------------------------------------------------- */
 
@@ -2436,6 +3150,21 @@ static const struct MtMoonFloor *GetCurrentFloor(void)
         if (sFloors[i].layoutId == gMapHeader.mapLayoutId)
             return &sFloors[i];
     return NULL;
+}
+
+/*
+ * Copy the floor's vanilla map back into the map buffer, the way the map
+ * loader put it there before generation (InitBackupMapLayoutData in
+ * src/fieldmap.c), after a thrown-away attempt drew into it: the fallback
+ * when no shape works.
+ */
+static void RestoreVanillaMap(void)
+{
+    const struct MapLayout *layout = gMapHeader.mapLayout;
+    s32 y;
+
+    for (y = 0; y < layout->height; y++)
+        CpuCopy16(&layout->map[y * layout->width], DrawnCell(0, y), layout->width * sizeof(u16));
 }
 
 /*
@@ -2480,7 +3209,17 @@ static bool8 GenerateFloor(const struct MtMoonFloor *floor, u16 seed)
             continue;
         FillPockets();
         SetUpEvents(floor, rom);
-        if (PlaceContent(floor->style) && IsContentReachable())
+        if (!PlaceContent(floor->style))
+            continue;
+        /* Every step above may change the grid (fill, stamp, carve), so
+         * the map is drawn only now. The decorations go on the drawn map
+         * (they look at the tiles drawn around them), and before the final
+         * check, which so runs with their rubble in place. The objects'
+         * tiles stay taken (CELL_OCCUPIED) until the trainers are turned;
+         * the style draws them as the floor they are. */
+        DrawCave(floor);
+        DecorateCave(floor);
+        if (IsContentReachable())
             break;
     }
     if (attempt == MAX_SHAPE_ATTEMPTS)
@@ -2488,14 +3227,11 @@ static bool8 GenerateFloor(const struct MtMoonFloor *floor, u16 seed)
         /* Undo what a failed attempt may have changed outside the grid. */
         gMapHeader.events = rom;
         ResetObjectTemplates(rom);
+        RestoreVanillaMap();
         return FALSE;
     }
-
-    /* Every step above may change the grid (fill, stamp, carve), so the
-     * map is drawn last. */
     FaceStationaryTrainers();
     ReleaseObjectTiles();
-    DrawCave(floor);
     return TRUE;
 }
 

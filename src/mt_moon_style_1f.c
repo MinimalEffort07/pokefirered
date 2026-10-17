@@ -52,6 +52,10 @@
  *     this style over 5,000 layouts, the most cramped still had 36 spots for
  *     the Hiker's 5 x 5 roaming box and 214 for the sign. (A carve would cut
  *     into an island and draw pairs test P5-1F rejects.)
+ *   - Decorations: the core adds vanilla 1F's rubble, craters and puddles
+ *     wherever this style's tiles let them fit seamlessly (DECORATIONS in
+ *     src/mt_moon_gen.c): rubble below rock faces, puddles under the south
+ *     face of an island, craters in plain floor.
  *
  * LOAD TIME: all of this runs while the screen is black between two warps
  * (test P9 allows 30 frames more than a vanilla cave). See the notes on the

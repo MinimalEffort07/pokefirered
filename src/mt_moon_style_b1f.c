@@ -143,7 +143,11 @@
  * the ladders and rubble are placed so they cut nothing off), stamps the
  * hidden items' boulders (0x282) into open floor, which vanilla also has next
  * to floor on every side, and would carve repair space if some piece found no
- * spot, which HasRoomForContent rules out.
+ * spot, which HasRoomForContent rules out. Then it adds vanilla B1F's
+ * decorations wherever these tiles let them fit seamlessly (DECORATIONS in
+ * src/mt_moon_gen.c): more rubble, puddles under north walls, a crater
+ * against the void west of a room. The junction rubble counts toward the
+ * floor's rubble.
  *
  * Every random choice uses MtMoonGen_Random(), the core's seeded generator,
  * so the same seed always builds the same B1F.

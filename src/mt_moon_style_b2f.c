@@ -174,7 +174,10 @@
  * content (it stamps the hidden items' boulders, 0x282, only where
  * canStampAt agrees: plain floor north, south, west and east, which vanilla
  * also has around its boulders) and would carve repair floor if some piece
- * found no spot, which HasRoomForContent rules out.
+ * found no spot, which HasRoomForContent rules out. Then it adds vanilla
+ * B2F's decorations wherever these tiles let them fit seamlessly
+ * (DECORATIONS in src/mt_moon_gen.c): rubble alone on plain floor, craters,
+ * and puddles in a room's south wall.
  *
  * Every random choice uses MtMoonGen_Random(), the core's seeded generator,
  * so the same seed always builds the same B2F.

@@ -13,7 +13,8 @@
  * from vanilla), filling sealed-off pockets of floor, placing
  * the floor's vanilla content (trainers, NPCs, item balls, hidden items and
  * signs) where the player can reach all of it, writing the finished map
- * into the game's map buffer, the warps, and the Continue safety net.
+ * into the game's map buffer, adding vanilla's cave decorations (rubble,
+ * craters, puddles) where they fit, the warps, and the Continue safety net.
  *
  * A style decides what a floor looks like, through two functions:
  *
@@ -68,7 +69,11 @@
  * core after buildShape, or by a style at the very end of its buildShape
  * (B1F's junction rubble). A style's pickTile counts a BLOCKED cell as
  * floor (it is not WALL), so the tiles around a boulder are drawn as open
- * floor, the way vanilla draws them.
+ * floor, the way vanilla draws them. The core draws the floor while its
+ * content placement still marks the tiles objects stand on with a value of
+ * its own, so pickTile must count every cell that isn't WALL as floor (the
+ * three styles do: MtMoonGen_IsFloor, MtMoonGen_GetFloorMask and their own
+ * row reads all test "not WALL").
  *
  * LADDERS
  *
@@ -258,9 +263,20 @@
  *      piece, or the core's final reachability check fails, the shape is
  *      thrown away and buildShape is called again, exactly as for broken
  *      ladders (rule 2 above), so nothing is ever dropped or unreachable.
- *   4. Facing. Each stationary trainer is turned toward its longest
- *      straight run of open floor (walls, boulders, signposts and the
- *      tiles objects can stand on all end a run), so its sight line can
+ *   4. Decorations. Once the floor is drawn, the core adds vanilla's
+ *      cave decorations: rubble (0x283, solid), 2 x 2 craters and puddles
+ *      (two drip tiles in the bottom row of a wall over a 2-wide puddle),
+ *      about as many of each as the floor's vanilla map has, counting any
+ *      already drawn (B1F's junction rubble, the chamber's own). Each goes
+ *      only where every tile beside it is a tile the floor's vanilla map
+ *      puts beside it (so it never draws a seam), clear of the ladders,
+ *      the chamber and the content, and rubble never cuts the floor apart
+ *      or covers the tile in front of a piece. The core reads the tiles
+ *      pickTile drew, so a style has nothing to do for them: its tiles
+ *      simply decide where they fit. (See DECORATIONS in the core.)
+ *   5. Facing. Each stationary trainer is turned toward its longest
+ *      straight run of open floor (walls, boulders, signposts, rubble and
+ *      the tiles objects can stand on all end a run), so its sight line can
  *      catch the player.
  *
  * ONE-TILE PREFABS
@@ -269,10 +285,14 @@
  * tile instead of whatever pickTile would draw there. The grid follows the
  * tile's collision bits: a walkable tile makes the cell FLOOR; a solid tile
  * on floor makes it BLOCKED (drawn by the prefab, nobody can walk on it);
- * a solid tile on wall leaves it WALL. The core uses it for hidden items
- * and signs; a style (or a later decoration step) may use it for its own
- * one-tile pieces, once its shape is final. Never stamp a ladder's
- * footprint. A later stamp on the same tile replaces an earlier one.
+ * a solid tile on wall leaves it WALL. The core uses it for hidden items,
+ * signs and its decorations; a style may use it for its own one-tile
+ * pieces (B1F's junction rubble), once its shape is final. Never stamp a
+ * ladder's footprint. A later stamp on the same tile replaces an earlier
+ * one. A style that draws one of the decoration tiles (rubble 0x283, a
+ * crater's 0x2d5/0x2d6/0x2dd/0x2de, a puddle's 0x2ee/0x2ef/0x2f6/0x2f7) must
+ * stamp it, as B1F does its rubble: the core counts the decorations a floor
+ * already has from the stamps (see WHAT THE CORE DOES AFTERWARDS, 4).
  *
  * Vanilla Mt. Moon only ever puts a hidden item's boulder or a sign's
  * signpost next to plain cave floor (0x281), and the core always stamps them
@@ -297,7 +317,7 @@
 #define MT_MOON_CELL_FLOOR   1
 #define MT_MOON_CELL_VISITED 2  /* floor already reached by a flood fill */
 #define MT_MOON_CELL_BLOCKED 3  /* floor under a solid one-tile prefab (a
-                                 * boulder, a sign): drawn by the prefab,
+                                 * boulder, a sign, rubble): drawn by the prefab,
                                  * not walkable; see ONE-TILE PREFABS. (The
                                  * core also uses it for a moment, inside
                                  * its own steps, to hide the fossil
