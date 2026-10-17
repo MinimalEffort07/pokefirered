@@ -4,7 +4,9 @@
 -- has the HM item + badge but no party Pokémon that knows the move.
 --
 -- FIXTURE STATE (self-healing):
---   Tries to load /tmp/pokefirered-slaveless-hm.ss — player at tile (11, 23)
+--   Tries to load pokefirered-slaveless-hm.ss from this run's output directory
+--   (fw.out_path: private per run under test/run_test.sh, /tmp when the
+--   script is loaded by hand) — player at tile (11, 23)
 --   in Viridian City, one tile NORTH of the CUT tree at (11, 24), with an
 --   empty party and no HM items or badges set.
 --
@@ -18,7 +20,8 @@
 --   3. Walk to Viridian City and stand at tile (11, 23) — one tile NORTH of
 --      the CUT tree at (11, 24), flag=FLAG_TEMP_11.
 --   4. In the mGBA scripting console run:
---        emu:saveStateFile("/tmp/pokefirered-slaveless-hm.ss")
+--        emu:saveStateFile("/tmp/pokefirered-slaveless-hm.ss", 31)
+--      and load this script by hand (fw.out_path is /tmp outside run_test.sh).
 --
 -- TEST CASES:
 --   A. No badge + no HM01 in bag: press A on tree → "can't cut" sign.
@@ -35,9 +38,12 @@ local project_dir = script_dir .. "../../"
 local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
+local sym  = dofile(project_dir .. "test/lib/symbols.lua")
 
-local STATE_PATH = "/tmp/pokefirered-slaveless-hm.ss"
-local PARTY_BASE = 0x02024284  -- gPlayerParty (from pokefirered.map)
+local STATE_PATH = fw.out_path("pokefirered-slaveless-hm.ss")
+-- RAM addresses come from pokefirered.elf by symbol name (symbols.lua), so
+-- they stay right when unrelated code adds or removes RAM variables.
+local PARTY_BASE = sym.addr("gPlayerParty")  -- struct Pokemon[PARTY_SIZE]
 local POKEMON_SIZE = 100       -- sizeof(struct Pokemon)
 
 -- Map packed IDs: (mapGroup << 8) | mapNum
@@ -128,7 +134,7 @@ end
 -- (1 XOR enc_key) & 0xFFFF so that GetBagItemQuantity decodes back to 1.
 local SB2_ENCRYPTION_KEY = 0xF20  -- offsetof(SaveBlock2, encryptionKey)
 -- gBagPockets[3].itemSlots pointer lives at gBagPockets + 3*8 (BagPocket = 8 bytes).
-local GBAGPOCKETS_TMHM_SLOTS_ADDR = 0x02039920 + 3 * 8  -- = 0x02039938
+local GBAGPOCKETS_TMHM_SLOTS_ADDR = sym.addr("gBagPockets") + 3 * 8
 
 local function inject_hm01(sb1)
     local sb2     = fw.read32(ADDR.gSaveBlock2Ptr)
@@ -217,7 +223,7 @@ local function build_fixture()
         function() local x, _ = read_pos(); return x <= 11 end, 200, 4)
     fw.wait_frames(16)
     fw.log(string.format("  [nav] at door approach: pos=(%d,%d)", read_pos()))
-    fw.screenshot("/tmp/mgba-slaveless-1f-door.png")
+    fw.screenshot(fw.out_path("mgba-slaveless-1f-door.png"))
     -- Step SOUTH from world(11,14)→world(11,15): SOUTH_ARROW_WARP fires.
     fw.hold_until("DOWN",
         function() return map_packed() ~= map_1f end, 60, 4)
@@ -363,9 +369,12 @@ end
 -- ── Main test ──────────────────────────────────────────────────────────────
 
 local results = {}
+-- Record the check in the framework's pass/fail counts too: run_test.sh's
+-- exit code comes only from fw.assert_*, so a check that only logged would
+-- leave a failing run reporting success.
 local function check(name, cond)
     results[#results + 1] = {name = name, pass = cond}
-    fw.log((cond and "[PASS] " or "[FAIL] ") .. name)
+    fw.assert_true(cond, name)
 end
 
 fw.run(function()
@@ -480,9 +489,9 @@ fw.run(function()
         local ax, ay = read_pos()
         fw.log(string.format("  after DOWN hold: world(%d,%d)=tile(%d,%d)", ax, ay, ax-7, ay-7))
     end
-    fw.screenshot("/tmp/mgba-slaveless-b-after-down.png")
+    fw.screenshot(fw.out_path("mgba-slaveless-b-after-down.png"))
     fw.wait_frames(80)    -- wait for dialog box to render
-    fw.screenshot("/tmp/mgba-slaveless-b-dialog.png")
+    fw.screenshot(fw.out_path("mgba-slaveless-b-dialog.png"))
     do  -- mid-test: verify sb1 hasn't moved and item is still present
         local cur_sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
         local sb2     = fw.read32(ADDR.gSaveBlock2Ptr)
@@ -507,20 +516,20 @@ fw.run(function()
     end
     fw.press("A")         -- A1: open YESNO obstacle description
     fw.wait_frames(60)    -- wait for dialog text to start rendering
-    fw.screenshot("/tmp/mgba-slaveless-b-post-a1.png")
+    fw.screenshot(fw.out_path("mgba-slaveless-b-post-a1.png"))
     -- FireRed ignores A while text is scrolling (~4 frames/char × 57 chars ≈ 260 frames).
     -- Wait generously past that, then press A once the YES/NO cursor is live.
     fw.wait_frames(300)   -- wait for text scroll + YES/NO cursor
-    fw.screenshot("/tmp/mgba-slaveless-b-yesno.png")
+    fw.screenshot(fw.out_path("mgba-slaveless-b-yesno.png"))
     fw.press("A")         -- A2: confirm YES → "mysterious POKéMON appeared" message shows
     fw.wait_frames(250)   -- wait for appeared text to scroll
-    fw.screenshot("/tmp/mgba-slaveless-b-appeared.png")
+    fw.screenshot(fw.out_path("mgba-slaveless-b-appeared.png"))
     fw.slow_down("slaveless HM silhouette animation")
     fw.press("A")         -- A3: dismiss appeared message → animation starts
     fw.wait_frames(65)    -- ~54f for silhouette to slide to final position
-    fw.screenshot("/tmp/mgba-slaveless-b-silhouette.png")
+    fw.screenshot(fw.out_path("mgba-slaveless-b-silhouette.png"))
     fw.wait_frames(600)   -- full animation + tree removal
-    fw.screenshot("/tmp/mgba-slaveless-b-after-anim.png")
+    fw.screenshot(fw.out_path("mgba-slaveless-b-after-anim.png"))
     fw.speed_up()
 
     sb1 = fw.read32(ADDR.gSaveBlock1Ptr)

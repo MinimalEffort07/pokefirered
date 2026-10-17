@@ -2,7 +2,15 @@
 -- demo_slaveless_hm.lua
 -- Demo recording for the slaveless HM obstacle feature (issue #5).
 -- Shows: badge + HM01 in bag, empty party → slaveless prompt → YES → tree cut.
--- Starts from the test fixture at /tmp/pokefirered-slaveless-hm.ss.
+-- Starts from the fixture test_slaveless_hm_obstacle.lua saves. Each
+-- test/run_test.sh run writes it to its own output directory (printed as
+-- "Output:"), and test/record_test.sh gives the demo a different one, so pass
+-- its path in SLAVELESS_HM_FIXTURE:
+--   bash test/run_test.sh test/tests/test_slaveless_hm_obstacle.lua
+--   SLAVELESS_HM_FIXTURE=/tmp/mgba-test.XXXXXX/pokefirered-slaveless-hm.ss \
+--       bash test/record_test.sh test/tests/demo_slaveless_hm.lua
+-- Without it the demo looks in its own output directory (fw.out_path).
+-- A fixture only loads into the ROM build that saved it.
 -------------------------------------------------------------------------------
 
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
@@ -10,7 +18,10 @@ local project_dir = script_dir .. "../../"
 local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 
-local STATE_PATH = "/tmp/pokefirered-slaveless-hm.ss"
+local STATE_PATH = os.getenv("SLAVELESS_HM_FIXTURE")
+if STATE_PATH == nil or STATE_PATH == "" then
+    STATE_PATH = fw.out_path("pokefirered-slaveless-hm.ss")
+end
 
 local SB1_BAG_TMHM       = 0x048c
 local SB2_ENCRYPTION_KEY  = 0xF20
@@ -37,6 +48,7 @@ fw.run(function()
     if not fw.try_load_state(STATE_PATH) then
         fw.log("ERROR: fixture not found at " .. STATE_PATH)
         fw.log("Run the test first: bash test/run_test.sh test/tests/test_slaveless_hm_obstacle.lua")
+        fw.log("then set SLAVELESS_HM_FIXTURE to the .ss in its Output directory.")
         fw.finish()
         return
     end
