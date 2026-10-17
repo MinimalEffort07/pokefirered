@@ -106,9 +106,10 @@
  *           . F .
  *   MT_MOON_LADDER_UP_IN_FLOOR  an up-ladder standing in open floor, as
  *       all four of vanilla B2F's are: the ladder's top is a small rock on
- *       the floor (0x28e) instead of a notch in a wall, and vanilla B2F only
- *       ever puts floor around it. Wall: the top. Floor: the ladder and the
- *       other 10 cells of the 3 x 4 block around the top and the ladder.
+ *       the floor (0x28e) instead of a notch in a wall, and vanilla B2F
+ *       never puts a wall beside it (only floor, and now and then a boulder
+ *       or rubble). Wall: the top. Floor: the ladder and the other 10 cells
+ *       of the 3 x 4 block around the top and the ladder.
  *           F F F
  *           F T F        T = the ladder's top
  *           F U F
@@ -125,9 +126,11 @@
  *      it is. For every other ladder the core has PROPOSED a position:
  *        - random, and at least MT_MOON_LADDER_MIN_DISTANCE from the other
  *          ladder;
- *        - an up-ladder on row 2, right under a 2-row top border, so the
- *          north wall it needs is the border;
- *        - any other kind in the interior, at least 4 cells from the side
+ *        - an up-ladder at the foot of a wall (MT_MOON_LADDER_UP) on row
+ *          2, right under a 2-row top border, so the north wall it needs is
+ *          the border;
+ *        - any other kind (B2F's up-ladders in open floor included) in the
+ *          interior, at least 4 cells from the side
  *          and top edges and 6 from the bottom edge, so a 5 x 5 patch of
  *          open floor fits around it inside a 2-cell border (3 at the
  *          bottom).

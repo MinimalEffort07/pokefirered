@@ -23,9 +23,9 @@
 --        down  0x285 or 0x2af, walkable, with all 8 neighbours walkable
 --              (a hole in open floor).
 --        up    0x296, walkable, with walkable floor south of it; the tile
---              north of it is the ladder top 0x28f or 0x28e (solid), set
---              into a north wall: the tiles west and east of the top and
---              the tile above it are solid too.
+--              north of it is the ladder top 0x28f (solid), set into a
+--              north wall: the tiles west and east of the top and the tile
+--              above it are solid too (vanilla B1F's ladder).
 --        up_in_floor (B2F)
 --              0x296, walkable, standing in open floor as vanilla B2F's
 --              ladders do: the tile north of it is the ladder top 0x28e
@@ -43,7 +43,7 @@ local MT_DOOR = 0x287
 local MT_DOORFRAME = { 0x2c8, 0x2c9, 0x2ca }  -- west, middle, east
 local MT_HOLES = { [0x285] = true, [0x2af] = true }
 local MT_LADDER_FOOT = 0x296
-local MT_LADDER_TOPS = { [0x28f] = true, [0x28e] = true }
+local MT_LADDER_TOP_IN_WALL = 0x28f
 local MT_LADDER_TOP_IN_FLOOR = 0x28e
 
 -- 1F's door stays where vanilla has it.
@@ -105,8 +105,9 @@ local function check_tiles(h, floor, grid, w, kind)
             return fmt(string.format("tile 0x%03x, expected the ladder foot 0x%03x", mt, MT_LADDER_FOOT))
         end
         local top = metatile_at(h, grid, x, y - 1)
-        if not MT_LADDER_TOPS[top] or not solid(h, grid, x, y - 1) then
-            return fmt(string.format("tile above is 0x%03x, expected a solid ladder top (0x28f/0x28e)", top or 0))
+        if top ~= MT_LADDER_TOP_IN_WALL or not solid(h, grid, x, y - 1) then
+            return fmt(string.format("tile above is 0x%03x, expected the solid ladder top 0x%03x",
+                top or 0, MT_LADDER_TOP_IN_WALL))
         end
         for _, p in ipairs({ { x - 1, y - 1 }, { x + 1, y - 1 }, { x, y - 2 } }) do
             if not solid(h, grid, p[1], p[2]) then

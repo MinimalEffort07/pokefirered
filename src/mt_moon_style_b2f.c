@@ -115,7 +115,8 @@
  *   CHAMBER   Vanilla's fossil chamber (see THE FOSSIL CHAMBER in the
  *             style header), drawn by the core. It is a room too: its north
  *             wall hangs from the rock mass, and vanilla only puts a
- *             vertical ridge east of its north-east corner tile (0x28a), so
+ *             vertical ridge east of the east end of its room's top row
+ *             (0x28a, right below the chamber's top-right tile 0x29a), so
  *             this style always puts it in one of the top two rooms,
  *             against the ridge on that room's east side. (The chamber's
  *             own north edge is drawn with 0x2d0/0x2d1/0x2d2, see ROOM;
@@ -124,7 +125,8 @@
  *   LADDERS   Both of B2F's ladders are up-ladders standing in open floor
  *             (MT_MOON_LADDER_UP_IN_FLOOR): the ladder 0x296 with its top,
  *             0x28e, a small solid rock on the floor right above it, as all
- *             four of vanilla B2F's ladders are.
+ *             four of vanilla B2F's ladders are. This style keeps the whole
+ *             3 x 4 block around them plain floor.
  *
  * THE LAYOUT (ChooseLayout, DrawSkeleton, TryRooms)
  *
@@ -148,11 +150,11 @@
  * connect: ConnectTerraces() works out which rooms these ends connect and
  * cuts GAPS where more connections are needed.
  *
- * Then hanging rooms, alcoves and bars are tried at random places,
- * each kept only where it fits: every structure keeps a one-cell ring of
- * floor around its sides (marked T_KEEP so nothing else is built there), so
- * walking around it is always possible and nothing it is built in gets cut
- * in two. With the terraces connected, every floor cell can be reached, and
+ * Then hanging rooms, alcoves and bars are tried at random places, each
+ * kept only where it fits: every structure keeps a one-cell ring of floor
+ * around its open sides (marked T_KEEP by KeepFloor, so nothing else is
+ * built there), so walking around it is always possible and nothing it is
+ * built in gets cut in two. With the terraces connected, every floor cell can be reached, and
  * the core's pocket filling never has anything to fill.
  *
  * Finally the ladders are placed (PlaceLadders), and the finished map is
@@ -181,7 +183,7 @@
  * borrowed from the heap with the core's grid, so it costs no permanent RAM.
  * This module has no variables of its own (EWRAM is full, and new IWRAM
  * variables would move addresses the tests rely on; see the IWRAM note in
- * src/mt_moon_gen.c). The layout lives on the stack (about 30 bytes).
+ * src/mt_moon_gen.c). The layout lives on the stack (22 bytes).
  * ============================================================================
  */
 
@@ -509,7 +511,7 @@ static s32 RandomBetween(s32 lo, s32 hi)
     return lo + MtMoonGen_RandomBelow(hi - lo + 1);
 }
 
-static void Put(struct TileMap *map, s32 x, s32 y, u8 tile)
+static void SetTile(struct TileMap *map, s32 x, s32 y, u8 tile)
 {
     TILE_AT(map, x, y) = tile;
 }
@@ -535,7 +537,7 @@ static bool8 IsFree(const struct TileMap *map, s32 x1, s32 y1, s32 x2, s32 y2)
 
 /* Mark the still unclaimed cells of the rectangle T_KEEP: floor that no
  * later structure may build on (the ring of floor around a structure). */
-static void Keep(struct TileMap *map, s32 x1, s32 y1, s32 x2, s32 y2)
+static void KeepFloor(struct TileMap *map, s32 x1, s32 y1, s32 x2, s32 y2)
 {
     s32 x, y;
 
@@ -783,8 +785,8 @@ static s32 RandomSplit(s32 lo, s32 hi, s32 avoid)
 
 /*
  * The ranges below are tuned for B2F's 48 x 40 map. In a Python prototype
- * of this style they gave layouts whose walkable share is 43-57% (mean
- * about 50%; vanilla B2F: 46%) before the band check; the chamber's room
+ * of this style they gave layouts whose walkable share is 42-59% (mean
+ * about 51%; vanilla B2F: 46%) before the band check; the chamber's room
  * keeps a floor row below the chamber, and every terrace keeps at least 5
  * floor rows.
  */
@@ -815,33 +817,33 @@ static s32 RandomSplit(s32 lo, s32 hi, s32 avoid)
  */
 static bool8 ChooseLayout(const struct TileMap *map, struct Layout *layout)
 {
-    s32 cy, other, lo, hi;
+    s32 cy, otherRock, lo, hi;
     s32 maxX = MAX_X(map);
 
     layout->split[0] = RandomBetween(V0_MIN, V0_MAX);
     layout->chamberWest = MtMoonGen_RandomBelow(2);
     cy = RandomBetween(CHAMBER_Y_MIN, CHAMBER_Y_MAX);
-    other = RandomBetween(ROCK_MIN, ROCK_MAX);
+    otherRock = RandomBetween(ROCK_MIN, ROCK_MAX);
     layout->chamberY = cy;
     if (layout->chamberWest)
     {
         /* Against V0, in the top-west room. */
         layout->chamberX = layout->split[0] - MT_MOON_CHAMBER_WIDTH;
         layout->rockBottom[0] = cy;
-        layout->rockBottom[1] = other;
+        layout->rockBottom[1] = otherRock;
     }
     else
     {
         /* Against the east border ridge, in the top-east room. */
         layout->chamberX = maxX + 1 - MT_MOON_CHAMBER_WIDTH;
-        layout->rockBottom[0] = other;
+        layout->rockBottom[0] = otherRock;
         layout->rockBottom[1] = cy;
     }
 
     /* H1 below the chamber (and the floor row under it) and below the
      * other room's rock, leaving that room at least 7 floor rows; H2 with
      * at least TERRACE_MIN_ROWS floor rows on either side. */
-    lo = max(cy + MT_MOON_CHAMBER_HEIGHT + 1, other + 8);
+    lo = max(cy + MT_MOON_CHAMBER_HEIGHT + 1, otherRock + 8);
     if (lo > H1_ROW_MAX)
         return FALSE;
     layout->row[0] = RandomBetween(lo, H1_ROW_MAX);
@@ -911,8 +913,8 @@ static void DrawRidgeColumns(struct TileMap *map, s32 x, s32 y1, s32 y2)
 
     for (y = y1; y <= y2; y++)
     {
-        Put(map, x, y, T_RIDGE_W);
-        Put(map, x + 1, y, T_RIDGE_E);
+        SetTile(map, x, y, T_RIDGE_W);
+        SetTile(map, x + 1, y, T_RIDGE_E);
     }
 }
 
@@ -920,9 +922,19 @@ static void DrawRidgeColumns(struct TileMap *map, s32 x, s32 y1, s32 y2)
  * 1, the rock's lowest row of the top band, then columns down to row y2. */
 static void DrawRidgeFromTop(struct TileMap *map, s32 x, s32 y2)
 {
-    Put(map, x, 1, T_RIDGE_TOP_W);
-    Put(map, x + 1, 1, T_RIDGE_TOP_E);
+    SetTile(map, x, 1, T_RIDGE_TOP_W);
+    SetTile(map, x + 1, 1, T_RIDGE_TOP_E);
     DrawRidgeColumns(map, x, 2, y2);
+}
+
+/* One column of a horizontal ridge's 4 rows (row..row+3): the pink top,
+ * the ledge and the 2-row cliff face. */
+static void DrawRidgeSlice(struct TileMap *map, s32 x, s32 row)
+{
+    SetTile(map, x, row, T_TOP);
+    SetTile(map, x, row + 1, T_LEDGE);
+    SetTile(map, x, row + 2, T_CLIFF);
+    SetTile(map, x, row + 3, T_CLIFF);
 }
 
 /* The 4 rows of a horizontal ridge's free west end at column x, with the
@@ -931,21 +943,21 @@ static void DrawWestEnd(struct TileMap *map, s32 x, s32 row)
 {
     s32 y;
 
-    Put(map, x, row, T_WEND_TOP);
-    Put(map, x, row + 1, T_WEND_LEDGE);
-    Put(map, x, row + 2, T_WEND_CLIFF);
-    Put(map, x, row + 3, T_WEND_CLIFF);
+    SetTile(map, x, row, T_WEND_TOP);
+    SetTile(map, x, row + 1, T_WEND_LEDGE);
+    SetTile(map, x, row + 2, T_WEND_CLIFF);
+    SetTile(map, x, row + 3, T_WEND_CLIFF);
     for (y = row; y < row + 4; y++)
-        Put(map, x - 1, y, T_DITHER);
+        SetTile(map, x - 1, y, T_DITHER);
 }
 
 /* The 4 rows of a horizontal ridge's free east end at column x. */
 static void DrawEastEnd(struct TileMap *map, s32 x, s32 row)
 {
-    Put(map, x, row, T_EEND_TOP);
-    Put(map, x, row + 1, T_EEND_LEDGE);
-    Put(map, x, row + 2, T_EEND_CLIFF);
-    Put(map, x, row + 3, T_EEND_CLIFF);
+    SetTile(map, x, row, T_EEND_TOP);
+    SetTile(map, x, row + 1, T_EEND_LEDGE);
+    SetTile(map, x, row + 2, T_EEND_CLIFF);
+    SetTile(map, x, row + 3, T_EEND_CLIFF);
 }
 
 /* A horizontal ridge on rows row..row+3 from column west to east, both ends
@@ -955,12 +967,7 @@ static void DrawRidgeRows(struct TileMap *map, s32 west, s32 east, s32 row)
     s32 x;
 
     for (x = west; x <= east; x++)
-    {
-        Put(map, x, row, T_TOP);
-        Put(map, x, row + 1, T_LEDGE);
-        Put(map, x, row + 2, T_CLIFF);
-        Put(map, x, row + 3, T_CLIFF);
-    }
+        DrawRidgeSlice(map, x, row);
     DrawWestEnd(map, west, row);
     DrawEastEnd(map, east, row);
 }
@@ -979,22 +986,19 @@ static void DrawRidge(struct TileMap *map, const struct Layout *layout, s32 k)
         /* It runs into the east border ridge, which goes on below: the
          * junction sits in the border's west column. */
         x = MAX_X(map);
-        Put(map, x, row, T_TOP);
-        Put(map, x, row + 1, T_LEDGE);
-        Put(map, x, row + 2, T_CLIFF);
-        Put(map, x, row + 3, T_CLIFF);
-        Put(map, x + 1, row, T_CROSS_W);
-        Put(map, x + 1, row + 1, T_DROP_W);
+        DrawRidgeSlice(map, x, row);
+        SetTile(map, x + 1, row, T_CROSS_W);
+        SetTile(map, x + 1, row + 1, T_DROP_W);
     }
     if (above != 0)
     {
-        Put(map, above, row, T_CROSS_W);
-        Put(map, above + 1, row, T_CROSS_E);
+        SetTile(map, above, row, T_CROSS_W);
+        SetTile(map, above + 1, row, T_CROSS_E);
     }
     if (below != 0)
     {
-        Put(map, below, row + 1, T_DROP_W);
-        Put(map, below + 1, row + 1, T_DROP_E);
+        SetTile(map, below, row + 1, T_DROP_W);
+        SetTile(map, below + 1, row + 1, T_DROP_E);
         DrawRidgeColumns(map, below, row + 2, row + 3);
     }
     for (i = 0; i < layout->gapCount[k]; i++)
@@ -1006,7 +1010,7 @@ static void DrawRidge(struct TileMap *map, const struct Layout *layout, s32 k)
         for (y = row; y < row + 4; y++)
         {
             for (x = g; x < g + GAP_WIDTH; x++)
-                Put(map, x, y, T_DITHER);
+                SetTile(map, x, y, T_DITHER);
         }
     }
 }
@@ -1019,7 +1023,7 @@ static void DrawRock(struct TileMap *map, s32 x1, s32 x2, s32 lastRow)
     for (y = 2; y <= lastRow; y++)
     {
         for (x = x1; x <= x2; x++)
-            Put(map, x, y, T_ROCK);
+            SetTile(map, x, y, T_ROCK);
     }
 }
 
@@ -1037,36 +1041,31 @@ static void DrawFrame(struct TileMap *map)
 
     for (x = 0; x < w; x++)
     {
-        Put(map, x, 0, T_ROCK);
-        Put(map, x, 1, T_ROCK);
+        SetTile(map, x, 0, T_ROCK);
+        SetTile(map, x, 1, T_ROCK);
     }
     DrawRidgeFromTop(map, 0, bottom - 1);
     DrawRidgeFromTop(map, w - 2, bottom - 1);
     for (x = 2; x < w - 2; x++)
-    {
-        Put(map, x, bottom, T_TOP);
-        Put(map, x, bottom + 1, T_LEDGE);
-        Put(map, x, bottom + 2, T_CLIFF);
-        Put(map, x, bottom + 3, T_CLIFF);
-    }
+        DrawRidgeSlice(map, x, bottom);
     /* South-west: the west ridge ends on the bottom ridge going east. */
-    Put(map, 0, bottom, T_RIDGE_W);
-    Put(map, 1, bottom, T_CROSS_E);
-    Put(map, 0, bottom + 1, T_CORNER_SW);
-    Put(map, 1, bottom + 1, T_LEDGE);
-    Put(map, 0, bottom + 2, T_WEND_CLIFF);
-    Put(map, 0, bottom + 3, T_WEND_CLIFF);
-    Put(map, 1, bottom + 2, T_CLIFF);
-    Put(map, 1, bottom + 3, T_CLIFF);
+    SetTile(map, 0, bottom, T_RIDGE_W);
+    SetTile(map, 1, bottom, T_CROSS_E);
+    SetTile(map, 0, bottom + 1, T_CORNER_SW);
+    SetTile(map, 1, bottom + 1, T_LEDGE);
+    SetTile(map, 0, bottom + 2, T_WEND_CLIFF);
+    SetTile(map, 0, bottom + 3, T_WEND_CLIFF);
+    SetTile(map, 1, bottom + 2, T_CLIFF);
+    SetTile(map, 1, bottom + 3, T_CLIFF);
     /* South-east: the east ridge ends on the bottom ridge from the west. */
-    Put(map, w - 2, bottom, T_CORNER_SE);
-    Put(map, w - 1, bottom, T_RIDGE_E);
-    Put(map, w - 2, bottom + 1, T_LEDGE);
-    Put(map, w - 1, bottom + 1, T_EEND_LEDGE);
-    Put(map, w - 2, bottom + 2, T_CLIFF);
-    Put(map, w - 2, bottom + 3, T_CLIFF);
-    Put(map, w - 1, bottom + 2, T_EEND_CLIFF);
-    Put(map, w - 1, bottom + 3, T_EEND_CLIFF);
+    SetTile(map, w - 2, bottom, T_CORNER_SE);
+    SetTile(map, w - 1, bottom, T_RIDGE_E);
+    SetTile(map, w - 2, bottom + 1, T_LEDGE);
+    SetTile(map, w - 1, bottom + 1, T_EEND_LEDGE);
+    SetTile(map, w - 2, bottom + 2, T_CLIFF);
+    SetTile(map, w - 2, bottom + 3, T_CLIFF);
+    SetTile(map, w - 1, bottom + 2, T_EEND_CLIFF);
+    SetTile(map, w - 1, bottom + 3, T_EEND_CLIFF);
 }
 
 /*
@@ -1092,8 +1091,8 @@ static void DrawSkeleton(struct TileMap *map, const struct Layout *layout)
     {
         x = layout->split[2];
         DrawRidgeColumns(map, x, layout->row[1] + 4, MAX_Y(map));
-        Put(map, x, MAX_Y(map) + 1, T_CROSS_W);
-        Put(map, x + 1, MAX_Y(map) + 1, T_CROSS_E);
+        SetTile(map, x, MAX_Y(map) + 1, T_CROSS_W);
+        SetTile(map, x + 1, MAX_Y(map) + 1, T_CROSS_E);
     }
 
     /* The chamber, drawn by the core; its room's rock is one row deeper
@@ -1102,10 +1101,10 @@ static void DrawSkeleton(struct TileMap *map, const struct Layout *layout)
     for (y = cy; y < cy + MT_MOON_CHAMBER_HEIGHT; y++)
     {
         for (x = cx; x < cx + MT_MOON_CHAMBER_WIDTH; x++)
-            Put(map, x, y, T_CHAMBER);
+            SetTile(map, x, y, T_CHAMBER);
     }
-    Keep(map, cx - 1, cy + 1, cx - 1, cy + MT_MOON_CHAMBER_HEIGHT);
-    Keep(map, cx, cy + MT_MOON_CHAMBER_HEIGHT, cx + MT_MOON_CHAMBER_WIDTH - 1, cy + MT_MOON_CHAMBER_HEIGHT);
+    KeepFloor(map, cx - 1, cy + 1, cx - 1, cy + MT_MOON_CHAMBER_HEIGHT);
+    KeepFloor(map, cx, cy + MT_MOON_CHAMBER_HEIGHT, cx + MT_MOON_CHAMBER_WIDTH - 1, cy + MT_MOON_CHAMBER_HEIGHT);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1127,14 +1126,14 @@ static void RoomBody(struct TileMap *map, s32 x1, s32 x2, s32 top, s32 h)
 
     for (y = top + 1; y <= last; y++)
     {
-        Put(map, x1, y, T_WALL_W);
-        Put(map, x2, y, T_WALL_E);
+        SetTile(map, x1, y, T_WALL_W);
+        SetTile(map, x2, y, T_WALL_E);
         if (y == last)
             break;
-        Put(map, x1 + 1, y, T_EDGE_W);
+        SetTile(map, x1 + 1, y, T_EDGE_W);
         for (x = x1 + 2; x < x2 - 1; x++)
-            Put(map, x, y, T_FLOOR);
-        Put(map, x2 - 1, y, T_EDGE_E);
+            SetTile(map, x, y, T_FLOOR);
+        SetTile(map, x2 - 1, y, T_EDGE_E);
     }
     /* The last floor row: the south edge, with plain floor in front of the
      * stairs (vanilla's 0x284 only has plain floor, or the west edge 0x2d8
@@ -1152,11 +1151,11 @@ static void RoomBody(struct TileMap *map, s32 x1, s32 x2, s32 top, s32 h)
             tile = T_EDGE_SE;
         else
             tile = T_EDGE_S;
-        Put(map, x, last, tile);
-        Put(map, x, last + 1, (x == stairs || x == stairs + 1) ? T_STAIRS : T_WALL_S);
+        SetTile(map, x, last, tile);
+        SetTile(map, x, last + 1, (x == stairs || x == stairs + 1) ? T_STAIRS : T_WALL_S);
     }
-    Put(map, x1, last + 1, T_WALL_SW);
-    Put(map, x2, last + 1, T_WALL_SE);
+    SetTile(map, x1, last + 1, T_WALL_SW);
+    SetTile(map, x2, last + 1, T_WALL_SE);
 }
 
 /* A room's top row: its corners and the floor between, drawn with the given
@@ -1166,12 +1165,12 @@ static void RoomTop(struct TileMap *map, s32 x1, s32 x2, s32 top, u8 cornerW, u8
 {
     s32 x;
 
-    Put(map, x1, top, cornerW);
-    Put(map, x2, top, cornerE);
-    Put(map, x1 + 1, top, edgeW);
+    SetTile(map, x1, top, cornerW);
+    SetTile(map, x2, top, cornerE);
+    SetTile(map, x1 + 1, top, edgeW);
     for (x = x1 + 2; x < x2 - 1; x++)
-        Put(map, x, top, edge);
-    Put(map, x2 - 1, top, edgeE);
+        SetTile(map, x, top, edge);
+    SetTile(map, x2 - 1, top, edgeE);
 }
 
 /*
@@ -1191,27 +1190,45 @@ static bool8 TryHangingRoom(struct TileMap *map, s32 x1, s32 x2, s32 top, s32 h)
         if (TILE_AT(map, x, top) != T_ROCK || TILE_AT(map, x, top - 1) != T_ROCK)
             return FALSE;
     }
+    /* freeW..freeE: the columns that must be floor below the top row: the
+     * room, and the floor under each face cell. */
     if (TILE_AT(map, x1 - 1, top) == T_RIDGE_E)
-        cornerW = T_CUT_W, freeW = x1;
+    {
+        cornerW = T_CUT_W;
+        freeW = x1;
+    }
     else if (TILE_AT(map, x1 - 1, top) == T_ROCK && TILE_AT(map, x1 - 2, top) == T_ROCK)
-        cornerW = T_HANG_W, freeW = x1 - 1;
+    {
+        cornerW = T_HANG_W;
+        freeW = x1 - 1;
+    }
     else
+    {
         return FALSE;
+    }
     if (TILE_AT(map, x2 + 1, top) == T_RIDGE_W)
-        cornerE = T_CUT_E, freeE = x2;
+    {
+        cornerE = T_CUT_E;
+        freeE = x2;
+    }
     else if (TILE_AT(map, x2 + 1, top) == T_ROCK && TILE_AT(map, x2 + 2, top) == T_ROCK)
-        cornerE = T_HANG_E, freeE = x2 + 1;
+    {
+        cornerE = T_HANG_E;
+        freeE = x2 + 1;
+    }
     else
+    {
         return FALSE;
+    }
     if (!IsFree(map, freeW, top + 1, freeE, top + h + 1))
         return FALSE;
     if (cornerW == T_HANG_W)
-        Put(map, x1 - 1, top, T_WALL_S);
+        SetTile(map, x1 - 1, top, T_WALL_S);
     if (cornerE == T_HANG_E)
-        Put(map, x2 + 1, top, T_WALL_S);
+        SetTile(map, x2 + 1, top, T_WALL_S);
     RoomTop(map, x1, x2, top, cornerW, cornerE, T_EDGE_W, T_FLOOR, T_EDGE_E);
     RoomBody(map, x1, x2, top, h);
-    Keep(map, freeW, top + 1, freeE, top + h + 1);
+    KeepFloor(map, freeW, top + 1, freeE, top + h + 1);
     return TRUE;
 }
 
@@ -1234,7 +1251,7 @@ static bool8 TryAlcove(struct TileMap *map, s32 x1, s32 x2, s32 row, s32 h)
         return FALSE;
     RoomTop(map, x1, x2, top, T_CUT_W, T_CUT_E, T_EDGE_W, T_FLOOR, T_EDGE_E);
     RoomBody(map, x1, x2, top, h);
-    Keep(map, x1 - 1, top + 1, x2 + 1, top + h + 1);
+    KeepFloor(map, x1 - 1, top + 1, x2 + 1, top + h + 1);
     return TRUE;
 }
 
@@ -1246,7 +1263,7 @@ static bool8 TryBar(struct TileMap *map, s32 west, s32 east, s32 row)
     if (!IsFree(map, west - 2, row - 1, east + 1, row + 4))
         return FALSE;
     DrawRidgeRows(map, west, east, row);
-    Keep(map, west - 2, row - 1, east + 1, row + 4);
+    KeepFloor(map, west - 2, row - 1, east + 1, row + 4);
     return TRUE;
 }
 
@@ -1428,18 +1445,18 @@ static bool8 IsLadderSpot(const struct TileMap *map, const struct Layout *layout
     return ChamberBoxDistance(layout, x, y) >= CHAMBER_LADDER_CLEARANCE;
 }
 
-/* TRUE if a ladder at (x, y) would be a spot for `ladder` (IsLadderSpot),
- * at least MT_MOON_LADDER_MIN_DISTANCE from `other` if it isn't NULL. */
-static bool8 IsSpotFor(const struct TileMap *map, const struct Layout *layout,
-                       const struct MtMoonLadder *other, s32 x, s32 y)
+/* TRUE if a ladder can stand on (x, y) (IsLadderSpot) at least
+ * MT_MOON_LADDER_MIN_DISTANCE from `otherLadder`, if that isn't NULL. */
+static bool8 IsLadderSpotAwayFrom(const struct TileMap *map, const struct Layout *layout,
+                                  const struct MtMoonLadder *otherLadder, s32 x, s32 y)
 {
     struct MtMoonLadder spot;
 
-    if (other != NULL)
+    if (otherLadder != NULL)
     {
         spot.x = x;
         spot.y = y;
-        if (MtMoonGen_LadderDistance(&spot, other) < MT_MOON_LADDER_MIN_DISTANCE)
+        if (MtMoonGen_LadderDistance(&spot, otherLadder) < MT_MOON_LADDER_MIN_DISTANCE)
             return FALSE;
     }
     return IsLadderSpot(map, layout, x, y);
@@ -1449,16 +1466,16 @@ static bool8 IsSpotFor(const struct TileMap *map, const struct Layout *layout,
 #define LADDER_RANDOM_TRIES 48
 
 /*
- * Move `ladder` to a random spot (IsSpotFor). It tries random tiles first
- * (in the prototype about 1 tile in 5 was a spot, 1 in 14 at worst, so a few
- * tries usually find one), which is much quicker than looking at every
- * tile, as P9 measures load time; if they all miss, it looks at
- * every tile, giving each spot an equal chance (reservoir sampling, as in
- * RandomGapPlace). Either way every spot is equally likely. Returns FALSE if
- * there is no spot.
+ * Move `ladder` to a random spot (IsLadderSpotAwayFrom). It tries random
+ * tiles first: in the prototype about 1 tile in 5 was a spot (1 in 14 at
+ * worst), so a few tries usually find one, which is much quicker than
+ * looking at every tile (P9 measures load time). If they all miss, it looks
+ * at every tile, giving each spot an equal chance (reservoir sampling, as
+ * in RandomGapPlace). Either way every spot is equally likely. Returns
+ * FALSE if there is no spot.
  */
 static bool8 PlaceLadder(const struct TileMap *map, const struct Layout *layout,
-                         struct MtMoonLadder *ladder, const struct MtMoonLadder *other)
+                         struct MtMoonLadder *ladder, const struct MtMoonLadder *otherLadder)
 {
     s32 x, y, i, found = 0;
     s32 xCount = MAX_X(map) - MIN_X - 1;   /* x runs from MIN_X + 1 to MAX_X - 1 */
@@ -1468,7 +1485,7 @@ static bool8 PlaceLadder(const struct TileMap *map, const struct Layout *layout,
     {
         x = MIN_X + 1 + MtMoonGen_RandomBelow(xCount);
         y = MIN_Y + 2 + MtMoonGen_RandomBelow(yCount);
-        if (IsSpotFor(map, layout, other, x, y))
+        if (IsLadderSpotAwayFrom(map, layout, otherLadder, x, y))
         {
             ladder->x = x;
             ladder->y = y;
@@ -1479,7 +1496,7 @@ static bool8 PlaceLadder(const struct TileMap *map, const struct Layout *layout,
     {
         for (x = MIN_X + 1; x <= MAX_X(map) - 1; x++)
         {
-            if (!IsSpotFor(map, layout, other, x, y))
+            if (!IsLadderSpotAwayFrom(map, layout, otherLadder, x, y))
                 continue;
             found++;
             if (MtMoonGen_RandomBelow(found) == 0)
@@ -1512,10 +1529,10 @@ static bool8 PlaceLadders(struct TileMap *map, const struct Layout *layout, stru
             return FALSE;
         if (PlaceLadder(map, layout, &cave->exit, &cave->entrance))
         {
-            Put(map, cave->entrance.x, cave->entrance.y - 1, T_LADDER_TOP);
-            Put(map, cave->entrance.x, cave->entrance.y, T_LADDER);
-            Put(map, cave->exit.x, cave->exit.y - 1, T_LADDER_TOP);
-            Put(map, cave->exit.x, cave->exit.y, T_LADDER);
+            SetTile(map, cave->entrance.x, cave->entrance.y - 1, T_LADDER_TOP);
+            SetTile(map, cave->entrance.x, cave->entrance.y, T_LADDER);
+            SetTile(map, cave->exit.x, cave->exit.y - 1, T_LADDER_TOP);
+            SetTile(map, cave->exit.x, cave->exit.y, T_LADDER);
             return TRUE;
         }
     }
@@ -1621,14 +1638,22 @@ static bool8 IsDensityOk(const struct TileMap *map)
 #define B2F_CONTENT_PIECES 10
 #define MIN_OPEN_SPOTS (4 * (B2F_CONTENT_PIECES - 1) + 1)
 
+/* TRUE if (x, y) and the tiles north, south, west and east of it are plain
+ * floor: where the core may stamp a boulder (CanStampB2FPrefabAt). (x, y)
+ * must not be on the map's edge. */
+static bool8 IsPlainFloorCross(const struct TileMap *map, s32 x, s32 y)
+{
+    return TILE_AT(map, x, y) == T_FLOOR
+        && TILE_AT(map, x - 1, y) == T_FLOOR && TILE_AT(map, x + 1, y) == T_FLOOR
+        && TILE_AT(map, x, y - 1) == T_FLOOR && TILE_AT(map, x, y + 1) == T_FLOOR;
+}
+
 static bool8 IsOpenSpot(const struct TileMap *map, const struct Layout *layout,
                         const struct MtMoonCave *cave, s32 x, s32 y)
 {
     s32 dx, dy;
 
-    if (TILE_AT(map, x, y) != T_FLOOR
-        || TILE_AT(map, x - 1, y) != T_FLOOR || TILE_AT(map, x + 1, y) != T_FLOOR
-        || TILE_AT(map, x, y - 1) != T_FLOOR || TILE_AT(map, x, y + 1) != T_FLOOR)
+    if (!IsPlainFloorCross(map, x, y))
         return FALSE;
     for (dy = -1; dy <= 1; dy += 2)
     {
@@ -1746,14 +1771,18 @@ static void BuildB2FShape(struct MtMoonCave *cave)
      * for a new shape (and in the end keeps the vanilla map). */
 }
 
-/* Plain floor and rock, for cells the core changed after buildShape (see
- * PickB2FTile). */
-#define TILE_SAFE_FLOOR 0x3281
-#define TILE_SAFE_ROCK  0x06ce
+/* Plain floor or rock, matching whether the core's grid says (x, y) can be
+ * walked on. */
+static u16 PlainTileFor(s32 x, s32 y)
+{
+    return sTileValues[MtMoonGen_IsFloor(x, y) ? T_FLOOR : T_ROCK];
+}
 
 /*
  * The tile for map tile (x, y): the one the layout chose. The ladders are
- * in the tile map too, with vanilla B2F's freestanding top 0x28e.
+ * in the tile map too, with vanilla B2F's freestanding top 0x28e. The
+ * chamber's cells get plain floor or rock: the core draws the chamber's own
+ * tiles over them.
  *
  * SAFETY NET: the core never changes a finished layout of this style (it
  * has no pockets and room for all the content), but if it ever did (filling
@@ -1766,14 +1795,17 @@ static void BuildB2FShape(struct MtMoonCave *cave)
 static u16 PickB2FTile(const struct MtMoonCave *cave, s32 x, s32 y)
 {
     struct TileMap map;
-    bool8 floor = MtMoonGen_IsFloor(x, y);
+    u8 tile;
     u16 value;
 
     if (!GetTileMap(cave, &map))
-        return floor ? TILE_SAFE_FLOOR : TILE_SAFE_ROCK;
-    value = sTileValues[TILE_AT(&map, x, y)];
-    if (IS_WALKABLE_VALUE(value) != floor)
-        value = floor ? TILE_SAFE_FLOOR : TILE_SAFE_ROCK;
+        return PlainTileFor(x, y);
+    tile = TILE_AT(&map, x, y);
+    if (tile == T_CHAMBER)
+        return PlainTileFor(x, y);
+    value = sTileValues[tile];
+    if (IS_WALKABLE_VALUE(value) != MtMoonGen_IsFloor(x, y))
+        return PlainTileFor(x, y);
     return value;
 }
 
@@ -1790,9 +1822,7 @@ static bool8 CanStampB2FPrefabAt(const struct MtMoonCave *cave, s32 x, s32 y)
 
     if (!GetTileMap(cave, &map) || x < 1 || y < 1 || x >= map.width - 1 || y >= map.height - 1)
         return FALSE;
-    return TILE_AT(&map, x, y) == T_FLOOR
-        && TILE_AT(&map, x - 1, y) == T_FLOOR && TILE_AT(&map, x + 1, y) == T_FLOOR
-        && TILE_AT(&map, x, y - 1) == T_FLOOR && TILE_AT(&map, x, y + 1) == T_FLOOR;
+    return IsPlainFloorCross(&map, x, y);
 }
 
 const struct MtMoonStyle gMtMoonStyleB2F =
