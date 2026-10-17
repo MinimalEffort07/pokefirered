@@ -306,6 +306,8 @@ struct Box
 /* What content placement keeps track of (see CONTENT PLACEMENT). */
 struct Placement
 {
+    /* The floor's style, for rule 5 (canStampAt). */
+    const struct MtMoonStyle *style;
     /* The candidate tiles, packed as x | (y << 8) (both are under 256).
      * They live in the flood-fill queue's memory: no flood fill runs while
      * content is being placed. */
@@ -374,11 +376,13 @@ u16 MtMoonGen_RandomBelow(u16 n)
 
 /*
  * The borrowed block is laid out as
- *     [grid] [flood queue] [struct GenerationWork]
+ *     [grid] [flood queue] [struct GenerationWork] [the style's work area]
  * with each part's size rounded up to a multiple of 4 bytes, so every part
  * starts on an address the CPU can read it from (a u16 needs an even
  * address; a u32 or a pointer, a multiple of 4). The heap hands out
- * blocks that start on a multiple of 4.
+ * blocks that start on a multiple of 4. (struct GenerationWork holds
+ * pointers, so its size is already a multiple of 4.) The style's work area
+ * is the workBytes its struct MtMoonStyle asks for, often none.
  */
 static s32 GridBytes(void)
 {
@@ -406,13 +410,20 @@ static struct StampList *Stamps(void)
 }
 
 /* Borrow an all-wall grid (wall is 0, so zeroed memory) of the given size,
- * plus the flood-fill queue and the work areas (an empty stamp list). */
-static bool8 AllocCaveGrid(s32 width, s32 height)
+ * plus the flood-fill queue and the work areas (an empty stamp list, and
+ * `styleBytes` of zeroed memory for the style). */
+static bool8 AllocCaveGrid(s32 width, s32 height, u16 styleBytes)
 {
     sCave.width = width;
     sCave.height = height;
-    sCaveGrid = AllocZeroed(GridBytes() + QueueBytes() + sizeof(struct GenerationWork));
+    sCaveGrid = AllocZeroed(GridBytes() + QueueBytes() + sizeof(struct GenerationWork) + styleBytes);
     return sCaveGrid != NULL;
+}
+
+/* The style's work area: right after struct GenerationWork. */
+void *MtMoonGen_GetStyleWork(void)
+{
+    return Work() + 1;
 }
 
 /* Give the grid back. The size goes to 0 too, so any late read sees an
@@ -1092,8 +1103,8 @@ static void SetUpEvents(const struct MtMoonFloor *floor, const struct MapEvents 
  * of its roaming box, so the whole box counts as taken.
  *
  * Each piece covers a BOX of tiles: an object's roaming box (GetPieceBox),
- * or the single tile of a hidden item or sign. A spot is good (IsGoodSpot)
- * when:
+ * or the single tile of a hidden item or sign. A spot is good (IsGoodSpot
+ * checks rules 1-4, StyleAllowsPrefab rule 5) when:
  *   1. every tile of the box is free floor, so a mover can roam all of it;
  *   2. the box is at least 3 tiles from both ladders, so nothing crowds the
  *      arrival tiles or stands in a ladder's footprint;
@@ -1111,6 +1122,9 @@ static void SetUpEvents(const struct MtMoonFloor *floor, const struct MapEvents 
  *      Hidden items and signs are stricter: their whole ring must be free
  *      floor, so the boulder or signpost stands alone in open floor (as
  *      vanilla's sign does).
+ *   5. a hidden item or sign only goes where the floor's style can draw
+ *      around it: its canStampAt, if it has one, returns TRUE for the tile
+ *      (see ONE-TILE PREFABS in mt_moon_gen_style.h).
  * Since every placement keeps the floor in one piece (rule 4) and no later
  * piece can take a tile next to an earlier one (rule 3), every rule above
  * still holds once the last piece is placed. IsContentReachable then checks
@@ -1165,7 +1179,8 @@ static void SetUpEvents(const struct MtMoonFloor *floor, const struct MapEvents 
 #define MAX_RING_TILES (4 * 31 + 4)
 
 /* What a piece needs: its movement (which sets its box) and whether its
- * whole ring must be open floor. */
+ * whole ring must be open floor. needOpenRing is TRUE exactly for the
+ * one-tile prefabs (hidden items and signs), which rule 5 also applies to. */
 struct PieceShape
 {
     u8 movementType;
@@ -1375,7 +1390,16 @@ static bool8 KeepsFloorConnected(const struct Box *box, bool8 needOpenRing)
     return runs == 1;
 }
 
-/* All four rules, cheapest first. */
+/* Rule 5: a one-tile prefab only goes where the style's canStampAt (if it
+ * has one) agrees. Asked last, after the core's own rules. */
+static bool8 StyleAllowsPrefab(const struct PieceShape *shape, const struct Placement *placement, s32 x, s32 y)
+{
+    bool8 (*canStampAt)(const struct MtMoonCave *cave, s32 x, s32 y) = placement->style->canStampAt;
+
+    return !shape->needOpenRing || canStampAt == NULL || canStampAt(&sCave, x, y);
+}
+
+/* Rules 1 to 4, cheapest first. */
 static bool8 IsGoodSpot(const struct Box *box, const struct PieceShape *shape, const struct Placement *placement)
 {
     return IsBoxFreeFloor(box)
@@ -1450,8 +1474,8 @@ static bool8 IsUsableSpot(const struct PieceShape *shape, const struct Placement
         return FALSE;
     GetPieceBox(shape, x, y, &box);
     if (mode == SPOT_FITS)
-        return IsGoodSpot(&box, shape, placement);
-    return CanCarveAround(&box, placement);
+        return IsGoodSpot(&box, shape, placement) && StyleAllowsPrefab(shape, placement, x, y);
+    return CanCarveAround(&box, placement) && StyleAllowsPrefab(shape, placement, x, y);
 }
 
 /* Way d: carve out a spot anchored on any tile, wall or floor, whose box
@@ -1469,7 +1493,7 @@ static bool8 CarveAnywhere(const struct PieceShape *shape, struct Placement *pla
     for (i = 0; i < width * height; i++)
     {
         GetPieceBox(shape, x, y, &box);
-        if (CanCarveAround(&box, placement))
+        if (CanCarveAround(&box, placement) && StyleAllowsPrefab(shape, placement, x, y))
         {
             CarveAround(&box, placement);
             *outX = x;
@@ -1644,7 +1668,7 @@ static void ResetObjectTemplates(const struct MapEvents *rom)
  * keeping their vanilla movement types and ranges. Returns FALSE if some
  * piece found no spot; GenerateFloor then tries a new shape.
  */
-static bool8 PlaceContent(void)
+static bool8 PlaceContent(const struct MtMoonStyle *style)
 {
     struct Placement *placement = &Work()->placement;
     struct ObjectEventTemplate *templates = gSaveBlock1Ptr->objectEventTemplates;
@@ -1652,6 +1676,7 @@ static bool8 PlaceContent(void)
     s32 i;
 
     ResetObjectTemplates(&sMtMoonEvents);
+    placement->style = style;
     placement->count = 0;
     ListCandidates(placement);
 
@@ -1848,7 +1873,7 @@ static bool8 GenerateFloor(const struct MtMoonFloor *floor, u16 seed)
     s32 attempt;
     const struct MapEvents *rom = gMapHeader.events; /* the map loader set it from the ROM header */
 
-    if (!AllocCaveGrid(gMapHeader.mapLayout->width, gMapHeader.mapLayout->height))
+    if (!AllocCaveGrid(gMapHeader.mapLayout->width, gMapHeader.mapLayout->height, floor->style->workBytes))
         return FALSE;
 
     SeedCaveRng(seed, floor->floorNumber);
@@ -1863,7 +1888,7 @@ static bool8 GenerateFloor(const struct MtMoonFloor *floor, u16 seed)
             continue;
         FillPockets();
         SetUpEvents(floor, rom);
-        if (PlaceContent() && IsContentReachable())
+        if (PlaceContent(floor->style) && IsContentReachable())
             break;
     }
     if (attempt == MAX_SHAPE_ATTEMPTS)

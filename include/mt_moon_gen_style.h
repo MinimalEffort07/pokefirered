@@ -23,11 +23,16 @@
  *   pickTile    returns the map cell value to draw for one grid cell,
  *               ladder cells included (MtMoonGen_GetLadderTile() gives the
  *               vanilla ladder tiles). It only looks at the grid, the
- *               ladders and the cell's position, so the same grid always
- *               draws the same way.
+ *               ladders, the cell's position and what buildShape left in
+ *               the style's work area (if it has one), so the same shape
+ *               always draws the same way.
  *
- * Today one style, the cellular-automata cave in
- * src/mt_moon_style_cellular.c, provides every generated floor.
+ * A style may also have a say in where the core stamps boulders and
+ * signposts, and ask for memory of its own during generation (the optional
+ * canStampAt and workBytes in struct MtMoonStyle).
+ *
+ * 1F has its own style (src/mt_moon_style_1f.c); the other floors use the
+ * cellular-automata cave in src/mt_moon_style_cellular.c.
  *
  * GIVING A FLOOR ITS OWN STYLE
  *
@@ -147,7 +152,9 @@
  *      (wanderers) count as standing on every tile of their roaming box.
  *      Each spot is chosen so that the floor stays in one connected piece
  *      and the player can stand next to every object, hidden item and
- *      sign, facing it. Nothing goes within 2 tiles of a ladder.
+ *      sign, facing it. Nothing goes within 2 tiles of a ladder. A
+ *      style with a canStampAt (see ONE-TILE PREFABS) also has a say in
+ *      where the boulders and signposts go.
  *   3. Repair. If no spot fits, the core carves open floor (wall cells
  *      become floor): the object's box plus one tile on every side, kept
  *      3+ tiles from the ladders and inside the 2-tile border (3 at the
@@ -173,6 +180,14 @@
  * and signs; a style (or a later decoration step) may use it for its own
  * one-tile pieces, once its shape is final. Never stamp a ladder's
  * footprint. A later stamp on the same tile replaces an earlier one.
+ *
+ * Vanilla Mt. Moon only ever puts a hidden item's boulder or a sign's
+ * signpost next to plain cave floor (0x281), and the core always stamps them
+ * on a tile whose 8 neighbours are floor. If a style draws other floor tiles
+ * too (1F's sand), the core could put a signpost next to one of them, which
+ * vanilla never does. Such a style gives itself a canStampAt (struct
+ * MtMoonStyle), and the core only stamps a hidden item or sign where it
+ * returns TRUE.
  *
  * MAP CELL VALUES
  *
@@ -223,6 +238,27 @@ struct MtMoonStyle
 {
     void (*buildShape)(struct MtMoonCave *cave);
     u16 (*pickTile)(const struct MtMoonCave *cave, s32 x, s32 y);
+
+    /* --- Optional (NULL or 0: not used) ---------------------------------
+     *
+     * canStampAt  TRUE if the core may stamp a hidden item's boulder or a
+     *             sign's signpost on map tile (x, y): pickTile draws plain
+     *             cave floor (0x281) on the tiles north, south, west and
+     *             east of it (see ONE-TILE PREFABS). The core asks it during
+     *             content placement, only about tiles that already follow
+     *             all of the core's own rules. It answers from the cave (the
+     *             ladders), the position and its own work area, not from the
+     *             grid, which is in the middle of content placement. NULL:
+     *             wherever the core's own rules allow.
+     * workBytes   How many bytes of memory the style wants for itself while
+     *             a floor is generated (see MtMoonGen_GetStyleWork). The
+     *             grid only says wall or floor, and buildShape, canStampAt
+     *             and pickTile are separate calls, so a style that decides
+     *             more than that in buildShape (1F's sand) keeps it here.
+     *             0: none.
+     */
+    bool8 (*canStampAt)(const struct MtMoonCave *cave, s32 x, s32 y);
+    u16 workBytes;
 };
 
 /* --- Grid access (provided by the core) ---------------------------------- */
@@ -314,6 +350,19 @@ void MtMoonGen_GetLadderFoot(const struct MtMoonLadder *ladder, s32 *x, s32 *y);
  *         into the wall above.
  */
 u16 MtMoonGen_GetLadderTile(const struct MtMoonCave *cave, s32 x, s32 y);
+
+/* --- The style's work area (provided by the core) ------------------------ */
+
+/*
+ * The style's own memory for the floor being generated: workBytes bytes
+ * (struct MtMoonStyle), starting on a multiple of 4 bytes. It is borrowed
+ * from the heap together with the grid, so it costs no permanent RAM, and is
+ * only valid from buildShape until the floor's last pickTile. It is zeroed
+ * once per floor, not before each shape (see THE LADDER CONTRACT: the core
+ * may call buildShape again), so buildShape sets up everything it keeps
+ * there. Only meaningful for a style that asked for workBytes.
+ */
+void *MtMoonGen_GetStyleWork(void);
 
 /* --- One-tile prefabs (provided by the core) ------------------------------ */
 
