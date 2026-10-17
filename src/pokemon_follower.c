@@ -13,9 +13,11 @@
  * animations, per-frame sprite updates, and coordinate changes.
  *
  * This creates a natural trailing effect: the follower walks the same
- * path the player took, but 1-2 tiles behind. If the player moves
- * faster than the follower can keep up (e.g., the trail fills up),
- * the follower teleports to catch up.
+ * path the player took, but 1-2 tiles behind. If the follower falls more
+ * than TELEPORT_DIST tiles behind (the player ran, cycled or surfed away
+ * faster than the follower walks), it does not teleport: it switches to
+ * "catch-up mode" and walks fast straight toward the player, with no random
+ * pauses or detours, until it is close again (see UpdateFollowerPokemon).
  *
  * LIFECYCLE:
  * - ActivateFollower(): Called from party menu "WALK" option. Stores
@@ -54,8 +56,11 @@
  * Distance thresholds for follower behavior (Manhattan distance in tiles).
  * - FOLLOW_DIST: When farther than this, the follower moves toward the player.
  *   At exactly this distance, the follower idles (stands near the player).
- * - TELEPORT_DIST: When farther than this, the follower teleports to catch up
- *   (e.g., after running or if the follower got stuck on geometry).
+ * - TELEPORT_DIST: When farther than this, the follower enters catch-up mode
+ *   (e.g., after the player ran or cycled ahead): it walks fast straight
+ *   toward the player instead of following at a relaxed pace. Despite the
+ *   name it does not teleport; teleporting is only the STUCK_FRAMES fallback
+ *   below. The name is kept from when this distance did trigger a teleport.
  * - IDLE_CHANCE: 1-in-N chance per frame that the follower skips a move when
  *   at medium distance. Creates a relaxed, organic following pace.
  * - DEVIATE_CHANCE: 1-in-N chance that the follower picks a random perpendicular
@@ -67,10 +72,24 @@
 #define DEVIATE_CHANCE  4
 
 /*
- * STUCK_FRAMES: how many consecutive blocked catch-up moves before falling
- * back to teleport. A move is "blocked" if the follower's tile coordinate
- * does not change after a held movement completes (the ObjectEvent faced the
- * target direction but geometry prevented the step).
+ * STUCK_FRAMES: in catch-up mode, how many checks in a row may find the
+ * follower on the same tile as before its last catch-up move before it
+ * gives up and teleports next to the player (a last resort so it can never
+ * be left behind for good).
+ *
+ * TODAY THIS NEVER HAPPENS. The follower moves with "held movements": a
+ * one-step command (e.g. "walk fast east") stored on its ObjectEvent, which
+ * the sprite system then plays out over the next few frames. Starting a
+ * held walk moves the ObjectEvent's tile coordinate to the next tile
+ * straight away, without checking whether that tile is a wall, water or a
+ * ledge (InitNpcForMovement in event_object_movement.c). So every catch-up
+ * move changes the follower's tile, the counter is reset to 0 on the next
+ * check, and it never reaches STUCK_FRAMES. The follower walks through
+ * obstacles instead (the same is true of the normal following below).
+ *
+ * The check becomes live once issue #3 ("Ensure pokemon only walk on tiles
+ * that characters can walk on") adds collision checks, so a catch-up move
+ * can be refused and the follower can stay on its tile.
  */
 #define STUCK_FRAMES    5
 
@@ -84,7 +103,7 @@ static EWRAM_DATA struct {
     bool8 active;           /* Follower is logically enabled */
     bool8 spriteSpawned;    /* Sprite currently exists on screen */
     u8 partySlot;           /* Index into gPlayerParty[] */
-    u8 stuckFrames;         /* Consecutive catch-up moves with no position change */
+    u8 stuckFrames;         /* Catch-up checks in a row with no tile change (see STUCK_FRAMES) */
     u16 species;            /* Cached species (for change detection) */
     u8 graphicsId;          /* OBJ_EVENT_GFX_* constant for the sprite */
     u8 objEventId;          /* Index into gObjectEvents[] */
@@ -414,9 +433,11 @@ void DespawnFollowerSprite(void)
 /**
  * Teleport the follower to a walkable tile near the player.
  *
- * Used when the follower is too far away (e.g., got stuck on geometry,
- * player ran, or after a warp where positions don't line up). Finds a
- * walkable tile near the player and snaps the follower there.
+ * Only used as catch-up mode's last resort, when the follower has stayed on
+ * the same tile for STUCK_FRAMES checks in a row (which cannot happen until
+ * the follower's moves check collision; see STUCK_FRAMES). A follower that
+ * is merely far away walks back instead. Finds a walkable tile near the
+ * player and snaps the follower there.
  */
 static void TeleportFollowerNearPlayer(struct ObjectEvent *followerObj, struct ObjectEvent *playerObj)
 {
@@ -511,7 +532,9 @@ static u8 ChooseFollowerDirection(struct ObjectEvent *followerObj, s16 playerX, 
  * HOW IT WORKS:
  * Uses a distance-based approach with randomness for natural movement:
  * 1. Compute Manhattan distance from follower to player.
- * 2. If distance > TELEPORT_DIST, teleport the follower nearby.
+ * 2. If distance > TELEPORT_DIST, catch-up mode: walk fast straight toward
+ *    the player, with no random idle or deviation (steps 3 and 5 are
+ *    skipped). Teleport only via the STUCK_FRAMES last resort.
  * 3. If distance > FOLLOW_DIST, move toward the player (with occasional
  *    random perpendicular deviation for organic movement).
  * 4. If distance <= FOLLOW_DIST, idle — the follower is close enough.
@@ -552,13 +575,18 @@ void UpdateFollowerPokemon(void)
     dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
 
     /* Too far away — catch-up mode: move directly toward player without randomness.
-     * No IDLE_CHANCE skip, no DEVIATE_CHANCE deviation. Uses the run animation
-     * (GetWalkFastMovementAction) so the follower visually hurries.
+     * No IDLE_CHANCE skip, no DEVIATE_CHANCE deviation. Uses the walk-fast
+     * movement (GetWalkFastMovementAction): the normal walking frames played
+     * at double speed, 2 pixels per frame, so one 16-pixel tile takes 8
+     * frames instead of 16. That is the player's running speed, so the
+     * follower visibly hurries.
      *
-     * Stuck detection: if the follower's position did not change since the last
-     * catch-up move (geometry blocked it), increment stuckFrames. After
-     * STUCK_FRAMES consecutive blocked moves, fall back to teleport so the
-     * follower cannot get permanently trapped. */
+     * Stuck detection: if the follower is still on the tile it stood on
+     * before its last catch-up move, increment stuckFrames; after
+     * STUCK_FRAMES checks in a row, teleport so the follower cannot be left
+     * behind for good. Held movements skip collision, so today every move
+     * changes the tile and this never fires; it becomes live once issue #3
+     * adds collision checks (see STUCK_FRAMES). */
     if (dist > TELEPORT_DIST)
     {
         if (followerObj->currentCoords.x == sFollower.prevX &&
