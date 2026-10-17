@@ -58,8 +58,8 @@ return {
             stats[floor.name] = s
         end
         local cave = h.VANILLA_CAVE
-        local vanilla = h.timed_entry(cave, cave.arrival_warp, rng)
-        local generated = h.timed_entry(floor, floor.arrival_warp, rng)
+        local vanilla = h.timed_entry(cave, cave.warp, rng)
+        local generated = h.timed_entry(floor, floor.entrance.warp, rng)
         h.enter_floor(floor, rng)
         if vanilla == nil then
             return false, cave.name .. ": the player never regained control"

@@ -10,10 +10,10 @@
  * original procedural-cave look, and for now every generated floor uses it.
  *
  * SHAPE (BuildCellularShape):
- *   1. Place the ladders the floor table leaves free (PlaceLadders), at
- *      least MT_MOON_LADDER_MIN_DISTANCE apart. An up-ladder always goes
- *      against the solid top border (y = 2), so the north wall it must
- *      stand at the foot of is the border, which nothing ever carves.
+ *   1. Keep the ladders where the core proposed them (see the ladder
+ *      contract in include/mt_moon_gen_style.h). An up-ladder is proposed
+ *      on row 2, against the solid top border, so the north wall it must
+ *      stand at the foot of is the border, which nothing here ever carves.
  *   2. Fill the grid with random walls and floors (about 30% floor).
  *   3. Smooth it four times with a cellular-automata rule: a cell becomes
  *      wall if 5 or more of its 8 neighbours are wall, otherwise floor. Blobs
@@ -76,7 +76,7 @@
  * below readable. */
 #define IS_FLOOR(x, y) MtMoonGen_IsFloor((x), (y))
 #define SET_CELL(x, y, v) MtMoonGen_SetCell((x), (y), (v))
-#define NEIGHBORS(x, y) MtMoonGen_GetFloorMask((x), (y))
+#define FLOOR_MASK(x, y) MtMoonGen_GetFloorMask((x), (y))
 
 /*
  * The passes over the whole grid read cells straight from grid rows (see
@@ -137,7 +137,7 @@ static void EnforceBorders(const struct MtMoonCave *cave)
  *   door  a 3-wide corridor running 5 cells north from the doorway;
  *   down  a 5 x 5 patch of floor around the hole;
  *   up    a 3-wide patch of floor 4 cells deep below the ladder. The wall
- *         above is the top border (see PlaceLadders).
+ *         above is the top border (up-ladders are proposed on row 2).
  */
 static void ReinforceLadder(const struct MtMoonCave *cave, const struct MtMoonLadder *ladder)
 {
@@ -167,70 +167,6 @@ static void ReinforceKeyAreas(const struct MtMoonCave *cave)
 {
     ReinforceLadder(cave, &cave->entrance);
     ReinforceLadder(cave, &cave->exit);
-}
-
-/*
- * A random position for a ladder the style places. x is in [4, width - 5]
- * so the open floor around it (ReinforceLadder) stays clear of the 2-cell
- * side borders. An up-ladder stands at y = 2, right below the 2-cell top
- * border: the border is its north wall. A down-ladder's y is in
- * [4, height - 7], keeping its 5 x 5 patch above the 3-cell bottom border.
- */
-static void PickLadderSpot(const struct MtMoonCave *cave, struct MtMoonLadder *ladder)
-{
-    ladder->x = MtMoonGen_RandomBelow(cave->width - 8) + 4;
-    if (ladder->kind == MT_MOON_LADDER_UP)
-        ladder->y = 2;
-    else
-        ladder->y = MtMoonGen_RandomBelow(cave->height - 10) + 4;
-}
-
-/*
- * Place the ladders that aren't fixed by the floor table: random spots,
- * redrawn until the two are MT_MOON_LADDER_MIN_DISTANCE apart. That usually
- * takes a few draws (two up-ladders, both on row 2, need 24 columns between
- * them: about 1 draw in 6). The fallback after 200 draws, which practically
- * never runs, puts free ladders in opposite corners, which are far enough
- * apart on every Mt. Moon floor (1F's door is fixed at the bottom middle).
- */
-static void PlaceLadders(struct MtMoonCave *cave)
-{
-    s32 attempt;
-
-    for (attempt = 0; attempt < 200; attempt++)
-    {
-        if (!cave->entrance.fixed)
-            PickLadderSpot(cave, &cave->entrance);
-        if (!cave->exit.fixed)
-            PickLadderSpot(cave, &cave->exit);
-        if (MtMoonGen_LadderDistance(&cave->entrance, &cave->exit) >= MT_MOON_LADDER_MIN_DISTANCE)
-            return;
-    }
-    if (!cave->entrance.fixed)
-    {
-        cave->entrance.x = 4;
-        cave->entrance.y = (cave->entrance.kind == MT_MOON_LADDER_UP) ? 2 : 4;
-    }
-    if (!cave->exit.fixed)
-    {
-        cave->exit.x = cave->width - 5;
-        cave->exit.y = (cave->exit.kind == MT_MOON_LADDER_UP) ? 2 : 4;
-    }
-}
-
-/*
- * The floor cell in front of a ladder, where corridors join it: north of
- * the door, south of an up-ladder (its north side is wall), the hole
- * itself (it has floor on every side).
- */
-static void GetLadderFoot(const struct MtMoonLadder *ladder, s32 *x, s32 *y)
-{
-    *x = ladder->x;
-    *y = ladder->y;
-    if (ladder->kind == MT_MOON_LADDER_DOOR)
-        *y -= 1;
-    else if (ladder->kind == MT_MOON_LADDER_UP)
-        *y += 1;
 }
 
 static void InitRandomGrid(const struct MtMoonCave *cave)
@@ -529,7 +465,6 @@ static void BuildCellularShape(struct MtMoonCave *cave)
     s32 pass;
     s32 fromX, fromY, toX, toY;
 
-    PlaceLadders(cave);
     InitRandomGrid(cave);
 
     for (pass = 0; pass < 4; pass++)
@@ -550,18 +485,18 @@ static void BuildCellularShape(struct MtMoonCave *cave)
     SmoothWallEdges(cave);
     ReinforceKeyAreas(cave);
 
-    GetLadderFoot(&cave->entrance, &fromX, &fromY);
-    GetLadderFoot(&cave->exit, &toX, &toY);
+    MtMoonGen_GetLadderFoot(&cave->entrance, &fromX, &fromY);
+    MtMoonGen_GetLadderFoot(&cave->exit, &toX, &toY);
     if (!MtMoonGen_FloodFillReaches(fromX, fromY, toX, toY))
         CarvePath(cave, fromX, fromY, toX, toY);
 }
 
 static u16 GetWallTile(s32 x, s32 y)
 {
-    u8 m = NEIGHBORS(x, y);
+    u8 floorMask = FLOOR_MASK(x, y);
     /* One bit per side with floor: 8 = N, 4 = S, 2 = W, 1 = E. */
-    u8 sides = ((m & MT_MOON_N) ? 8 : 0) | ((m & MT_MOON_S) ? 4 : 0)
-             | ((m & MT_MOON_W) ? 2 : 0) | ((m & MT_MOON_E) ? 1 : 0);
+    u8 sides = ((floorMask & MT_MOON_N) ? 8 : 0) | ((floorMask & MT_MOON_S) ? 4 : 0)
+             | ((floorMask & MT_MOON_W) ? 2 : 0) | ((floorMask & MT_MOON_E) ? 1 : 0);
 
     switch (sides)
     {

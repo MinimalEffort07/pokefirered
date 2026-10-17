@@ -51,8 +51,10 @@
  *
  * GENERATION STEPS (GenerateFloor)
  *   1. Seed the private random generator.
- *   2. Borrow an all-wall grid the size of the floor's layout and let the
- *      floor's style place the ladders and carve the shape around them.
+ *   2. Borrow an all-wall grid the size of the floor's layout, propose a
+ *      position for each ladder the floor table doesn't fix
+ *      (ProposeLadders), and let the floor's style carve the shape around
+ *      the ladders, moving them first if it wants.
  *   3. Check the ladders (CheckLadders). A style that breaks the rules gets
  *      up to 4 tries; after that the floor stays the vanilla map.
  *   4. Draw every map cell with the style's tile picker.
@@ -117,17 +119,25 @@
 #define TILE_DOORFRAME_EAST  0x06ca
 #define TILE_DOOR_BASE       0x06a3  /* solid; the wall below the doorframe */
 #define TILE_HOLE            0x3285  /* walkable; stepping on it warps down */
-#define TILE_LADDER          0x3296  /* walkable; stepping on it warps up */
-#define TILE_LADDER_TOP      0x068f  /* solid; the ladder's top, in the wall */
+#define TILE_UP_LADDER       0x3296  /* walkable; stepping on it warps up */
+#define TILE_UP_LADDER_TOP   0x068f  /* solid; the ladder's top, in the wall */
+
+/* A floor-table coordinate meaning "not fixed: the core proposes one". */
+#define NOT_FIXED 0xFF
 
 /* A floor's ladder, as the floor table describes it. */
 struct MtMoonFloorLadder
 {
     u8 warpId;  /* index in the floor's vanilla warp table (map.json order) */
     u8 kind;    /* MT_MOON_LADDER_* */
-    u8 fixedX;  /* fixed position, or MT_MOON_LADDER_UNPLACED to let the */
-    u8 fixedY;  /* floor's style choose */
+    u8 fixedX;  /* fixed position, or NOT_FIXED */
+    u8 fixedY;
 };
+
+#define LADDER_ANYWHERE(warp, ladderKind) \
+    { .warpId = (warp), .kind = (ladderKind), .fixedX = NOT_FIXED, .fixedY = NOT_FIXED }
+#define LADDER_AT(warp, ladderKind, x, y) \
+    { .warpId = (warp), .kind = (ladderKind), .fixedX = (x), .fixedY = (y) }
 
 /* One generated floor and how it connects to the rest of the game. */
 struct MtMoonFloor
@@ -155,27 +165,22 @@ static const struct MtMoonFloor sFloors[] =
     {
         .layoutId = LAYOUT_MT_MOON_1F,
         .floorNumber = 1,
-        .entrance = { .warpId = 3, .kind = MT_MOON_LADDER_DOOR, .fixedX = 18, .fixedY = 37 },
-        .exit = { .warpId = 0, .kind = MT_MOON_LADDER_DOWN,
-                  .fixedX = MT_MOON_LADDER_UNPLACED, .fixedY = MT_MOON_LADDER_UNPLACED },
+        .entrance = LADDER_AT(3, MT_MOON_LADDER_DOOR, 18, 37),
+        .exit = LADDER_ANYWHERE(0, MT_MOON_LADDER_DOWN),
         .style = &gMtMoonStyle1F,
     },
     {
         .layoutId = LAYOUT_MT_MOON_B1F,
         .floorNumber = 2,
-        .entrance = { .warpId = 0, .kind = MT_MOON_LADDER_UP,
-                      .fixedX = MT_MOON_LADDER_UNPLACED, .fixedY = MT_MOON_LADDER_UNPLACED },
-        .exit = { .warpId = 3, .kind = MT_MOON_LADDER_DOWN,
-                  .fixedX = MT_MOON_LADDER_UNPLACED, .fixedY = MT_MOON_LADDER_UNPLACED },
+        .entrance = LADDER_ANYWHERE(0, MT_MOON_LADDER_UP),
+        .exit = LADDER_ANYWHERE(3, MT_MOON_LADDER_DOWN),
         .style = &gMtMoonStyleB1F,
     },
     {
         .layoutId = LAYOUT_MT_MOON_B2F,
         .floorNumber = 3,
-        .entrance = { .warpId = 0, .kind = MT_MOON_LADDER_UP,
-                      .fixedX = MT_MOON_LADDER_UNPLACED, .fixedY = MT_MOON_LADDER_UNPLACED },
-        .exit = { .warpId = 1, .kind = MT_MOON_LADDER_UP,
-                  .fixedX = MT_MOON_LADDER_UNPLACED, .fixedY = MT_MOON_LADDER_UNPLACED },
+        .entrance = LADDER_ANYWHERE(0, MT_MOON_LADDER_UP),
+        .exit = LADDER_ANYWHERE(1, MT_MOON_LADDER_UP),
         .style = &gMtMoonStyleB2F,
     },
 };
@@ -205,8 +210,10 @@ static u32 sRngState;           /* MtMoonGen_Random's state */
  * completely full. So the grid is borrowed from the game's heap (Alloc,
  * src/malloc.c) for the duration of one generation and freed at the end;
  * only this pointer is permanent. The same block also holds the flood
- * fill's queue (FloodQueue), one u16 cell index per map tile. For the
- * biggest floor (B1F, 49 x 40) the block is about 6 KB of the 112 KB heap.
+ * fill's queue (FloodQueue), one u16 cell index per map tile. (A u16 index
+ * limits a grid to 65,535 cells including the frame; Mt. Moon's floors
+ * have about 2,100.) For the biggest floor (B1F, 49 x 40) the block is
+ * about 6 KB of the 112 KB heap.
  * The map loader borrows heap memory the same way when it copies tilesets
  * to video memory.
  */
@@ -310,18 +317,11 @@ static void ClearCaveGrid(void)
 /*
  * TRUE if map tile (x, y) is inside the grid. Casting to u32 makes a
  * negative coordinate a huge number, so one comparison per axis checks
- * both ends. (The size is 0 while no grid is borrowed.)
- *
- * The cell accessors below repeat this test instead of calling InGrid: the
- * styles read cells tens of thousands of times per floor, and on the GBA
- * each extra function call costs noticeably in load time.
+ * both ends. (The size is 0 while no grid is borrowed.) A macro rather than
+ * a function: the styles read cells tens of thousands of times per floor,
+ * and on the GBA each extra function call costs noticeably in load time.
  */
 #define IN_GRID(x, y) ((u32)(x) < (u32)sCave.width && (u32)(y) < (u32)sCave.height)
-
-static bool8 InGrid(s32 x, s32 y)
-{
-    return IN_GRID(x, y);
-}
 
 u8 MtMoonGen_GetCell(s32 x, s32 y)
 {
@@ -497,66 +497,85 @@ bool8 MtMoonGen_FloodFillReaches(s32 fromX, s32 fromY, s32 toX, s32 toY)
 /* ------------------------------------------------------------------------- */
 
 /*
- * The footprint of each ladder kind (see LADDERS in mt_moon_gen_style.h):
- * the cells around the ladder that must be floor (F) or wall (W), as
- * offsets from the ladder cell, which is always floor.
+ * Everything the core knows about each ladder kind (see LADDERS in
+ * mt_moon_gen_style.h) is in one table, sLadderKinds: the kind's footprint,
+ * the vanilla tile drawn on each footprint cell, and its foot.
+ *
+ * A footprint cell is an offset from the ladder cell (dx east, dy south),
+ * whether that cell must be floor or wall, and the vanilla map cell value
+ * drawn there, or 0 where the style draws its own floor or wall.
  */
 struct LadderCell
 {
     s8 dx;
     s8 dy;
-    u8 cell;  /* MT_MOON_CELL_FLOOR or MT_MOON_CELL_WALL */
+    u8 cell;   /* MT_MOON_CELL_FLOOR or MT_MOON_CELL_WALL */
+    u16 tile;  /* vanilla map cell value, or 0 */
 };
 
-static const struct LadderCell sDoorFootprint[] =
+struct LadderKind
 {
-    /*  . F .
-     *  F D F
-     *  W W W
-     *  W W W  */
-    { 0, -1, MT_MOON_CELL_FLOOR },
-    { -1, 0, MT_MOON_CELL_FLOOR }, { 0, 0, MT_MOON_CELL_FLOOR }, { 1, 0, MT_MOON_CELL_FLOOR },
-    { -1, 1, MT_MOON_CELL_WALL },  { 0, 1, MT_MOON_CELL_WALL },  { 1, 1, MT_MOON_CELL_WALL },
-    { -1, 2, MT_MOON_CELL_WALL },  { 0, 2, MT_MOON_CELL_WALL },  { 1, 2, MT_MOON_CELL_WALL },
+    const struct LadderCell *cells;
+    u8 cellCount;
+    s8 footDx;  /* the foot, relative to the ladder */
+    s8 footDy;
 };
 
-static const struct LadderCell sHoleFootprint[] =
+/*  . F .      F = floor, W = wall
+ *  F D F      D = the door, walkable (0x287)
+ *  W W W      the doorframe (0x2c8 0x2c9 0x2ca)
+ *  W W W      the wall below it (0x2a3)        */
+static const struct LadderCell sDoorCells[] =
 {
-    /*  F F F
-     *  F H F
-     *  F F F  */
-    { -1, -1, MT_MOON_CELL_FLOOR }, { 0, -1, MT_MOON_CELL_FLOOR }, { 1, -1, MT_MOON_CELL_FLOOR },
-    { -1, 0, MT_MOON_CELL_FLOOR },  { 0, 0, MT_MOON_CELL_FLOOR },  { 1, 0, MT_MOON_CELL_FLOOR },
-    { -1, 1, MT_MOON_CELL_FLOOR },  { 0, 1, MT_MOON_CELL_FLOOR },  { 1, 1, MT_MOON_CELL_FLOOR },
+    { 0, -1, MT_MOON_CELL_FLOOR, 0 },
+    { -1, 0, MT_MOON_CELL_FLOOR, 0 },
+    { 0, 0, MT_MOON_CELL_FLOOR, TILE_DOOR },
+    { 1, 0, MT_MOON_CELL_FLOOR, 0 },
+    { -1, 1, MT_MOON_CELL_WALL, TILE_DOORFRAME_WEST },
+    { 0, 1, MT_MOON_CELL_WALL, TILE_DOORFRAME_MID },
+    { 1, 1, MT_MOON_CELL_WALL, TILE_DOORFRAME_EAST },
+    { -1, 2, MT_MOON_CELL_WALL, TILE_DOOR_BASE },
+    { 0, 2, MT_MOON_CELL_WALL, TILE_DOOR_BASE },
+    { 1, 2, MT_MOON_CELL_WALL, TILE_DOOR_BASE },
 };
 
-static const struct LadderCell sLadderFootprint[] =
+/*  F F F
+ *  F H F      H = the hole (0x285), in open floor
+ *  F F F  */
+static const struct LadderCell sHoleCells[] =
 {
-    /*  . W .
-     *  W W W
-     *  . U .
-     *  . F .  */
-    { 0, -2, MT_MOON_CELL_WALL },
-    { -1, -1, MT_MOON_CELL_WALL }, { 0, -1, MT_MOON_CELL_WALL }, { 1, -1, MT_MOON_CELL_WALL },
-    { 0, 0, MT_MOON_CELL_FLOOR },
-    { 0, 1, MT_MOON_CELL_FLOOR },
+    { -1, -1, MT_MOON_CELL_FLOOR, 0 },
+    { 0, -1, MT_MOON_CELL_FLOOR, 0 },
+    { 1, -1, MT_MOON_CELL_FLOOR, 0 },
+    { -1, 0, MT_MOON_CELL_FLOOR, 0 },
+    { 0, 0, MT_MOON_CELL_FLOOR, TILE_HOLE },
+    { 1, 0, MT_MOON_CELL_FLOOR, 0 },
+    { -1, 1, MT_MOON_CELL_FLOOR, 0 },
+    { 0, 1, MT_MOON_CELL_FLOOR, 0 },
+    { 1, 1, MT_MOON_CELL_FLOOR, 0 },
 };
 
-static const struct LadderCell *GetFootprint(u8 kind, s32 *count)
+/*  . W .
+ *  W T W      T = the ladder's top (0x28f), solid, set into the wall
+ *  . U .      U = the up-ladder (0x296), walkable
+ *  . F .  */
+static const struct LadderCell sUpLadderCells[] =
 {
-    switch (kind)
-    {
-    case MT_MOON_LADDER_DOOR:
-        *count = ARRAY_COUNT(sDoorFootprint);
-        return sDoorFootprint;
-    case MT_MOON_LADDER_DOWN:
-        *count = ARRAY_COUNT(sHoleFootprint);
-        return sHoleFootprint;
-    default:
-        *count = ARRAY_COUNT(sLadderFootprint);
-        return sLadderFootprint;
-    }
-}
+    { 0, -2, MT_MOON_CELL_WALL, 0 },
+    { -1, -1, MT_MOON_CELL_WALL, 0 },
+    { 0, -1, MT_MOON_CELL_WALL, TILE_UP_LADDER_TOP },
+    { 1, -1, MT_MOON_CELL_WALL, 0 },
+    { 0, 0, MT_MOON_CELL_FLOOR, TILE_UP_LADDER },
+    { 0, 1, MT_MOON_CELL_FLOOR, 0 },
+};
+
+static const struct LadderKind sLadderKinds[] =
+{
+    /* The foot: north of the door, the hole itself, south of an up-ladder. */
+    [MT_MOON_LADDER_DOOR] = { sDoorCells,     ARRAY_COUNT(sDoorCells),     0, -1 },
+    [MT_MOON_LADDER_DOWN] = { sHoleCells,     ARRAY_COUNT(sHoleCells),     0,  0 },
+    [MT_MOON_LADDER_UP]   = { sUpLadderCells, ARRAY_COUNT(sUpLadderCells), 0,  1 },
+};
 
 s32 MtMoonGen_LadderDistance(const struct MtMoonLadder *a, const struct MtMoonLadder *b)
 {
@@ -565,16 +584,17 @@ s32 MtMoonGen_LadderDistance(const struct MtMoonLadder *a, const struct MtMoonLa
 
 bool8 MtMoonGen_IsLadderSite(const struct MtMoonLadder *ladder)
 {
-    s32 i, count;
-    const struct LadderCell *footprint = GetFootprint(ladder->kind, &count);
+    const struct LadderKind *kind = &sLadderKinds[ladder->kind];
+    s32 i;
 
-    if (!InGrid(ladder->x, ladder->y))
+    if (!IN_GRID(ladder->x, ladder->y))
         return FALSE;
-    for (i = 0; i < count; i++)
+    for (i = 0; i < kind->cellCount; i++)
     {
-        bool8 floor = MtMoonGen_IsFloor(ladder->x + footprint[i].dx, ladder->y + footprint[i].dy);
+        const struct LadderCell *cell = &kind->cells[i];
+        bool8 floor = MtMoonGen_IsFloor(ladder->x + cell->dx, ladder->y + cell->dy);
 
-        if (floor != (footprint[i].cell == MT_MOON_CELL_FLOOR))
+        if (floor != (cell->cell == MT_MOON_CELL_FLOOR))
             return FALSE;
     }
     return TRUE;
@@ -582,84 +602,123 @@ bool8 MtMoonGen_IsLadderSite(const struct MtMoonLadder *ladder)
 
 void MtMoonGen_MarkLadderSite(const struct MtMoonLadder *ladder)
 {
-    s32 i, count;
-    const struct LadderCell *footprint = GetFootprint(ladder->kind, &count);
+    const struct LadderKind *kind = &sLadderKinds[ladder->kind];
+    s32 i;
 
-    for (i = 0; i < count; i++)
-        MtMoonGen_SetCell(ladder->x + footprint[i].dx, ladder->y + footprint[i].dy, footprint[i].cell);
+    for (i = 0; i < kind->cellCount; i++)
+        MtMoonGen_SetCell(ladder->x + kind->cells[i].dx, ladder->y + kind->cells[i].dy, kind->cells[i].cell);
 }
 
-/* The vanilla tile for (x, y) if it is part of `ladder`, else 0. */
+void MtMoonGen_GetLadderFoot(const struct MtMoonLadder *ladder, s32 *x, s32 *y)
+{
+    *x = ladder->x + sLadderKinds[ladder->kind].footDx;
+    *y = ladder->y + sLadderKinds[ladder->kind].footDy;
+}
+
+/* The vanilla tile `ladder` puts on map tile (x, y), or 0. */
 static u16 GetTileOfLadder(const struct MtMoonLadder *ladder, s32 x, s32 y)
 {
+    const struct LadderKind *kind = &sLadderKinds[ladder->kind];
     s32 dx = x - ladder->x;
     s32 dy = y - ladder->y;
+    s32 i;
 
-    switch (ladder->kind)
-    {
-    case MT_MOON_LADDER_DOOR:
-        if (dx == 0 && dy == 0)
-            return TILE_DOOR;
-        if (dy == 1 && dx == -1)
-            return TILE_DOORFRAME_WEST;
-        if (dy == 1 && dx == 0)
-            return TILE_DOORFRAME_MID;
-        if (dy == 1 && dx == 1)
-            return TILE_DOORFRAME_EAST;
-        if (dy == 2 && dx >= -1 && dx <= 1)
-            return TILE_DOOR_BASE;
-        break;
-    case MT_MOON_LADDER_DOWN:
-        if (dx == 0 && dy == 0)
-            return TILE_HOLE;
-        break;
-    case MT_MOON_LADDER_UP:
-        if (dx == 0 && dy == 0)
-            return TILE_LADDER;
-        if (dx == 0 && dy == -1)
-            return TILE_LADDER_TOP;
-        break;
-    }
+    for (i = 0; i < kind->cellCount; i++)
+        if (kind->cells[i].dx == dx && kind->cells[i].dy == dy)
+            return kind->cells[i].tile;
     return 0;
 }
 
-/* Asked for every map cell while drawing, so the common answer (not near
- * either ladder) is found without calling anything. */
-#define NEAR_LADDER_TILES(ladder, x, y) \
-    ((x) >= (ladder).x - 1 && (x) <= (ladder).x + 1 && (y) >= (ladder).y - 1 && (y) <= (ladder).y + 2)
+/* MtMoonGen_GetLadderTile is asked for every map cell while drawing, so
+ * the common answer (far from both ladders) is found without a call: every
+ * kind's cells lie within one column and two rows of the ladder. */
+#define NEAR_LADDER(ladder, x, y) \
+    ((x) >= (ladder).x - 1 && (x) <= (ladder).x + 1 && (y) >= (ladder).y - 2 && (y) <= (ladder).y + 2)
 
 u16 MtMoonGen_GetLadderTile(const struct MtMoonCave *cave, s32 x, s32 y)
 {
     u16 tile = 0;
 
-    if (NEAR_LADDER_TILES(cave->entrance, x, y))
+    if (NEAR_LADDER(cave->entrance, x, y))
         tile = GetTileOfLadder(&cave->entrance, x, y);
-    if (tile == 0 && NEAR_LADDER_TILES(cave->exit, x, y))
+    if (tile == 0 && NEAR_LADDER(cave->exit, x, y))
         tile = GetTileOfLadder(&cave->exit, x, y);
     return tile;
 }
 
+/* Start a ladder from the floor table: its kind, and its position if the
+ * table fixes one (otherwise ProposeLadders gives it one next). */
 static void InitLadder(struct MtMoonLadder *ladder, const struct MtMoonFloorLadder *spec)
 {
     ladder->kind = spec->kind;
+    ladder->fixed = (spec->fixedX != NOT_FIXED);
     ladder->x = spec->fixedX;
     ladder->y = spec->fixedY;
-    ladder->fixed = (spec->fixedX != MT_MOON_LADDER_UNPLACED);
 }
 
-/* TRUE if `ladder` was placed, kept its fixed position and has its
+/*
+ * The core's proposal for a ladder that isn't fixed (rule 1 of the ladder
+ * contract in mt_moon_gen_style.h). x is in [4, width - 5]. An up-ladder
+ * goes on row 2, right under a 2-row top border, which is its north wall;
+ * any other kind gets y in [4, height - 7]. Those margins leave room for a
+ * 5 x 5 patch of open floor around the ladder inside a 2-cell border (3 at
+ * the bottom).
+ */
+static void ProposeLadderSpot(struct MtMoonLadder *ladder)
+{
+    ladder->x = MtMoonGen_RandomBelow(sCave.width - 8) + 4;
+    if (ladder->kind == MT_MOON_LADDER_UP)
+        ladder->y = 2;
+    else
+        ladder->y = MtMoonGen_RandomBelow(sCave.height - 10) + 4;
+}
+
+/*
+ * Propose positions for the ladders that aren't fixed: random spots,
+ * redrawn until the two are MT_MOON_LADDER_MIN_DISTANCE apart. That usually
+ * takes a few draws (two up-ladders, both on row 2, need 24 columns between
+ * them: about 1 draw in 6). The fallback after 200 draws, which practically
+ * never runs, puts free ladders in opposite corners, which are far enough
+ * apart on every Mt. Moon floor (1F's door is fixed at the bottom middle).
+ */
+static void ProposeLadders(void)
+{
+    s32 attempt;
+
+    for (attempt = 0; attempt < 200; attempt++)
+    {
+        if (!sCave.entrance.fixed)
+            ProposeLadderSpot(&sCave.entrance);
+        if (!sCave.exit.fixed)
+            ProposeLadderSpot(&sCave.exit);
+        if (MtMoonGen_LadderDistance(&sCave.entrance, &sCave.exit) >= MT_MOON_LADDER_MIN_DISTANCE)
+            return;
+    }
+    if (!sCave.entrance.fixed)
+    {
+        sCave.entrance.x = 4;
+        sCave.entrance.y = (sCave.entrance.kind == MT_MOON_LADDER_UP) ? 2 : 4;
+    }
+    if (!sCave.exit.fixed)
+    {
+        sCave.exit.x = sCave.width - 5;
+        sCave.exit.y = (sCave.exit.kind == MT_MOON_LADDER_UP) ? 2 : 4;
+    }
+}
+
+/* TRUE if `ladder` kept its fixed position (if it has one) and has its
  * footprint in the grid. */
 static bool8 IsLadderValid(const struct MtMoonLadder *ladder, const struct MtMoonFloorLadder *spec)
 {
-    if (spec->fixedX != MT_MOON_LADDER_UNPLACED
+    if (spec->fixedX != NOT_FIXED
         && (ladder->x != spec->fixedX || ladder->y != spec->fixedY))
         return FALSE;
     return MtMoonGen_IsLadderSite(ladder);
 }
 
 /*
- * Rule 2 of the ladder contract (mt_moon_gen_style.h): both ladders placed
- * on their footprints, far enough apart, and connected through floor.
+ * Rule 2 of the ladder contract (mt_moon_gen_style.h): both ladders on
+ * their footprints, far enough apart, and connected through floor.
  */
 static bool8 CheckLadders(const struct MtMoonFloor *floor)
 {
@@ -919,6 +978,7 @@ static bool8 GenerateFloor(const struct MtMoonFloor *floor, u16 seed)
         ClearCaveGrid();
         InitLadder(&sCave.entrance, &floor->entrance);
         InitLadder(&sCave.exit, &floor->exit);
+        ProposeLadders();
         floor->style->buildShape(&sCave);
         if (CheckLadders(floor))
             break;

@@ -8,15 +8,16 @@
  * WHO DOES WHAT
  *
  * The core does everything that is the same on every floor: the per-visit
- * seed and the private random number generator, the cave grid, checking
- * the ladders, writing the finished map into the game's map buffer, the
- * warps, placing NPCs, and the Continue safety net.
+ * seed and the private random number generator, the cave grid, proposing
+ * and checking the ladders, writing the finished map into the game's map
+ * buffer, the warps, placing NPCs, and the Continue safety net.
  *
  * A style decides what a floor looks like, through two functions:
  *
- *   buildShape  starts from an all-wall grid, places the floor's ladders
- *               and carves out the floor around them (see LADDERS below),
- *               using MtMoonGen_Random() for every random choice.
+ *   buildShape  starts from an all-wall grid with the floor's two ladders
+ *               already proposed, and carves out the floor around them,
+ *               moving them first if it likes (see LADDERS below). It uses
+ *               MtMoonGen_Random() for every random choice.
  *   pickTile    returns the map cell value to draw for one grid cell,
  *               ladder cells included (MtMoonGen_GetLadderTile() gives the
  *               vanilla ladder tiles). It only looks at the grid, the
@@ -84,15 +85,27 @@
  *           . U .        U = the ladder
  *           . F .
  *
+ * Each kind also has a FOOT (MtMoonGen_GetLadderFoot), the floor cell in
+ * front of it where a corridor should join it: north of the door, the hole
+ * itself, south of an up-ladder.
+ *
  * THE LADDER CONTRACT (what buildShape must do)
  *
- *   1. On entry, cave->entrance and cave->exit hold each ladder's kind. A
- *      ladder with `fixed` TRUE already has its position (1F's door is at
- *      vanilla's (18,37)) and must stay there. The others are
- *      MT_MOON_LADDER_UNPLACED: the style chooses where they go, any way it
- *      likes (at random, at the foot of a room's wall, ...).
+ *   1. On entry, both ladders already have a kind and a position. A ladder
+ *      with `fixed` TRUE (1F's door, at vanilla's (18,37)) must stay where
+ *      it is. For every other ladder the core has PROPOSED a position:
+ *        - random, and at least MT_MOON_LADDER_MIN_DISTANCE from the other
+ *          ladder;
+ *        - an up-ladder on row 2, right under a 2-row top border, so the
+ *          north wall it needs is the border;
+ *        - any other kind in the interior, at least 4 cells from the side
+ *          and top edges and 6 from the bottom edge, so a 5 x 5 patch of
+ *          open floor fits around it inside a 2-cell border (3 at the
+ *          bottom).
+ *      The style either ACCEPTS a proposal (keeps it and builds its shape
+ *      around it) or MOVES the ladder wherever suits its shape (at the foot
+ *      of a room's wall, ...). The cellular style accepts every proposal.
  *   2. On return, every ladder:
- *        - has a position,
  *        - has its footprint carved into the grid (MtMoonGen_IsLadderSite
  *          holds; MtMoonGen_MarkLadderSite() writes a footprint),
  *        - is at least MT_MOON_LADDER_MIN_DISTANCE from the other ladder,
@@ -100,14 +113,25 @@
  *      and the two ladders are connected through floor cells.
  *   3. pickTile draws the ladders, usually by returning
  *      MtMoonGen_GetLadderTile() first. A style may draw its own vanilla
- *      variants instead (e.g. B1F's hole 0x2af), keeping the same cells
- *      walkable and solid.
+ *      variants instead, keeping the same cells walkable and solid: for
+ *      example B1F's hole would be the map cell value 0x32af (metatile
+ *      0x2af, walkable, elevation 3; see MAP CELL VALUES below).
  *
  * The core checks rule 2 after buildShape. A shape that breaks it is a bug
  * in the style: the core throws the shape away and calls buildShape again
- * on a fresh all-wall grid (the random numbers have moved on, so it comes
- * out different), up to 4 times, then gives up and leaves the floor's
- * vanilla map in place.
+ * on a fresh all-wall grid with fresh proposals (the random numbers have
+ * moved on, so it comes out different), up to 4 times, then gives up and
+ * leaves the floor's vanilla map in place.
+ *
+ * MAP CELL VALUES
+ *
+ * pickTile returns, and MtMoonGen_GetLadderTile gives, full map cell values,
+ * the 16-bit numbers the game keeps for each tile of the loaded map:
+ *     metatile id | (collision << 10) | (elevation << 12)
+ * Bits 0-9 pick the 16x16-pixel picture (the metatile), bits 10-11 are the
+ * collision (0 = walkable, 1 = solid) and bits 12-15 the elevation (the
+ * height layer; Mt. Moon's floor is 3, walls are 0). So 0x3287 is metatile
+ * 0x287, walkable, elevation 3, and 0x06c9 is metatile 0x2c9, solid.
  */
 
 #define MT_MOON_CELL_WALL    0
@@ -123,16 +147,13 @@
  * plus north-south steps). */
 #define MT_MOON_LADDER_MIN_DISTANCE 24
 
-/* The x and y of a ladder the style hasn't placed yet. */
-#define MT_MOON_LADDER_UNPLACED 0xFF
-
 /* One of a floor's two ladders (or 1F's door). 4 bytes. */
 struct MtMoonLadder
 {
-    u8 x;        /* map tile of the warp, or MT_MOON_LADDER_UNPLACED */
+    u8 x;        /* map tile of the warp */
     u8 y;
     u8 kind;     /* MT_MOON_LADDER_* */
-    bool8 fixed; /* TRUE: the position comes from the core and can't move */
+    bool8 fixed; /* TRUE: the floor table fixes the position; it can't move */
 };
 
 /* The floor being generated. 12 bytes (see the IWRAM note in the core). */
@@ -214,21 +235,28 @@ u16 MtMoonGen_RandomBelow(u16 n);
 /* Steps between two ladders: |x1 - x2| + |y1 - y2|. */
 s32 MtMoonGen_LadderDistance(const struct MtMoonLadder *a, const struct MtMoonLadder *b);
 
-/* TRUE if the grid around the (placed) ladder matches its kind's footprint. */
+/* TRUE if the grid around the ladder matches its kind's footprint. */
 bool8 MtMoonGen_IsLadderSite(const struct MtMoonLadder *ladder);
 
 /* Write the ladder's footprint into the grid (cells off the grid are
  * skipped). Afterwards MtMoonGen_IsLadderSite() holds for it. */
 void MtMoonGen_MarkLadderSite(const struct MtMoonLadder *ladder);
 
+/* The ladder's foot (see LADDERS above): the floor cell where a corridor
+ * should join it. */
+void MtMoonGen_GetLadderFoot(const struct MtMoonLadder *ladder, s32 *x, s32 *y);
+
 /*
- * The vanilla tile for map cell (x, y) if it is part of one of the cave's
- * ladders, else 0 (no map cell value is 0 in Mt. Moon). The tiles are:
- *   door  0x287 (walkable), with the doorframe 0x2c8 0x2c9 0x2ca below it
- *         and the wall 0x2a3 below that;
- *   down  the hole 0x285;
- *   up    the ladder 0x296 (walkable), with its top 0x28f (solid) set into
- *         the wall above.
+ * The vanilla map cell value (see MAP CELL VALUES above) for map tile
+ * (x, y) if a ladder's own tiles cover it, else 0 (no Mt. Moon map cell
+ * value is 0). Footprint cells without a vanilla tile of their own (the
+ * floor around a hole, the wall beside a ladder's top) also give 0: the
+ * style draws its usual floor or wall there. The tiles are:
+ *   door  0x3287 (metatile 0x287, walkable), with the doorframe 0x06c8,
+ *         0x06c9, 0x06ca (solid) below it and the wall 0x06a3 below that;
+ *   down  the hole 0x3285 (walkable);
+ *   up    the ladder 0x3296 (walkable), with its top 0x068f (solid) set
+ *         into the wall above.
  */
 u16 MtMoonGen_GetLadderTile(const struct MtMoonCave *cave, s32 x, s32 y);
 

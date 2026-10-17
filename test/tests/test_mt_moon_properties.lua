@@ -108,8 +108,9 @@ fw.run(function()
             -- seed depends on the map being left (its scripts, objects and so
             -- on). Entering the floor once first means every checked entry,
             -- and every re-entry a check makes, leaves this same floor, so
-            -- the same gRngValue rolls the same seed (almost always; see the
-            -- double entry below and the retries in P8).
+            -- the same gRngValue rolls the same seed (together with the
+            -- double entry below, and mt_moon's start_warp waiting until
+            -- the game is idle).
             mm.enter_floor(floor, 0)
 
             for _, rng in ipairs(rngs) do

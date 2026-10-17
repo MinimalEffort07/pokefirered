@@ -47,7 +47,7 @@ local chain = {}
 -- and only the test's own one is reported.
 local T = fw
 
-local VAR_MAP_SCENE_MT_MOON_B2F = 0x408B  -- include/constants/vars.h
+local VAR_MAP_SCENE_MT_MOON_B2F = mm.read_defines("include/constants/vars.h").VAR_MAP_SCENE_MT_MOON_B2F
 
 -- Random state written before the step that leads into each floor, per walk
 -- direction. Until #26 lands, the generator can still put a trainer or an
@@ -87,10 +87,10 @@ local function map_name(group, num)
 end
 
 -- The legs of the walk, in order. Each leg starts on `from` (a map name) and
--- walks into warp `warp` there; `kind` "door" on 1F means an arrow warp,
--- entered by pressing DOWN while standing on it. The player must arrive on
--- map `to` at its warp `to_warp`; `x`/`y`, when given, is where that warp
--- must be.
+-- walks into warp `warp` there. A leg with `arrow` (1F's door) ends on an
+-- arrow warp, entered by holding that direction while standing on it. The
+-- player must arrive on map `to` at its warp `to_warp`; `x`/`y`, when
+-- given, is where that warp must be.
 local function legs(direction)
     local f1, b1, b2 = mm.floor_by_name("1F"), mm.floor_by_name("B1F"), mm.floor_by_name("B2F")
     local route4 = { name = "Route 4", group = mm.ROUTE4.group, num = mm.ROUTE4.num }

@@ -60,7 +60,7 @@ local ROAMER_LOCAL_ID_MIN = 200
 -- checks a checksum: the sum of the 24 u16s of those blocks, which is just
 -- the species when nothing else is set.
 local POKEMON_SIZE = 100
-local VAR_REPEL_STEP_COUNT = 0x4020  -- include/constants/vars.h
+local VAR_REPEL_STEP_COUNT = mm.read_defines("include/constants/vars.h").VAR_REPEL_STEP_COUNT
 
 -- Put a level-100 Pokemon in party slot 1 and start a Repel with `steps`
 -- steps. A Repel stops every wild Pokemon below the level of the first

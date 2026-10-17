@@ -20,8 +20,12 @@
 --
 -- Run:
 --   MGBA_TEST_TIMEOUT=300 bash test/run_test.sh test/tests/test_mt_moon_walk_east.lua
--- Record a video (this is the walk the README's demo is about):
---   bash test/record_test.sh test/tests/test_mt_moon_walk_east.lua
+-- Record a real-time video from frame dumps (see test/lib/frame_capture.lua):
+--   MGBA_FRAME_DIR=/tmp/s1_frames MGBA_TEST_TIMEOUT=600 bash test/run_test.sh \
+--       test/tests/test_mt_moon_walk_east.lua
+--   ffmpeg -framerate 30 -i /tmp/s1_frames/frame_%05d.png \
+--       -c:v libx264 -pix_fmt yuv420p s1.mp4
+-- (bash test/record_test.sh also works, but runs the walk at fast-forward.)
 -------------------------------------------------------------------------------
 
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
@@ -42,9 +46,6 @@ fw.run(function()
     cs.confirm_and_enter_overworld()
     fw.assert_true(cs.is_player_active(), "reached overworld")
 
-    -- In the mGBA window (record_test.sh), show the walk at normal speed;
-    -- headless runs ignore this.
-    fw.slow_down("walking the Mt. Moon chain")
     capture.start()
     chain.walk_chain("east", fw)
     fw.wait_frames(60)

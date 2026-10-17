@@ -56,7 +56,7 @@ mm.ROUTE4 = { group = 3, num = 22 }
 
 -- An untouched vanilla cave, for comparing load times (P9): Rock Tunnel 1F
 -- (map 1.81) is the same size as the Mt. Moon floors, 48 x 40 tiles.
-mm.VANILLA_CAVE = { name = "Rock Tunnel 1F", group = 1, num = 81, arrival_warp = 0 }
+mm.VANILLA_CAVE = { name = "Rock Tunnel 1F", group = 1, num = 81, warp = 0 }
 
 -- The generated floors, in the order of the chain they form:
 --
@@ -262,7 +262,8 @@ end
 -- Returns the list of trainer names marked.
 function mm.mark_mt_moon_trainers_defeated()
     local opponents = mm.read_defines("include/constants/opponents.h")
-    local flags_start = 0x500  -- TRAINER_FLAGS_START = FLAG_0x4FF + 1
+    -- flags.h defines TRAINER_FLAGS_START as (FLAG_0x4FF + 1).
+    local flags_start = mm.read_defines("include/constants/flags.h").FLAG_0x4FF + 1
     local names = {}
     for _, map in ipairs({ "MtMoon_1F", "MtMoon_B1F", "MtMoon_B2F" }) do
         local f = io.open(project_dir .. "data/maps/" .. map .. "/scripts.inc", "r")
@@ -740,16 +741,14 @@ end
 
 -- Returns a gRngValue different from `rng` that rolls the same `seed`, or nil
 -- if the seed can't be traced back to `rng` within 4096 Random() calls.
--- `bump` (default 1) is how much state_k moves; any small bump keeps the
--- top 16 bits unless it carries past them, which this checks (nil then).
-function mm.rng_with_same_seed(rng, seed, bump)
+function mm.rng_with_same_seed(rng, seed)
     local k, state = mm.rng_steps(rng, seed)
     if k == nil then return nil end
-    bump = bump or 1
-    if (((state + bump) & MASK32) >> 16) ~= seed then return nil end
+    -- Bump state_k by +1, or by -1 if +1 would carry into the top 16 bits.
+    local bump = ((state & 0xFFFF) == 0xFFFF) and MASK32 or 1
     local a_pow_k = 1
     for _ = 1, k do a_pow_k = mul32(a_pow_k, LCG_A) end
-    return (rng + mul32(inverse32(a_pow_k), bump & MASK32)) & MASK32
+    return (rng + mul32(inverse32(a_pow_k), bump)) & MASK32
 end
 
 -- A gRngValue that rolls `seed` when the seed is the k-th Random() call

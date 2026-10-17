@@ -60,8 +60,8 @@ fw.run(function()
     fw.assert_true(cs.is_player_active(), "reached overworld")
     fw.wait_frames(60)
 
-    -- First warp loads Mt. Moon 1F and runs GenerateMtMoonCave which sets
-    -- sEntranceX/sEntranceY. warp.warp_to does NOT call WarpIntoMap, so
+    -- First warp loads Mt. Moon 1F, whose generator records the ladders in
+    -- sCave (the entrance at +4). warp.warp_to does NOT call WarpIntoMap, so
     -- SaveBlock1.pos stays at whatever the bedroom spawn left it
     -- (typically (6, 6)). That means DrawWholeMapView at case 10 of the
     -- map-load pipeline reads metatiles from virtual (6, 6) onwards --
@@ -91,8 +91,8 @@ fw.run(function()
     emu:write32(warp.G_MAIN_CB2, warp.CB2_LOAD_MAP + 1)
     fw.wait_frames(240)
 
-    -- Re-read entrance: procgen regenerates so sEntranceX/Y could shift
-    -- in future if the hardcoded values change; use the fresh ones.
+    -- Re-read the entrance from the fresh generation (1F's door is fixed
+    -- at (18,37), so it should come back the same).
     ex = fw.read8(S_ENTRANCE_X)
     ey = fw.read8(S_ENTRANCE_Y)
     set_player_pos(ex, ey)
