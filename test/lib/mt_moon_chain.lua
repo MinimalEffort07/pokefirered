@@ -18,7 +18,8 @@
 --     Miguel is beaten. B2F keeps vanilla's trigger tile at (14,11), which
 --     starts Miguel's battle while the var is 0; on a generated B2F that
 --     tile can be anywhere on the route;
---   * a level-100 party Pokemon and a Repel, so no wild battle starts.
+--   * a level-100 party Pokemon and a Repel, so no wild battle starts;
+--   * no roaming Pokemon (see keep_roamers_away below).
 --
 -- FIXED SEEDS: just before the step onto each warp, the game's random
 -- state is set to a fixed value per destination floor (RNG below), so each
@@ -37,6 +38,7 @@ local project_dir = script_dir .. "../../"
 
 local fw      = dofile(project_dir .. "test/lib/framework.lua")
 local mm      = dofile(project_dir .. "test/lib/mt_moon.lua")
+local sym     = dofile(project_dir .. "test/lib/symbols.lua")
 local walk    = dofile(project_dir .. "test/lib/walk.lua")
 local capture = dofile(project_dir .. "test/lib/frame_capture.lua")
 
@@ -58,10 +60,13 @@ local VAR_MAP_SCENE_MT_MOON_B2F = mm.read_defines("include/constants/vars.h").VA
 -- need different values for the same seed). Before every object's
 -- reachability was guaranteed (#26), that cave had a defeated trainer
 -- standing in the only gap between the door corridor and the down-ladder
--- room, at (23,25), and both walks got stuck there.
+-- room, at (23,25), and both walks got stuck there. (Which seed a value
+-- rolls depends on every Random() call before the roll, roaming Pokemon
+-- spawns included, so the values changed when keep_roamers_away() came in;
+-- on master, east 0x5EED0001 and west 0x0D88ECFA rolled 0xf34c.)
 chain.RNG = {
-    east = { ["1F"] = 0x5EED0001, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
-    west = { ["1F"] = 0x0D88ECFA, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
+    east = { ["1F"] = 0x151CC71A, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
+    west = { ["1F"] = 0xBF6E5E43, ["B1F"] = 0x5EED0002, ["B2F"] = 0x5EED0003 },
 }
 for name, value in (os.getenv("MT_MOON_WALK_RNG") or ""):gmatch("([%w]+)=(0?x?%x+)") do
     chain.RNG.east[name] = tonumber(value)
@@ -75,8 +80,41 @@ local START = {
     west = { x = 37, y = 6 },  -- east of the east door (32,5)
 }
 
+-- ROAMING POKEMON. This fork spawns roaming Pokemon (src/roaming_pokemon.c,
+-- local ids 200 and up) on every map with wild Pokemon, Mt. Moon included.
+-- They wander slowly with no range limit, and walking into one starts a
+-- wild battle, so the planner keeps a tile away from them; one that
+-- lingers in a one-tile-wide corridor blocks the walk for as long as it
+-- stays. They aren't what these walks test, so once keep_roamers_away()
+-- has run, every frame:
+--   * the roamer spawn timer is held, so no new roamer appears;
+--   * any roamer on the map is moved far from the player, so the game's
+--     own update removes it (sprite and all) on the next frame: it drops
+--     roamers more than ROAMER_DESPAWN_DISTANCE (14) tiles away.
+-- A warp still spawns roamers on the new map in the frame it loads; they
+-- are gone again before the player can take a step.
+local ROAMER_LOCAL_ID_MIN = 200
+local roamers_away = false
+
+callbacks:add("frame", function()
+    if not roamers_away or not mm.in_overworld() then return end
+    emu:write16(sym.addr("gRoamerNextSpawnTimer"), 60)
+    local px, py = mm.player_tile()
+    if px == nil then return end
+    for _, o in ipairs(mm.live_objects()) do
+        if not o.is_player and o.local_id >= ROAMER_LOCAL_ID_MIN then
+            mm.poke_object(o.index, px + 40, py + 40)
+        end
+    end
+end)
+
+function chain.keep_roamers_away()
+    roamers_away = true
+end
+
 function chain.prepare()
     walk.make_walk_safe()
+    chain.keep_roamers_away()
     local trainers = mm.mark_mt_moon_trainers_defeated()
     fw.log(string.format("marked %d Mt. Moon trainers defeated: %s", #trainers, table.concat(trainers, " ")))
     mm.set_var(VAR_MAP_SCENE_MT_MOON_B2F, 1)
