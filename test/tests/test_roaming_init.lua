@@ -150,7 +150,7 @@ fw.run(function()
     fw.assert_true(flybyTimer <= 600, "flyby timer in sane range")
 
     -- Take a screenshot for visual inspection.
-    fw.screenshot("/tmp/mgba-roaming-init.png")
+    fw.screenshot(fw.out_path("mgba-roaming-init.png"))
 
     fw.log(string.format("Initial result: count=%d, all_free=%s, map=%d.%d",
         count, tostring(all_free), mapGroup, mapNum))

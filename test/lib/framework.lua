@@ -333,6 +333,29 @@ function fw.assert_true(cond, msg)
 end
 
 -------------------------------------------------------------------------------
+-- WHERE OUTPUT FILES GO
+-------------------------------------------------------------------------------
+-- test/run_test.sh makes a private directory for every run and passes it in
+-- the MGBA_TEST_DIR environment variable, so two tests running at the same
+-- time (in one checkout or in several worktrees) never read or overwrite
+-- each other's results and screenshots. A test started some other way (for
+-- example loaded by hand in the mGBA GUI) has no MGBA_TEST_DIR and writes to
+-- /tmp, as every test did before.
+--
+-- Every file a test writes should go through fw.out_path:
+--   fw.screenshot(fw.out_path("mgba-roaming-init.png"))
+
+local out_dir = os.getenv("MGBA_TEST_DIR")
+if out_dir == nil or out_dir == "" then
+    out_dir = "/tmp"
+end
+
+-- The path for an output file called `name` in this run's directory.
+function fw.out_path(name)
+    return out_dir .. "/" .. name
+end
+
+-------------------------------------------------------------------------------
 -- SCREENSHOT
 -------------------------------------------------------------------------------
 -- Takes a screenshot of the current emulated GBA screen and saves it as a PNG.
@@ -340,7 +363,7 @@ end
 -- buffer (without the patch, headless mode has no video buffer and crashes).
 
 function fw.screenshot(path)
-    path = path or "/tmp/mgba-test-screenshot.png"
+    path = path or fw.out_path("mgba-test-screenshot.png")
     emu:screenshot(path)
     fw.log("Screenshot saved to " .. path)
 end
@@ -359,15 +382,18 @@ end
 -- unrelated emulator config changes.
 --
 -- USAGE PATTERN:
---   if not fw.try_load_state("/tmp/my-fixture.ss") then
+--   if not fw.try_load_state(fw.out_path("my-fixture.ss")) then
 --       -- slow setup path
---       fw.save_state("/tmp/my-fixture.ss")
+--       fw.save_state(fw.out_path("my-fixture.ss"))
 --   end
 --   -- assertions on the now-loaded state
 --
--- The state files live in /tmp by default so they're cleaned up by the
--- OS between reboots and don't accumulate. For permanent fixtures,
--- write under test/fixtures/ instead.
+-- A state is only valid for the ROM build that saved it. Under
+-- test/run_test.sh, fw.out_path is private to the run, so a test can never
+-- load a state another run (or another worktree's ROM) saved; it only
+-- reuses its own within the run. Run by hand, fw.out_path is /tmp and the
+-- state is kept between runs. For permanent fixtures, write under
+-- test/fixtures/ instead.
 
 local SAVESTATE_ALL = 31
 
@@ -444,7 +470,7 @@ end
 
 -- Write test results to a JSON file so the shell runner can parse them.
 function fw.write_results(path)
-    path = path or "/tmp/mgba-test-results.json"
+    path = path or fw.out_path("mgba-test-results.json")
     -- io.open is available because mGBA's Lua engine calls luaL_openlibs(),
     -- which loads all standard Lua libraries including io, os, string, etc.
     local f = io.open(path, "w")
@@ -490,7 +516,7 @@ function fw.finish()
 
     -- Write exit code to a file for the shell runner script to read.
     -- (The actual process exit code can't be controlled from Lua.)
-    local ef = io.open("/tmp/mgba-test-exitcode", "w")
+    local ef = io.open(fw.out_path("mgba-test-exitcode"), "w")
     if ef then
         ef:write(tostring(results.fail > 0 and 1 or 0))
         ef:close()

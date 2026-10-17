@@ -65,6 +65,7 @@
 #include "overworld.h"
 #include "quest_log.h"
 #include "poke_radar.h"
+#include "sloopsvc.h"
 
 /*
  * SAVEBLOCK_MOVE_RANGE: The size of the random offset range for ASLR.
@@ -316,6 +317,9 @@ void MoveSaveBlocks_ResetHeap(void)
     encryptionKey = (Random() << 0x10) + (Random());
     ApplyNewEncryptionKeyToAllEncryptedData(encryptionKey);
     gSaveBlock2Ptr->encryptionKey = encryptionKey;
+#if REVISION >= 0xA
+    svc_SetSaveBlock2(gSaveBlock2Ptr);
+#endif
 }
 
 /**

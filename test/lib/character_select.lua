@@ -327,8 +327,8 @@ function cs.test_character(list_index, expected_gfx, name)
 
     -- Take a screenshot of the list with the target character highlighted,
     -- before we press A. Useful for visual debugging if the test fails.
-    fw.screenshot(string.format("/tmp/mgba-char-%03d-%s-list.png",
-        list_index, name))
+    fw.screenshot(fw.out_path(string.format("mgba-char-%03d-%s-list.png",
+        list_index, name)))
 
     cs.confirm_and_enter_overworld()
 
@@ -448,8 +448,8 @@ function cs.test_character(list_index, expected_gfx, name)
     end
 
     -- Final screenshot of the overworld state.
-    fw.screenshot(string.format("/tmp/mgba-char-%03d-%s-overworld.png",
-        list_index, name))
+    fw.screenshot(fw.out_path(string.format("mgba-char-%03d-%s-overworld.png",
+        list_index, name)))
 
     if result.passed then
         fw.log(string.format("[cs] %s: PASS", name))

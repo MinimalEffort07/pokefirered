@@ -65,7 +65,11 @@ EWRAM_DATA u8 gStringVar1[32] = {};
 EWRAM_DATA u8 gStringVar2[20] = {};
 EWRAM_DATA u8 gStringVar3[20] = {};
 EWRAM_DATA u8 gStringVar4[1000] = {};
+#if REVISION >= 0xA
+EWRAM_DATA u8 gUnknownStringVar[12] = {0};
+#else
 EWRAM_DATA u8 gUnknownStringVar[16] = {0};
+#endif
 
 /*
  * sDigits: Lookup table mapping digit values (0-15) to their character codes

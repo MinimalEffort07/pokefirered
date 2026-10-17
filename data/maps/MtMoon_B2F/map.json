@@ -185,8 +185,8 @@
       "x": 31,
       "y": 11,
       "elevation": 3,
-      "dest_map": "MAP_MT_MOON_B1F",
-      "dest_warp_id": "4"
+      "dest_map": "MAP_ROUTE4",
+      "dest_warp_id": "1"
     },
     {
       "x": 17,
