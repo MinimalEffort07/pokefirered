@@ -14,9 +14,25 @@
 # HOW IT WORKS:
 #   1. Launches mgba-headless with the pokefirered ROM and the test script
 #   2. The Lua script controls the emulator (presses buttons, reads memory)
-#   3. When the test finishes, the Lua script writes results to /tmp/mgba-test-results.json
+#   3. When the test finishes, the Lua script writes its results to a JSON
+#      file in this run's private output directory (see PER-RUN OUTPUT)
 #   4. The Lua script sends SIGTERM to itself for a clean exit
 #   5. This script reads the results file and reports pass/fail
+#
+# PER-RUN OUTPUT:
+#   Every run gets its own fresh directory, /tmp/mgba-test.XXXXXX, made with
+#   mktemp -d and passed to Lua in the MGBA_TEST_DIR environment variable.
+#   Everything a test writes goes there: the results JSON, the exit-code
+#   file and screenshots (test/lib/framework.lua's fw.out_path). So any
+#   number of tests can run at the same time, from one checkout or from
+#   several worktrees of it, without reading each other's results. The
+#   directory is kept after the run (its path is printed) so screenshots can
+#   be looked at; /tmp is cleared on reboot.
+#
+#   In-game saves need nothing extra: mgba-headless never loads or writes a
+#   .sav file (only mGBA's GUI frontends do), so the game's save memory only
+#   exists inside the emulator for one run, survives emu:reset() for
+#   Continue tests, and is gone when the run ends.
 #
 # EXIT CODES:
 #   0 = all tests passed
@@ -43,12 +59,25 @@ ROM="$PROJECT_DIR/pokefirered.gba"
 # The test script to run. Defaults to the basic player sprite test.
 TEST_SCRIPT="${1:-$PROJECT_DIR/test/tests/test_player_sprite.lua}"
 
-# Where the Lua test framework writes results.
-RESULTS_FILE="/tmp/mgba-test-results.json"
-EXITCODE_FILE="/tmp/mgba-test-exitcode"
+# This run's private output directory (see PER-RUN OUTPUT above). The file
+# names inside it are the ones every test used directly in /tmp before.
+RUN_DIR="$(mktemp -d /tmp/mgba-test.XXXXXX)"
+export MGBA_TEST_DIR="$RUN_DIR"
+RESULTS_FILE="$RUN_DIR/mgba-test-results.json"
+EXITCODE_FILE="$RUN_DIR/mgba-test-exitcode"
+SCREENSHOT_FILE="$RUN_DIR/mgba-test-screenshot.png"
 
-# Clean up previous test results so we don't accidentally read stale data.
-rm -f "$RESULTS_FILE" "$EXITCODE_FILE" /tmp/mgba-test-screenshot.png
+# Longest a test may run, in seconds. Most tests finish in under 15 s; long
+# sweeps (e.g. the Mt. Moon property test) raise it:
+#   MGBA_TEST_TIMEOUT=900 bash test/run_test.sh test/tests/<long_test>.lua
+TIMEOUT_SECONDS="${MGBA_TEST_TIMEOUT:-60}"
+
+# The game's save file. mgba-headless never loads or writes one (see
+# PER-RUN OUTPUT), so a pokefirered.sav next to the ROM (e.g. the user's own,
+# from the GUI) is never read or changed. In case a test ever asks mGBA to
+# load one (emu:autoloadSave()), its save directory still points at this
+# run's directory, which starts empty.
+SAVE_OPTION="savegamePath=$RUN_DIR"
 
 # --- Prerequisite checks ---
 
@@ -72,6 +101,7 @@ fi
 echo "=== mGBA Test Runner ==="
 echo "ROM:    $ROM"
 echo "Script: $TEST_SCRIPT"
+echo "Output: $RUN_DIR"
 echo ""
 
 # --- Run the test ---
@@ -88,10 +118,11 @@ echo ""
 # from grep onward is also line-buffered.
 #
 # timeout prevents runaway tests from hanging forever. The Seel test
-# takes about 10 seconds in headless mode. 60 seconds is a generous limit.
+# takes about 10 seconds in headless mode; the default 60 seconds is a
+# generous limit (override with MGBA_TEST_TIMEOUT, see above).
 cd "$PROJECT_DIR"
 set +e
-stdbuf -oL -eL timeout 60 "$MGBA_HEADLESS" "$ROM" --script "$TEST_SCRIPT" 2>&1 \
+stdbuf -oL -eL timeout "$TIMEOUT_SECONDS" "$MGBA_HEADLESS" -C "$SAVE_OPTION" "$ROM" --script "$TEST_SCRIPT" 2>&1 \
     | grep --line-buffered -E "^Scripting:"
 MGBA_EXIT=${PIPESTATUS[0]}
 set -e
@@ -104,7 +135,7 @@ echo ""
 # If the file doesn't exist, the test crashed or timed out before finishing.
 if [ ! -f "$RESULTS_FILE" ]; then
     if [ "$MGBA_EXIT" -eq 124 ]; then
-        echo "ERROR: Test timed out after 60 seconds"
+        echo "ERROR: Test timed out after $TIMEOUT_SECONDS seconds"
     else
         echo "ERROR: Test did not produce results (mGBA exit code: $MGBA_EXIT)"
     fi
@@ -117,8 +148,8 @@ cat "$RESULTS_FILE"
 echo ""
 
 # Show screenshot path if one was taken.
-if [ -f "/tmp/mgba-test-screenshot.png" ]; then
-    echo "Screenshot: /tmp/mgba-test-screenshot.png"
+if [ -f "$SCREENSHOT_FILE" ]; then
+    echo "Screenshot: $SCREENSHOT_FILE"
 fi
 
 # --- Determine exit code ---

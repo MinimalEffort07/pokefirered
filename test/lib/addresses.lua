@@ -405,4 +405,29 @@ ADDR.FOLLOWER_OBJ_EVENT_ID_OFF = 0x07
 ADDR.OE_PREV_X = 0x14
 ADDR.OE_PREV_Y = 0x16
 
+-------------------------------------------------------------------------------
+-- PREFER LIVE ADDRESSES FROM THE BUILT ROM
+-------------------------------------------------------------------------------
+-- The numbers above were copied from one particular build. Any change to a
+-- custom source file that adds or removes RAM variables moves everything the
+-- linker places after it (the roaming-Pokemon variables sit right after the
+-- Mt. Moon generator's, for example), and the copied numbers go stale.
+--
+-- So every entry above whose name is a real symbol (gRoamers, gMapHeader,
+-- CeruleanCity_Mart_Items, ...) is replaced by that symbol's address in the
+-- pokefirered.elf built next to the ROM (see symbols.lua). Entries that
+-- aren't symbol names (struct offsets, constants, gMain_callback2) keep their
+-- values, and if the ELF can't be read every entry keeps its value.
+
+local lib_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
+local ok, symbols = pcall(dofile, lib_dir .. "symbols.lua")
+if ok and symbols.available() then
+    for name, value in pairs(ADDR) do
+        if type(value) == "number" then
+            local live = symbols.find(name)
+            if live ~= nil then ADDR[name] = live end
+        end
+    end
+end
+
 return ADDR

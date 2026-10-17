@@ -1,46 +1,115 @@
 -------------------------------------------------------------------------------
--- dump_mtmoon_grid.lua
+-- dump_mtmoon_grid.lua: dump generated Mt. Moon caves for render_cave.py
 -------------------------------------------------------------------------------
--- Boots, warps to Mt Moon 1F, then reads every metatile in the 48x40 cave
--- region of the engine's MapGrid (gBackupMapLayout) and dumps it as ASCII
--- to /tmp/mgba-mtmoon-grid.txt. Each cell is rendered as:
---   .  walkable floor (collision == 0)
---   #  wall (collision != 0)
--- Tiles with weird values (out of expected range) are rendered as ?.
 --
--- Below the ASCII map we list the unique tile IDs seen in the grid plus
--- their counts -- useful for confirming the procgen is actually placing
--- the rim-wall set (0x0688..0x069a) and not falling back to all floor.
+-- Boots a new game, enters each chosen Mt. Moon floor so that the game
+-- builds the cave of each chosen seed, and writes the map the game loaded
+-- (every map cell, read from RAM) to a text file that
+-- test/tools/render_cave.py turns into a PNG:
 --
--- This bypasses the camera entirely; we read the same metatile data the
--- renderer would consult.
+--   MT_MOON_DUMP_FLOORS=B2F MT_MOON_DUMP_SEEDS=0x64f4 \
+--       bash test/run_test.sh test/tools/dump_mtmoon_grid.lua
+--   python3 -I test/tools/render_cave.py /tmp/mgba-test.XXXXXX/MtMoon_B2F_64f4.txt -o b2f.png
+--
+-- (run_test.sh prints the run's output directory, /tmp/mgba-test.XXXXXX.)
+-- With no settings it dumps the caves the README's "after" pictures show
+-- (README_SEEDS below), which are the caves the demo GIF walks through
+-- (test/tests/demo_mt_moon.lua).
+--
+-- ENVIRONMENT VARIABLES:
+--   MT_MOON_DUMP_SEEDS   comma-separated cave seeds (the 16-bit values of
+--                        VAR_MT_MOON_MAP_SEED), dumped on every chosen floor
+--   MT_MOON_DUMP_FLOORS  comma-separated floors, e.g. "B2F" (default: all)
+--   MT_MOON_DUMP_DIR     where to write (default: the run's output directory)
+--
+-- One file per floor and seed, MtMoon_<floor>_<seed>.txt:
+--
+--   map-dump 1
+--   layout MtMoon_B2F          the floor's layout (data/layouts/MtMoon_B2F)
+--   size 48 40                 width and height in map tiles
+--   seed 0x64f4                the cave seed
+--   rng 0x806721e8             the gRngValue the entry started from
+--   cells
+--   06ce 06ce 06ce ...         one line per map row: each map cell's 16-bit
+--                              value in hex (metatile id | collision << 10 |
+--                              elevation << 12, as in map.bin)
+--
+-- HOW A SEED IS CHOSEN. The game rolls a fresh cave seed with Random() on
+-- every entry, so a seed can't be written directly. Instead the tool writes
+-- the game's random state (gRngValue) just before the entry. The seed is
+-- the k-th Random() value after that write, and k (about a hundred calls,
+-- one per frame plus the map load's own) is measured from a first entry
+-- (mt_moon.rng_steps); mt_moon.rng_for_seed then runs the random number
+-- generator backwards from the wanted seed to the gRngValue that rolls it
+-- k calls later. k can differ by a call between entries (it depends a
+-- little on the cave being left), so the tool re-measures and tries again
+-- until the floor rolls the wanted seed.
 -------------------------------------------------------------------------------
 
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
 local project_dir = script_dir .. "../../"
 
-local fw   = dofile(project_dir .. "test/lib/framework.lua")
-local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
-local cs   = dofile(project_dir .. "test/lib/character_select.lua")
-local warp = dofile(project_dir .. "test/lib/warp.lua")
+local fw = dofile(project_dir .. "test/lib/framework.lua")
+local cs = dofile(project_dir .. "test/lib/character_select.lua")
+local mm = dofile(project_dir .. "test/lib/mt_moon.lua")
 
-local MTM_GROUP, MTM_NUM = 1, 1
-local MAP_OFFSET = 7
-local CAVE_W, CAVE_H = 48, 40
+-- The seeds of the README's "after" pictures, per floor: the caves the
+-- demo walks through (DEMO.seed in test/tests/demo_mt_moon.lua).
+local README_SEEDS = { ["1F"] = 0x2cba, ["B1F"] = 0xe6e7, ["B2F"] = 0x64f4 }
 
--- VMap (struct BackupMapLayout) is the engine's IN-MEMORY working map
--- buffer. Procgen writes via MapGridSetMetatileEntryAt land here.
--- Layout: { s32 Xsize; s32 Ysize; u16 *map; } at 0x03005050.
-local VMAP_ADDR = 0x03005050
-local function find_mapgrid_addr()
-    local xsize    = fw.read32(VMAP_ADDR + 0x00)
-    local ysize    = fw.read32(VMAP_ADDR + 0x04)
-    local map_data = fw.read32(VMAP_ADDR + 0x08)
-    return map_data, xsize, ysize
+-- Entries tried per seed before giving up.
+local MAX_TRIES = 6
+
+-- Any starting value works: the first entry only measures k.
+local PROBE_RNG = 0x5EED0000
+
+local function split_list(value)
+    if value == nil or value == "" then return nil end
+    local items = {}
+    for item in value:gmatch("[^,%s]+") do items[#items + 1] = item end
+    return items
+end
+
+-- Enter `floor` until the game rolls `seed`. Returns the snapshot and the
+-- gRngValue that rolled it, or nil.
+local function enter_with_seed(floor, seed)
+    local rng = PROBE_RNG
+    for _ = 1, MAX_TRIES do
+        local snap = mm.enter_floor(floor, rng)
+        if snap.seed == seed then return snap, rng end
+        local k = mm.rng_steps(rng, snap.seed)
+        if k == nil then return nil end
+        rng = mm.rng_for_seed(k, seed)
+    end
+    return nil
+end
+
+local function write_dump(path, floor, snap, rng)
+    local grid = snap.grid
+    local f = io.open(path, "w")
+    f:write("map-dump 1\n")
+    f:write(string.format("layout MtMoon_%s\n", floor.name))
+    f:write(string.format("size %d %d\n", grid.w, grid.h))
+    f:write(string.format("seed 0x%04x\n", snap.seed))
+    f:write(string.format("rng 0x%08x\n", rng))
+    f:write("cells\n")
+    for y = 0, grid.h - 1 do
+        local row = {}
+        for x = 0, grid.w - 1 do row[#row + 1] = string.format("%04x", grid.cells[mm.key(x, y)]) end
+        f:write(table.concat(row, " ") .. "\n")
+    end
+    f:close()
 end
 
 fw.run(function()
-    fw.log("=== Mt Moon 1F grid dump ===")
+    local seeds = split_list(os.getenv("MT_MOON_DUMP_SEEDS"))
+    local floors = split_list(os.getenv("MT_MOON_DUMP_FLOORS"))
+    local dir = os.getenv("MT_MOON_DUMP_DIR")
+    if dir ~= nil and dir ~= "" then os.execute("mkdir -p '" .. dir .. "'") end
+    local function out_file(name)
+        if dir == nil or dir == "" then return fw.out_path(name) end
+        return dir .. "/" .. name
+    end
 
     local sel = cs.find_selection_press()
     if not sel then fw.finish() return end
@@ -48,64 +117,25 @@ fw.run(function()
     cs.boot_and_open_list(sel)
     cs.confirm_and_enter_overworld()
     fw.assert_true(cs.is_player_active(), "reached overworld")
-    fw.wait_frames(60)
 
-    local ok = warp.warp_to(MTM_GROUP, MTM_NUM, 0)
-    fw.assert_true(ok, "warp into Mt Moon 1F succeeded")
-    if not ok then fw.finish() return end
-
-    fw.wait_frames(60)  -- let WriteGridToVMap finish
-
-    local map_data, mw, mh = find_mapgrid_addr()
-    fw.log(string.format("MapLayout: %dx%d, data=0x%08X", mw, mh, map_data))
-
-    -- Counts and grid render
-    local counts = {}
-    local lines = {}
-    for y = 0, CAVE_H - 1 do
-        local row = {}
-        for x = 0, CAVE_W - 1 do
-            -- Procgen writes at VMap[(y+MAP_OFFSET) * Xsize + (x+MAP_OFFSET)].
-            local cell = fw.read16(map_data + ((y + MAP_OFFSET) * mw + (x + MAP_OFFSET)) * 2)
-            local mt   = cell % 0x400          -- bits 0-9
-            local coll = math.floor(cell / 0x400) % 4  -- bits 10-11
-            counts[cell] = (counts[cell] or 0) + 1
-            if coll == 0 then
-                row[#row + 1] = "."
-            else
-                row[#row + 1] = "#"
+    for _, floor in ipairs(mm.FLOORS) do
+        local wanted = floors == nil
+        for _, name in ipairs(floors or {}) do wanted = wanted or name == floor.name end
+        if wanted then
+            local list = {}
+            for _, s in ipairs(seeds or { string.format("0x%04x", README_SEEDS[floor.name]) }) do
+                list[#list + 1] = tonumber(s) & 0xFFFF
+            end
+            for _, seed in ipairs(list) do
+                local snap, rng = enter_with_seed(floor, seed)
+                fw.assert_true(snap ~= nil, string.format("%s rolled cave seed 0x%04x", floor.name, seed))
+                if snap then
+                    local path = out_file(string.format("MtMoon_%s_%04x.txt", floor.name, seed))
+                    write_dump(path, floor, snap, rng)
+                    fw.log("wrote " .. path)
+                end
             end
         end
-        lines[#lines + 1] = string.format("%2d  %s", y, table.concat(row))
     end
-
-    -- Sort tile counts by descending frequency
-    local sorted = {}
-    for cell, c in pairs(counts) do
-        sorted[#sorted + 1] = { cell = cell, count = c }
-    end
-    table.sort(sorted, function(a, b) return a.count > b.count end)
-
-    -- Write the dump to disk (mGBA Lua has io)
-    local out = io.open("/tmp/mgba-mtmoon-grid.txt", "w")
-    out:write("Mt Moon 1F procgen output (current ROM)\n")
-    out:write(string.format("Layout: %dx%d, sampling first %dx%d\n",
-        mw, mh, CAVE_W, CAVE_H))
-    out:write(". = walkable, # = wall (collision)\n")
-    out:write("    " .. string.rep("0123456789", 5):sub(1, CAVE_W) .. "\n")
-    for _, line in ipairs(lines) do
-        out:write(line .. "\n")
-    end
-    out:write("\nTile usage (cell value | metatile-id | coll | count):\n")
-    for i, e in ipairs(sorted) do
-        local mt = e.cell % 0x400
-        local coll = math.floor(e.cell / 0x400) % 4
-        out:write(string.format("  0x%04X  mt=0x%03X coll=%d  %d\n",
-            e.cell, mt, coll, e.count))
-        if i >= 30 then break end
-    end
-    out:close()
-
-    fw.log("Wrote /tmp/mgba-mtmoon-grid.txt")
     fw.finish()
 end)

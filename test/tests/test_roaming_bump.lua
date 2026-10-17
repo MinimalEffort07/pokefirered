@@ -242,6 +242,6 @@ fw.run(function()
     fw.assert_eq(count_after, 0,
         "gRoamerCount decremented after battle dispatched")
 
-    fw.screenshot("/tmp/mgba-roaming-bump.png")
+    fw.screenshot(fw.out_path("mgba-roaming-bump.png"))
     fw.finish()
 end)
