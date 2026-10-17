@@ -13,7 +13,8 @@
  *
  *   1. The BORDER BAND: the same 2 tiles of rock around the map as vanilla
  *      1F (rows 0-1 and 38-39, columns 0-1 and 46-47), with 1F's doorway to
- *      Route 4 in the south band at (18,37).
+ *      Route 4 at (18,37), just above the south band, its frame set into the
+ *      band below it.
  *   2. ROCK ISLANDS in the open floor: rectangles at least 3 x 3 tiles and
  *      L-shapes, with at least 2 floor tiles between any two of them.
  *   3. SAND PATCHES with soft edges: staircase-shaped patches in the
@@ -27,8 +28,8 @@
  * test P5-1F checks. Shapes those tiles can't draw are never generated; the
  * sections below say which shapes those are and why.
  *
- * About 61% of the map is walkable (57-66% over 100 seeds; vanilla: 60%;
- * test P6-1F wants 50-70%). Every random choice uses MtMoonGen_Random(), so
+ * About 62% of the map is walkable (58.4-65.1% over test P6-1F's 100
+ * seeds; vanilla: 60%; P6-1F wants 50-70%). Every random choice uses MtMoonGen_Random(), so
  * a seed always builds the same floor.
  *
  * MAP CELL VALUES: a value written into the map is
@@ -42,12 +43,12 @@
  *   - Pockets: there are none. The floor inside the border band is one
  *     connected piece, because islands are 2+ tiles apart and only touch the
  *     west and south borders (see ROCK ISLANDS).
- *   - Content: 1F's 13 trainers, NPCs and item balls stand on open floor or
+ *   - Content: 1F's 14 trainers, NPCs and item balls stand on open floor or
  *     sand (they are sprites, so the tiles under them don't change). Its
  *     one sign is a stamped signpost, which vanilla only puts next to plain
  *     floor, so CanStamp1FPrefabAt keeps it away from sand.
  *   - Repairs: the core only carves new floor when no spot fits a piece of
- *     content. With 57-66% open floor that doesn't happen: in a prototype of
+ *     content. With about 60% open floor that doesn't happen: in a prototype of
  *     this style over 5,000 layouts, the most cramped still had 36 spots for
  *     the Hiker's 5 x 5 roaming box and 214 for the sign. (A carve would cut
  *     into an island and draw pairs test P5-1F rejects.)
@@ -242,8 +243,10 @@ struct TileBox
  *     vertices wide and 4-8 tall, kept 3+ vertices from the other patches
  *     and the doorway and away from the hole; dropped if it doesn't fit.
  * A corner patch that would reach the hole or the doorway is drawn smaller,
- * at worst as a 4 x 4 staircase that the hole is never put near
- * (MoveExitClearOfCornerSand).
+ * at worst as a 4 x 4 staircase that the hole is never put near: buildShape
+ * moves the hole away from the three corners that always have sand
+ * (MoveExitClearOfCornerSand), and the north-east corner only has a patch
+ * with the north strip, which LaySand leaves out when the hole is near it.
  *
  * THE SAND MAP: buildShape lays the sand once (LaySand) and keeps it as one
  * bit per vertex in the style's work area (MtMoonGen_GetStyleWork, 252
@@ -403,10 +406,12 @@ static void SetBox(struct VertexBox *box, s32 x1, s32 y1, s32 x2, s32 y2)
     box->y2 = y2;
 }
 
-/* Sand keeps out of these boxes of vertices: around the hole, its four
- * neighbours must be plain floor (their corners are the vertices
- * x-1..x+2 x y-1..y+2), plus one more vertex all round; around the doorway,
- * the same for its three floor neighbours, down to the south band. */
+/* Sand keeps out of these boxes of vertices. Around the hole, its four
+ * neighbours must be plain floor: their corners all lie in the box of
+ * vertices x-1..x+2 x y-1..y+2 (which also holds the corners of the four
+ * diagonal neighbours); the hole's box is that plus one more vertex all
+ * round. Around the doorway, the same for its three floor neighbours, down
+ * to the south band. */
 static void GetHoleBox(const struct MtMoonCave *cave, struct VertexBox *box)
 {
     SetBox(box, cave->exit.x - 2, cave->exit.y - 2, cave->exit.x + 3, cave->exit.y + 3);
@@ -425,6 +430,19 @@ static struct SandMap *GetSandMap(void)
 {
     return MtMoonGen_GetStyleWork();
 }
+
+/*
+ * HOW THE BITS ARE PACKED: vertex (vx, vy) is number i = vy * 49 + vx,
+ * counting row by row. Each u32 word holds 32 vertices, so vertex i is in
+ * word i / 32 and is bit i % 32 of it (bit 0 the lowest). On the GBA's CPU,
+ * which can't divide, those are written as shifts and masks: i >> 5 is
+ * i / 32 (shifting right by 5 bits divides by 2^5), and i & 31 is i % 32
+ * (the low 5 bits).
+ *
+ * The bounds checks cast to u32 so that one comparison per axis also
+ * catches negative coordinates: a negative s32 read as a u32 is a huge
+ * number, beyond any width.
+ */
 
 /* TRUE if vertex (vx, vy) is sand. Vertices off the map are not. */
 static bool8 IsSand(const struct SandMap *map, s32 vx, s32 vy)
@@ -454,7 +472,8 @@ static void SetSandRow(struct SandMap *map, s32 vy, s32 x1, s32 x2)
         SetSand(map, x1, vy);
 }
 
-/* Bit i of the sand map (vertex i, counting row by row). */
+/* Bit i of the sand map (vertex i, counting row by row; see HOW THE BITS
+ * ARE PACKED above). */
 #define SAND_BIT(map, i) (((map)->bits[(i) >> 5] >> ((i) & 31)) & 1)
 
 /* Which corners of map tile (x, y) are sand, as a mask of SAND_NW, SAND_NE,
@@ -503,7 +522,9 @@ static void AddStep(struct SandCorner *corner, s32 reach, s32 depth)
  *   - then 1-3 shorter and 1-2 deeper at each step, until the reach is 0;
  *   - that last step is the 1-8 vertex tail along the west or east border.
  * After the first two steps the reach is at most 10, and it drops by at
- * least 1 per step, so there are at most 12 steps.
+ * least 1 per step, so there are at most 12 steps. (The longest staircases
+ * would need up to 37 of the 32 random bits; once they run out, the last
+ * steps are 1 shorter and 1 deeper each, and the tail 1 vertex long.)
  */
 static void GenerateSteps(struct SandCorner *corner, u32 bits, s32 shrink)
 {
@@ -619,9 +640,9 @@ static void ChooseCorner(const struct MtMoonCave *cave, s32 c, struct SandCorner
             && !CornerMeetsBox(cave, c, corner, &door))
             return;
     }
-    /* The smallest patch: 3 x 3 vertices at the corner (one full sand
-     * tile), with the 1-vertex tips each border needs. The hole is never put
-     * near it (MoveExitClearOfCornerSand), and the doorway is far away. */
+    /* The smallest patch: 3 x 3 vertices at the corner (2 x 2 full sand
+     * tiles), with the 1-vertex tips each border needs. The hole is never
+     * near it (see THE PATCHES), and the doorway is far away. */
     corner->count = 0;
     AddStep(corner, 3, 0);
     AddStep(corner, 2, 2);
@@ -766,33 +787,37 @@ static void LaySand(const struct MtMoonCave *cave, struct SandMap *map)
 /* Shape                                                                     */
 /* ------------------------------------------------------------------------- */
 
-/* TRUE if a hole at (x, y) is clear of the smallest north-west, south-west
- * and south-east corner patches (4 x 4 vertices each), which those corners
+/* TRUE if the hole is clear of the smallest north-west, south-west and
+ * south-east corner patches (4 x 4 vertices each), which those corners
  * always have. */
-static bool8 IsHoleClearOfCornerSand(const struct MtMoonCave *cave, s32 x, s32 y)
+static bool8 IsHoleClearOfCornerSand(const struct MtMoonCave *cave)
 {
     struct VertexBox hole, corner;
-    s32 right = cave->width - BAND, bottom = cave->height - BAND;
+    s32 c, ax, ay;
 
-    SetBox(&hole, x - 2, y - 2, x + 3, y + 3);
-    SetBox(&corner, BAND, BAND, BAND + 3, BAND + 3);
-    if (BoxesMeet(&hole, &corner, 0))
-        return FALSE;
-    SetBox(&corner, BAND, bottom - 3, BAND + 3, bottom);
-    if (BoxesMeet(&hole, &corner, 0))
-        return FALSE;
-    SetBox(&corner, right - 3, bottom - 3, right, bottom);
-    return !BoxesMeet(&hole, &corner, 0);
+    GetHoleBox(cave, &hole);
+    for (c = CORNER_NW; c <= CORNER_SE; c++)
+    {
+        ax = CORNER_X(cave, c);
+        ay = CORNER_Y(cave, c);
+        SetBox(&corner, min(ax, ax + 3 * sCornerDirX[c]), min(ay, ay + 3 * sCornerDirY[c]),
+                        max(ax, ax + 3 * sCornerDirX[c]), max(ay, ay + 3 * sCornerDirY[c]));
+        if (BoxesMeet(&hole, &corner, 0))
+            return FALSE;
+    }
+    return TRUE;
 }
 
 /*
  * The ladders (see the ladder contract in include/mt_moon_gen_style.h):
- * 1F's door is fixed at (18,37), in the south band. The exit hole keeps the
- * core's proposal unless that is next to a corner that always has sand (the
- * hole's neighbours must be plain floor); then it is redrawn the way the
- * core draws it, at least MT_MOON_LADDER_MIN_DISTANCE from the door. (After
- * 200 draws, which never happens, it goes to the middle of the map's top,
- * far from the door and the corners.)
+ * 1F's door is fixed at (18,37), just above the south band. The exit hole
+ * keeps the core's proposal unless that is next to a corner that always has
+ * sand (the hole's neighbours must be plain floor); then it is redrawn here
+ * with the same ranges as the core's proposal (ProposeLadderSpot in
+ * src/mt_moon_gen.c, which styles can't call), at least
+ * MT_MOON_LADDER_MIN_DISTANCE from the door. (After 200 draws, which never
+ * happens, it goes to the middle of the map's top, far from the door and the
+ * corners.)
  */
 static void MoveExitClearOfCornerSand(struct MtMoonCave *cave)
 {
@@ -800,7 +825,7 @@ static void MoveExitClearOfCornerSand(struct MtMoonCave *cave)
 
     for (tries = 0; tries < 200; tries++)
     {
-        if (IsHoleClearOfCornerSand(cave, cave->exit.x, cave->exit.y)
+        if (IsHoleClearOfCornerSand(cave)
             && MtMoonGen_LadderDistance(&cave->entrance, &cave->exit) >= MT_MOON_LADDER_MIN_DISTANCE)
             return;
         cave->exit.x = 4 + MtMoonGen_RandomBelow(cave->width - 8);
@@ -862,6 +887,16 @@ static bool8 IsIslandSpotFree(const struct MtMoonCave *cave, const struct SandMa
     return !IsSandInBox(map, &around);
 }
 
+/* A random top-left tile for a w x h island: anywhere from against the
+ * west border to 2 floor tiles from the east one, and from 2 floor tiles
+ * below the north border to standing on the south band (IsIslandSpotFree
+ * then checks the rules). */
+static void GetRandomIslandSpot(const struct MtMoonCave *cave, s32 w, s32 h, s32 *x, s32 *y)
+{
+    *x = BAND + MtMoonGen_RandomBelow(cave->width - 1 - BAND - BORDER_GAP - w);
+    *y = BAND + BORDER_GAP + MtMoonGen_RandomBelow(cave->height - 1 - BAND - BORDER_GAP - h);
+}
+
 /* Turn the tile box into rock; returns how many tiles that is. */
 static s32 FillRock(s32 x1, s32 y1, s32 x2, s32 y2)
 {
@@ -913,20 +948,19 @@ static s32 TryIsland(struct MtMoonCave *cave, const struct SandMap *map, struct 
     gap = ISLAND_GAP + (MtMoonGen_RandomBelow(4) == 0);
     if (*placed > 0 && MtMoonGen_RandomBelow(2) == 0)
     {
-        const struct TileBox *next = &recent[MtMoonGen_RandomBelow(min(*placed, RECENT_ISLANDS))];
+        const struct TileBox *beside = &recent[MtMoonGen_RandomBelow(min(*placed, RECENT_ISLANDS))];
 
         switch (MtMoonGen_RandomBelow(4))
         {
-        case 0:  x = next->x2 + gap + 1; y = next->y1;           break;
-        case 1:  x = next->x1 - gap - w; y = next->y1;           break;
-        case 2:  x = next->x1;           y = next->y2 + gap + 1; break;
-        default: x = next->x1;           y = next->y1 - gap - h; break;
+        case 0:  x = beside->x2 + gap + 1; y = beside->y1;           break;
+        case 1:  x = beside->x1 - gap - w; y = beside->y1;           break;
+        case 2:  x = beside->x1;           y = beside->y2 + gap + 1; break;
+        default: x = beside->x1;           y = beside->y1 - gap - h; break;
         }
     }
     else
     {
-        x = BAND + MtMoonGen_RandomBelow(cave->width - 1 - BAND - BORDER_GAP - w);
-        y = BAND + BORDER_GAP + MtMoonGen_RandomBelow(cave->height - 1 - BAND - BORDER_GAP - h);
+        GetRandomIslandSpot(cave, w, h, &x, &y);
     }
     if (!IsIslandSpotFree(cave, map, x, y, x + w - 1, y + h - 1, gap, !isL))
         return 0;
@@ -981,8 +1015,7 @@ static void Build1FShape(struct MtMoonCave *cave)
             else
                 w = 4;
         }
-        x = BAND + MtMoonGen_RandomBelow(cave->width - 1 - BAND - BORDER_GAP - w);
-        y = BAND + BORDER_GAP + MtMoonGen_RandomBelow(cave->height - 1 - BAND - BORDER_GAP - h);
+        GetRandomIslandSpot(cave, w, h, &x, &y);
         if (IsIslandSpotFree(cave, map, x, y, x + w - 1, y + h - 1, ISLAND_GAP, TRUE))
             rock += FillRock(x, y, x + w - 1, y + h - 1);
     }
@@ -1092,9 +1125,12 @@ static u16 Pick1FTile(const struct MtMoonCave *cave, s32 x, s32 y)
 /*
  * The core asks this before it stamps a hidden item's boulder or a sign's
  * signpost on tile (x, y) (canStampAt in include/mt_moon_gen_style.h).
- * Vanilla only puts plain floor next to those, so the four tiles around
- * (x, y) must have no sand at any corner: vertices x-1..x+2 x y-1..y+2.
- * (1F has one sign, the Zubat warning, and no hidden items.)
+ * Vanilla only puts plain floor next to those, so the four tiles north,
+ * south, west and east of (x, y) must have no sand at any corner. This
+ * checks the whole box of vertices x-1..x+2 x y-1..y+2, which also keeps
+ * sand off the four diagonal neighbours: the sign then stands in plain
+ * floor, as vanilla's does. (1F has one sign, the Zubat warning, and no
+ * hidden items.)
  */
 static bool8 CanStamp1FPrefabAt(const struct MtMoonCave *cave, s32 x, s32 y)
 {

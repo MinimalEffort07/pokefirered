@@ -39,11 +39,12 @@
  * Each generated floor has one style object named after it, declared at the
  * bottom of this file (gMtMoonStyle1F, gMtMoonStyleB1F, gMtMoonStyleB2F).
  * The core uses that name; whichever source file DEFINES it decides the
- * floor's look. To give 1F its own style:
+ * floor's look. To give B2F its own style, for example:
  *
- *   1. Write src/mt_moon_style_1f.c (it is compiled automatically) and define
- *      `const struct MtMoonStyle gMtMoonStyle1F = { Build1FShape, Pick1FTile };`
- *   2. Delete the one gMtMoonStyle1F line from the file that defined it
+ *   1. Write src/mt_moon_style_b2f.c (it is compiled automatically) and
+ *      define `const struct MtMoonStyle gMtMoonStyleB2F = { BuildB2FShape,
+ *      PickB2FTile };` (plus any optional fields; 1F's style sets them).
+ *   2. Delete the one gMtMoonStyleB2F line from the file that defined it
  *      before (today, src/mt_moon_style_cellular.c).
  *
  * The linker connects the core to the one definition, and complains if
