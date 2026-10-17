@@ -714,36 +714,6 @@ u8 MtMoonGen_GetFloorMask(s32 cx, s32 cy)
     return mask;
 }
 
-u8 MtMoonGen_CountWallNeighbors(s32 cx, s32 cy)
-{
-    const u8 *above, *row, *below;
-    s32 stride = GRID_STRIDE;
-    u8 mask, walls;
-
-    /* Off the grid: count the clear bits of the floor mask. */
-    if (!IN_GRID(cx, cy))
-    {
-        mask = MtMoonGen_GetFloorMask(cx, cy);
-        walls = 8;
-        while (mask != 0)
-        {
-            mask &= mask - 1;  /* clears the lowest set bit */
-            walls--;
-        }
-        return walls;
-    }
-
-    /* Inside the grid, add up the 8 neighbours directly (the wall frame
-     * keeps them inside the array). Style passes ask this for many cells,
-     * so it avoids the mask's branches. */
-    row = &sCaveGrid[CELL_INDEX(cx, cy)];
-    above = row - stride;
-    below = row + stride;
-    return (above[-1] == MT_MOON_CELL_WALL) + (above[0] == MT_MOON_CELL_WALL) + (above[1] == MT_MOON_CELL_WALL)
-         + (row[-1] == MT_MOON_CELL_WALL)                                     + (row[1] == MT_MOON_CELL_WALL)
-         + (below[-1] == MT_MOON_CELL_WALL) + (below[0] == MT_MOON_CELL_WALL) + (below[1] == MT_MOON_CELL_WALL);
-}
-
 /*
  * Mark every floor cell connected to (fromX, fromY) as VISITED, with a
  * breadth-first flood fill: start from one cell, and keep a queue of cells
@@ -803,19 +773,6 @@ static void ClearVisited(s32 count)
 
     for (i = 0; i < count; i++)
         sCaveGrid[queue[i]] = MT_MOON_CELL_FLOOR;
-}
-
-bool8 MtMoonGen_FloodFillReaches(s32 fromX, s32 fromY, s32 toX, s32 toY)
-{
-    bool8 reachable;
-    s32 count;
-
-    if (MtMoonGen_GetCell(fromX, fromY) == MT_MOON_CELL_WALL)
-        return FALSE;
-    count = MarkReachableFrom(fromX, fromY);
-    reachable = (MtMoonGen_GetCell(toX, toY) == MT_MOON_CELL_VISITED);
-    ClearVisited(count);
-    return reachable;
 }
 
 /* ------------------------------------------------------------------------- */
