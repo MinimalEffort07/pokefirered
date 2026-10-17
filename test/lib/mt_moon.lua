@@ -168,9 +168,15 @@ local TEMPLATE_SIZE = 0x18
 -- followed by four pointers to the matching arrays.
 -- struct WarpEvent, 8 bytes: s16 x, s16 y, u8 elevation, u8 warpId (the
 -- destination map's warp), u8 mapNum, u8 mapGroup (the destination map).
+-- struct CoordEvent, 16 bytes: u16 x, u16 y, u8 elevation, 1 byte of
+-- padding, u16 trigger (the game variable it watches), u16 index (the value
+-- that variable must hold for the script to run), 2 bytes of padding, then
+-- the script pointer. A coordinate event is an invisible tile that starts
+-- its script when the player steps onto it, such as Miguel's battle trigger.
 -- struct BgEvent, 12 bytes: u16 x, u16 y, u8 elevation, u8 kind, 2 bytes of
 -- padding, then a u32 (script pointer, or packed hidden-item data).
 local WARP_SIZE = 8
+local COORD_EVENT_SIZE = 16
 local BG_EVENT_SIZE = 12
 
 -- The tile collision value lives in bits 10-11 of a map cell.
@@ -240,6 +246,25 @@ end
 function mm.set_flag(flag)
     local a = mm.sb1() + SB1_FLAGS + (flag >> 3)
     emu:write8(a, emu:read8(a) | (1 << (flag & 7)))
+end
+
+function mm.clear_flag(flag)
+    local a = mm.sb1() + SB1_FLAGS + (flag >> 3)
+    emu:write8(a, emu:read8(a) & ~(1 << (flag & 7)) & 0xFF)
+end
+
+-- The OPTION menu's text speed, SaveBlock2.optionsTextSpeed (include/
+-- global.h): bits 0-2 of the u16 at offset 0x14 of SaveBlock2.
+local SB2_OPTIONS = 0x14
+
+-- Set the text speed option to FAST, as a player in a hurry would (a new
+-- game starts at MID). Scenario tests that time a scripted scene with
+-- several messages use it, so their frame limits measure the scene, not
+-- the text printer.
+function mm.set_text_speed_fast()
+    local fast = mm.read_defines("include/constants/global.h").OPTIONS_TEXT_SPEED_FAST
+    local a = emu:read32(sym.addr("gSaveBlock2Ptr")) + SB2_OPTIONS
+    emu:write16(a, (emu:read16(a) & ~7) | fast)
 end
 
 -- Reads `#define NAME value` constants from a header in the repo, so tests
@@ -424,6 +449,29 @@ function mm.read_bg_events()
     return read_bg_event_array(emu:read32(events + 16), emu:read8(events + 3))
 end
 
+-- `count` coordinate events (layout above) starting at `base`.
+local function read_coord_event_array(base, count)
+    local coords = {}
+    for i = 0, count - 1 do
+        local a = base + i * COORD_EVENT_SIZE
+        coords[#coords + 1] = {
+            x = emu:read16(a + 0),
+            y = emu:read16(a + 2),
+            elevation = emu:read8(a + 4),
+            var = emu:read16(a + 6),
+            value = emu:read16(a + 8),
+            script = emu:read32(a + 12),
+        }
+    end
+    return coords
+end
+
+-- The current map's coordinate events (trigger tiles).
+function mm.read_coord_events()
+    local events = map_events()
+    return read_coord_event_array(emu:read32(events + 12), emu:read8(events + 2))
+end
+
 -- One struct ObjectEventTemplate at address `a` (layout above).
 local function read_template(a)
     local ranges = emu:read16(a + 10)
@@ -458,7 +506,8 @@ end
 -- before the generator rewrites anything. Every map's header is reached
 -- through gMapGroups[group][num] (an array of header pointers per map
 -- group); the header's `events` (+4) points at struct MapEvents (layout
--- above). Returns { objects = {...}, bg_events = {...} } in map.json order.
+-- above). Returns { objects = {...}, coord_events = {...},
+-- bg_events = {...} } in map.json order.
 function mm.rom_events(map)
     local group_list = emu:read32(sym.addr("gMapGroups") + map.group * 4)
     local header = emu:read32(group_list + map.num * 4)
@@ -470,6 +519,7 @@ function mm.rom_events(map)
     end
     return {
         objects = objects,
+        coord_events = read_coord_event_array(emu:read32(events + 12), emu:read8(events + 2)),
         bg_events = read_bg_event_array(emu:read32(events + 16), emu:read8(events + 3)),
     }
 end
@@ -657,6 +707,7 @@ function mm.snapshot(saved_objects)
         seed = mm.seed(),
         grid = mm.read_grid(),
         warps = mm.read_warps(),
+        coord_events = mm.read_coord_events(),
         bg_events = mm.read_bg_events(),
         templates = mm.read_templates(),
         live = live,
@@ -808,6 +859,28 @@ end
 -- the test wrote the warp mid-frame, the game would start loading one frame
 -- earlier than usual, one fewer per-frame Random() call would happen
 -- before the seed roll, and the same gRngValue would roll a different seed.
+--
+-- Even when the loop is spinning at the boundary, it can miss the next
+-- frame: a frame whose work ran past the start of the next frame enters
+-- WaitForVBlank late, and WaitForVBlank then sleeps through one more
+-- frame. The test can't tell the two apart beforehand, so the random state
+-- is re-written at every frame boundary until the game has really picked
+-- the warp up (callback2 is no longer CB2_LoadMap; see the frame callback
+-- below). Then the Random() calls between the test's write and the seed
+-- roll are the same whatever map is being left. Without this, a few
+-- gRngValues alternated between two caves for ever on one floor: leaving
+-- cave A rolled B, leaving B rolled A, one Random() call apart.
+local pending_rng = nil
+
+callbacks:add("frame", function()
+    if pending_rng == nil then return end
+    if sym.is_func(emu:read32(sym.addr("gMain") + 4), "CB2_LoadMap") then
+        mm.set_rng(pending_rng)
+    else
+        pending_rng = nil
+    end
+end)
+
 local function wait_until_idle()
     for _ = 1, 60 do
         if sym.contains(emu:readRegister("pc"), "WaitForVBlank") then return end
@@ -847,7 +920,10 @@ local function start_warp(map, warp_id, rng, x, y)
         emu:write16(a + 4, (x or 0) & 0xFFFF)
         emu:write16(a + 6, (y or 0) & 0xFFFF)
     end
-    if rng ~= nil then mm.set_rng(rng) end
+    if rng ~= nil then
+        mm.set_rng(rng)
+        pending_rng = rng
+    end
     emu:write32(sym.addr("gMain") + 4, sym.addr("CB2_LoadMap") | 1)
 end
 

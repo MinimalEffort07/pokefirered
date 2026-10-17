@@ -121,28 +121,30 @@ local function object_tiles()
     return set
 end
 
--- The direction of the first step of a shortest route from the player to
--- (tx, ty), or nil if there is no route right now, plus the route length.
--- Searches backwards from the target, then takes the player's neighbour
--- closest to it.
 -- What the planner must not walk onto, as blocked(x, y), plus the object
 -- tile set itself: object tiles (see the header) and warp tiles, apart from
--- the player's own tile.
-local function planner_blocked(px, py)
+-- the player's own tile, and the tiles in `avoid` (optional, a set of
+-- mm.key(x, y), e.g. a trigger tile the walk must not set off).
+local function planner_blocked(px, py, avoid)
     local objects = object_tiles()
     local warps = {}
     for _, w in ipairs(mm.read_warps()) do warps[mm.key(w.x, w.y)] = true end
     return function(x, y)
         if x == px and y == py then return false end
-        return objects[mm.key(x, y)] or warps[mm.key(x, y)]
+        local k = mm.key(x, y)
+        return objects[k] or warps[k] or (avoid ~= nil and avoid[k])
     end, objects
 end
 
-function walk.plan(tx, ty)
+-- The direction of the first step of a shortest route from the player to
+-- (tx, ty), or nil if there is no route right now, plus the route length.
+-- Searches backwards from the target, then takes the player's neighbour
+-- closest to it. `avoid`: see planner_blocked.
+function walk.plan(tx, ty, avoid)
     local px, py = mm.player_tile()
     if px == nil then return nil end
     local grid = mm.read_grid()
-    local blocked, objects = planner_blocked(px, py)
+    local blocked, objects = planner_blocked(px, py, avoid)
     local dist = mm.bfs(grid, tx, ty, blocked)
     local best, best_d = nil, nil
     for _, d in ipairs(DIRS) do
@@ -232,7 +234,8 @@ end
 -- next. Returns a result table:
 --   { ok = bool, warped = bool, steps = n, replans = n, why = "..." }
 -- `opts.on_last_step()` (optional) runs just before the step onto the
--- target, e.g. to set the random state a warp will use.
+-- target, e.g. to set the random state a warp will use. `opts.avoid`
+-- (optional) is a set of mm.key(x, y) the route must not cross.
 function walk.to(tx, ty, opts)
     opts = opts or {}
     local max_steps = opts.max_steps or 400
@@ -254,7 +257,7 @@ function walk.to(tx, ty, opts)
             result.ok = true
             return result
         end
-        local dir, length = walk.plan(tx, ty)
+        local dir, length = walk.plan(tx, ty, opts.avoid)
         if dir == nil then
             -- Nothing reaches the target right now: an NPC or a roaming
             -- Pokemon may be in a corridor. Wait for it to move.
@@ -288,6 +291,23 @@ function walk.to(tx, ty, opts)
     return result
 end
 
+-- One step from the player's tile onto the neighbouring tile (tx, ty),
+-- for a step whose consequences the caller wants to watch frame by frame
+-- (walk.to() waits for control to come back after every step, which a
+-- trigger tile's script takes away). Returns true once the player's tile
+-- is (tx, ty), false if (tx, ty) isn't next to the player or the player
+-- didn't move within `timeout` frames (default 40).
+function walk.step_onto(tx, ty, timeout)
+    local px, py = mm.player_tile()
+    if px == nil then return false end
+    for _, d in ipairs(DIRS) do
+        if px + d.dx == tx and py + d.dy == ty then
+            return step(d, timeout or 40)
+        end
+    end
+    return false
+end
+
 -------------------------------------------------------------------------------
 -- Talking to things
 -------------------------------------------------------------------------------
@@ -318,7 +338,7 @@ end
 function walk.to_face(tx, ty, opts)
     local px, py = mm.player_tile()
     if px == nil then return { ok = false, steps = 0, replans = 0, why = "no player" } end
-    local dist = mm.bfs(mm.read_grid(), px, py, (planner_blocked(px, py)))
+    local dist = mm.bfs(mm.read_grid(), px, py, (planner_blocked(px, py, opts and opts.avoid)))
     local best, best_d = nil, nil
     for _, d in ipairs(DIRS) do
         -- The player stands at target - d and faces along d.
