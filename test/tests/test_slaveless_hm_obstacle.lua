@@ -28,7 +28,9 @@
 --   A. No badge + no HM01 in bag: press A on tree → "can't cut" sign.
 --      FLAG_TEMP_11 NOT set (tree stays standing).
 --   B. Badge set + HM01 in bag, empty party: slaveless prompt → YES.
---      FLAG_TEMP_11 SET (tree was removed by the cut animation).
+--      FLAG_TEMP_11 SET (tree was removed by the cut animation). While the
+--      outdoor field-move banner is up, the "mysterious POKéMON" portrait can
+--      be seen on it (see SILHOUETTE VISIBILITY below).
 --   C. HM03 in bag but no BADGE05, empty party, facing the Viridian pond at
 --      tile (15, 26) from (15, 25): press A → no Surf prompt (the message
 --      buffer gStringVar4 is not Text_WantToSurf) and the player is not
@@ -38,6 +40,21 @@
 --      dismiss "A mysterious POKéMON appeared and used SURF!" → the player is
 --      surfing (PLAYER_AVATAR_FLAG_SURFING set) on the water tile (15, 26).
 --      Pressing A again on the water shows no second Surf prompt.
+--   E. Indoors: warp to Fuchsia City's Warden's House (an INDOOR map, so the
+--      indoor banner is used) at tile (11, 7), below the Strength boulder at
+--      (11, 6). BADGE04 + HM04 in bag, empty party: A → YES → the portrait
+--      can be seen on the indoor banner, and FLAG_SYS_USE_STRENGTH is set.
+--
+-- SILHOUETTE VISIBILITY:
+--   The field-move portrait is the only 64x64 sprite on screen while the
+--   banner is up. Once it stops in the middle of the screen (sprite x = 120,
+--   so its top-left corner is at x = 88), the test grabs the screen and counts
+--   the pixels inside the portrait's 64x64 box whose colour appears nowhere
+--   on the same screen rows outside the box. Those rows show only the banner
+--   (its background and streaks), so a portrait painted in the banner's own
+--   colours, like the all-black silhouette on the black outdoor banner,
+--   scores 0. Passing needs at least 64 such pixels; a real portrait has
+--   hundreds.
 --
 -- Run:    bash test/run_test.sh test/tests/test_slaveless_hm_obstacle.lua
 -- Record: bash test/record_test.sh test/tests/test_slaveless_hm_obstacle.lua
@@ -49,6 +66,7 @@ local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local sym  = dofile(project_dir .. "test/lib/symbols.lua")
+local warp = dofile(project_dir .. "test/lib/warp.lua")
 
 local STATE_PATH = fw.out_path("pokefirered-slaveless-hm.ss")
 -- RAM addresses come from pokefirered.elf by symbol name (symbols.lua), so
@@ -85,6 +103,19 @@ local FLAG_BADGE02_GET = 2081
 local FLAG_SYS_POKEMON_GET = 2088
 -- FLAG_BADGE05_GET = SYS_FLAGS + 0x24 = 0x824 = 2084 (Soul Badge: Surf)
 local FLAG_BADGE05_GET = 2084
+-- FLAG_BADGE04_GET = SYS_FLAGS + 0x23 = 0x823 = 2083 (Rainbow Badge: Strength)
+local FLAG_BADGE04_GET = 2083
+-- FLAG_SYS_USE_STRENGTH = SYS_FLAGS + 0x5 = 0x805 = 2053: boulders can be pushed
+local FLAG_SYS_USE_STRENGTH = 2053
+local ITEM_HM04 = 342   -- Strength
+
+-- Fuchsia City Warden's House: MAP_FUCHSIA_CITY_WARDENS_HOUSE = (7 | (11 << 8)),
+-- map type INDOOR. Strength boulder at tile (11, 6); the player stands at
+-- (11, 7) below it.
+local WARDENS_HOUSE_GROUP, WARDENS_HOUSE_NUM = 11, 7
+
+-- Smallest number of portrait pixels that must differ from the banner.
+local MIN_VISIBLE_PORTRAIT_PIXELS = 64
 
 -- gPlayerAvatar.flags bit set while the player rides a Pokémon on water
 -- (PLAYER_AVATAR_FLAG_SURFING = 1 << PLAYER_AVATAR_STATE_SURFING = 1 << 3).
@@ -191,6 +222,93 @@ end
 
 local function is_surfing()
     return (fw.read8(ADDR.gPlayerAvatar + ADDR.PA_FLAGS) & PLAYER_AVATAR_FLAG_SURFING) ~= 0
+end
+
+-- Where the field-move portrait (the "mysterious POKéMON") is on screen.
+-- It is the only 64x64 sprite while the banner is up. struct Sprite starts
+-- with its OAM entry (the GBA's per-sprite hardware attributes), which the
+-- sprite code rewrites every frame with the on-screen position:
+--   attribute 0 (u16 at +0): bits 0-7 = y of the top-left corner,
+--                            bits 14-15 = shape (0 = square)
+--   attribute 1 (u16 at +2): bits 0-8 = x of the top-left corner,
+--                            bits 14-15 = size (3 = 64x64 for a square)
+-- Returns x, y of the top-left corner, or nil when no such sprite is in use.
+local function portrait_position()
+    for i = 0, 63 do
+        local spr = ADDR.gSprites + i * ADDR.SPRITE_STRUCT_SIZE
+        if (fw.read8(spr + ADDR.SPRITE_OFF_FLAGS_3E) & 1) ~= 0 then  -- inUse
+            local attr0 = fw.read16(spr + 0)
+            local attr1 = fw.read16(spr + 2)
+            if ((attr0 >> 14) & 3) == 0 and ((attr1 >> 14) & 3) == 3 then
+                return attr1 & 0x1FF, attr0 & 0xFF
+            end
+        end
+    end
+    return nil
+end
+
+-- Wait for the portrait to stop in the middle of the screen. It slides in
+-- from the right and rests at sprite x = 120 (top-left x = 88) for 30
+-- frames before sliding out. Returns its top-left x, y, or nil on timeout.
+local PORTRAIT_REST_X = 88
+local function wait_for_portrait_at_rest(timeout)
+    for _ = 1, timeout do
+        local x, y = portrait_position()
+        if x == PORTRAIT_REST_X then
+            fw.wait_frames(2)  -- let the frame with the portrait at rest be drawn
+            return x, y
+        end
+        fw.wait_frames(1)
+    end
+    return nil
+end
+
+-- Count the pixels inside the 64x64 portrait box whose colour appears nowhere
+-- on the same screen rows outside the box (see SILHOUETTE VISIBILITY above).
+-- emu:screenshotToImage() returns the last drawn frame; getPixel gives one
+-- pixel's colour as a number, so equal numbers mean equal colours.
+local function portrait_pixels_unlike_banner(px, py)
+    local img = emu:screenshotToImage()
+    local x0, x1 = px, math.min(px + 63, 239)
+    local y0, y1 = math.max(py, 0), math.min(py + 63, 159)
+    local banner_colours = {}
+    for y = y0, y1 do
+        for x = 0, 239 do
+            if x < x0 or x > x1 then banner_colours[img:getPixel(x, y)] = true end
+        end
+    end
+    local count = 0
+    for y = y0, y1 do
+        for x = x0, x1 do
+            if not banner_colours[img:getPixel(x, y)] then count = count + 1 end
+        end
+    end
+    return count
+end
+
+-- After the last A press of a slaveless HM: wait for the portrait, take a
+-- screenshot and return how many of its pixels stand out from the banner
+-- (0 when no portrait showed up).
+local function measure_portrait(shot_name)
+    local x, y = wait_for_portrait_at_rest(200)
+    fw.screenshot(fw.out_path(shot_name))
+    if x == nil then
+        fw.log("  no 64x64 portrait came to rest within 200 frames")
+        return 0
+    end
+    local n = portrait_pixels_unlike_banner(x, y)
+    fw.log(string.format("  portrait at (%d,%d): %d pixels unlike the banner", x, y, n))
+    return n
+end
+
+-- Warp to (group, num) with the player on tile (x, y). warp.warp_to_pos
+-- reloads the map but the player is placed from SaveBlock1.pos (offset 0,
+-- two s16 in map tiles), so write that too before the reload.
+local function warp_player_to(group, num, x, y)
+    local sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    emu:write16(sb1 + 0, x)
+    emu:write16(sb1 + 2, y)
+    return warp.warp_to_pos(group, num, x, y)
 end
 
 -- From the fixture spot (tile 11,23) walk to tile (15, 25) and face south,
@@ -590,8 +708,9 @@ fw.run(function()
     fw.screenshot(fw.out_path("mgba-slaveless-b-appeared.png"))
     fw.slow_down("slaveless HM silhouette animation")
     fw.press("A")         -- A3: dismiss appeared message → animation starts
-    fw.wait_frames(65)    -- ~54f for silhouette to slide to final position
-    fw.screenshot(fw.out_path("mgba-slaveless-b-silhouette.png"))
+    local outdoor_pixels = measure_portrait("mgba-slaveless-b-silhouette.png")
+    check("B: mysterious POKéMON visible on the outdoor banner",
+        outdoor_pixels >= MIN_VISIBLE_PORTRAIT_PIXELS)
     fw.wait_frames(600)   -- full animation + tree removal
     fw.screenshot(fw.out_path("mgba-slaveless-b-after-anim.png"))
     fw.speed_up()
@@ -657,6 +776,34 @@ fw.run(function()
     fw.press("A")
     fw.wait_frames(120)
     check("D: no second Surf prompt while already surfing", not message_is("Text_WantToSurf"))
+
+    -- ── Sub-test E: indoors, BADGE04 + HM04 → slaveless Strength ──────────
+    fw.log("--- Sub-test E: Warden's House (indoor), BADGE04 + HM04, empty party ---")
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(60)
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    set_flag(sb1, FLAG_BADGE04_GET)
+    inject_hm(sb1, ITEM_HM04)
+    warp_player_to(WARDENS_HOUSE_GROUP, WARDENS_HOUSE_NUM, 11, 7)
+    fw.hold("UP", 4)       -- face the boulder at (11, 6); it blocks the step
+    fw.wait_frames(30)
+    local ex, ey = read_pos()
+    check("E: player stands below the boulder at tile (11,7)", ex == 18 and ey == 14)
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    fw.press("A")          -- A1: boulder → slaveless Strength YES/NO prompt
+    fw.wait_frames(360)
+    fw.screenshot(fw.out_path("mgba-slaveless-e-yesno.png"))
+    fw.press("A")          -- A2: YES → "A mysterious POKéMON appeared..."
+    fw.wait_frames(250)
+    fw.press("A")          -- A3: dismiss → banner + portrait
+    local indoor_pixels = measure_portrait("mgba-slaveless-e-silhouette.png")
+    check("E: mysterious POKéMON visible on the indoor banner",
+        indoor_pixels >= MIN_VISIBLE_PORTRAIT_PIXELS)
+    fw.wait_frames(400)
+    fw.press("A")          -- dismiss "STRENGTH made it possible..."
+    fw.wait_frames(60)
+    check("E: FLAG_SYS_USE_STRENGTH set after slaveless Strength",
+        read_flag(sb1, FLAG_SYS_USE_STRENGTH))
 
     -- Summary
     local passed = 0
