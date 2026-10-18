@@ -64,6 +64,21 @@ EWRAM_DATA u32 gFieldEffectArguments[8] = {0};
  * Consumed and reset to 0 by FldEff_FieldMoveShowMonInit. */
 static EWRAM_DATA u16 sSlavelessHmSilhouetteSpecies = 0;
 
+/*
+ * The one colour the slaveless "mysterious POKéMON" silhouette is painted in.
+ * It has to stand out from the banner the portrait slides across, and that
+ * banner differs by map type (graphics/field_effects/pics/
+ * field_move_streaks_*.gbapal):
+ *   outdoors: black, with white streaks
+ *   indoors:  light blue RGB(15, 19, 28), with white streaks and black edges
+ * A black silhouette disappeared on the outdoor banner. Dark grey still reads
+ * as a shadow and shows on both: clearly lighter than the outdoor black,
+ * darker and colourless against the indoor blue, and far from the white
+ * streaks. RGB() takes the GBA's 5-bit channels (0-31 each), so 12 is about
+ * 40% brightness.
+ */
+#define SLAVELESS_SILHOUETTE_COLOR RGB(12, 12, 12)
+
 static u8 sFieldEffectActiveList[FIELD_EFFECT_COUNT];
 
 static void FieldEffectActiveListAdd(u8 fldeff);
@@ -2622,8 +2637,9 @@ u32 FldEff_FieldMoveShowMonInit(void)
 
     if (sSlavelessHmSilhouetteSpecies != 0)
     {
-        /* Slaveless path: use a random species as an all-black silhouette.
-         * Bit 30 signals InitFieldMoveMonSprite to apply the black palette.
+        /* Slaveless path: show a random species as a one-colour silhouette.
+         * Bit 30 signals InitFieldMoveMonSprite to apply the silhouette
+         * palette (SLAVELESS_SILHOUETTE_COLOR).
          * otId=0 and personality=0 give default form/gender (irrelevant for
          * a silhouette). */
         gFieldEffectArguments[0] = (u32)sSlavelessHmSilhouetteSpecies | 0x40000000 | r6;
@@ -2971,8 +2987,13 @@ static u8 InitFieldMoveMonSprite(u32 species, u32 otId, u32 personality)
     sprite->oam.priority = 0;
     sprite->data[0] = species;
     sprite->data[6] = playCry;
+    /* Silhouette: overwrite every colour of the portrait's 16-colour sprite
+     * palette (OBJ palette slot oam.paletteNum, in both the unfaded and faded
+     * palette buffers) with one colour. Colour 0 of a sprite palette is
+     * always drawn as transparent by the GBA, so the space around the
+     * Pokémon stays see-through and only its shape is filled in. */
     if (isSilhouette)
-        FillPalette(RGB_BLACK, OBJ_PLTT_ID(sprite->oam.paletteNum), PLTT_SIZE_4BPP);
+        FillPalette(SLAVELESS_SILHOUETTE_COLOR, OBJ_PLTT_ID(sprite->oam.paletteNum), PLTT_SIZE_4BPP);
     return monSprite;
 }
 
