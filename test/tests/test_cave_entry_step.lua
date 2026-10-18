@@ -18,6 +18,23 @@
 -- Part B — Pikachu follower via WALK menu: confirms follower spawns at the
 --   entrance tile (18, 37) and is NOT stacked on the player after the step.
 --
+-- The step must never walk the player somewhere they couldn't walk
+-- themselves, and must leave everything else about the warp as it was:
+-- Part C — Route 10's north door (8,19) -> Rock Tunnel 1F lands on a ladder
+--   at (17,2) with solid rock to the north. The player must not be put on a
+--   solid tile, and must be able to walk off the ladder (west to (16,2)).
+--   (A step into the rock left the ladder as the only way out, and stepping
+--   on it warped the player back to Route 10, for ever.)
+-- Part D — Route 4's east door (32,5) -> Mt. Moon B2F lands on a generated
+--   up-ladder whose top (the tile north of it) is solid. The player must
+--   not end up on a solid tile.
+-- Part E — walking into Route 4's west door on the Mach Bike: the player
+--   must still be on the bike in Mt. Moon 1F (as in vanilla) and still take
+--   the step to (18,36).
+-- Part F — Indigo Plateau's north door (4,1) is also a cave-door tile, but
+--   leads indoors to Lorelei's room, whose own script walks the player five
+--   tiles up. The player must end where vanilla puts them, (6,7).
+--
 -- FIXTURE STATE:
 --   Boots through Oak's speech to the overworld, then puts the player on
 --   Route 4 at (19,6), one tile south of the cave entrance at (19,5), via
@@ -37,6 +54,9 @@ local warp = dofile(project_dir .. "test/lib/warp.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 
 local sym  = dofile(project_dir .. "test/lib/symbols.lua")
+local mm    = dofile(project_dir .. "test/lib/mt_moon.lua")
+local walk  = dofile(project_dir .. "test/lib/walk.lua")
+local chain = dofile(project_dir .. "test/lib/mt_moon_chain.lua")
 
 local STATE_PATH  = fw.out_path("pokefirered-cave-entry-step.ss")
 local PARTY_BASE  = sym.addr("gPlayerParty")
@@ -64,6 +84,17 @@ local CAVE_WARP_ID = 0
 
 local SPECIES_PIKACHU  = 25
 local LOCALID_FOLLOWER = 254   -- include/constants/event_objects.h
+
+-- Maps for Parts C-F (group, num from include/constants/map_groups.h).
+local ROUTE10              = { group = 3,  num = 28 }
+local ROCK_TUNNEL_1F       = { group = 1,  num = 81 }
+local MT_MOON_B2F          = { group = 1,  num = 3 }
+local INDIGO_PLATEAU_PC_1F = { group = 13, num = 0 }
+local LORELEIS_ROOM        = { group = 1,  num = 75 }
+
+-- gPlayerAvatar.flags (byte 0 of struct PlayerAvatar): bit 1 is
+-- PLAYER_AVATAR_FLAG_MACH_BIKE (include/global.fieldmap.h).
+local PLAYER_AVATAR_FLAG_MACH_BIKE = 0x02
 
 -- ------------------------------------------------------------------ --
 -- Helpers
@@ -137,6 +168,59 @@ local function enter_cave()
     end
     -- Map load + Task_ExitNonDoor step-forward (~16f extra).
     fw.wait_frames(120)
+end
+
+-- True when the player can act: overworld loaded, no script running, the
+-- warp's exit task has unlocked the controls (sLockFieldControls in
+-- src/script.c; walk.ready doesn't look at it, and the exit task keeps it
+-- set until its step is done) and the player stands centred on a tile.
+local function settled()
+    return walk.ready() and emu:read8(sym.addr("sLockFieldControls")) == 0
+end
+
+-- Wait until settled() has held for 60 frames in a row. A map script that
+-- starts the frame after the exit task unlocks (Lorelei's room walks the
+-- player in) breaks the run, so this returns only once it has finished too.
+-- Also covers the dungeon-name splash some caves show on entry.
+local function settle()
+    local run = 0
+    for _ = 1, 1500 do
+        if settled() then run = run + 1 else run = 0 end
+        if run >= 60 then return true end
+        fw.wait_frames(1)
+    end
+    fw.log("settle: player never got control back")
+    return false
+end
+
+-- Start a Part C-F scenario from the fixture (no follower), with a Repel
+-- and a strong party Pokemon so no wild battle starts, and no roaming
+-- Pokemon in the way (see test/lib/mt_moon_chain.lua).
+local function fresh_start()
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(30)
+    walk.make_walk_safe()
+    chain.keep_roamers_away()
+end
+
+-- Put the player one tile south of the cave-door tile (x, y) on `map`, then
+-- hold UP so they walk onto it and the warp fires, and wait until they can
+-- act on the new map. Returns the new map's group and number.
+local function walk_into_door(map, x, y, before_walk)
+    mm.warp_to_tile(map, x, y + 1)
+    fw.wait_frames(30)
+    if before_walk then before_walk() end
+    local g, n = mm.current_map()
+    walk.hold_into_warp("UP", 120)
+    walk.wait_for_arrival(g, n, 900)
+    settle()
+    return mm.current_map()
+end
+
+-- True when map tile (x, y) of the loaded map is solid (collision bits set).
+local function tile_is_solid(x, y)
+    local cell = mm.read_grid().cells[mm.key(x, y)]
+    return cell == nil or mm.collision(cell) ~= 0
 end
 
 -- Every check also goes through fw.assert_true, so a failure reaches the
@@ -280,6 +364,76 @@ fw.run(function()
         check("Part B: follower spawned", false)
         check("Part B: follower not stacked on player", false)
     end
+
+    -- ================================================================== --
+    -- Part C: Route 10 north door -> Rock Tunnel 1F (arrival on a ladder,
+    --         solid rock to the north)
+    -- ================================================================== --
+    fw.log("--- Part C: Route 10 north door -> Rock Tunnel 1F ---")
+    fresh_start()
+    local g, n = walk_into_door(ROUTE10, 8, 19)
+    check("Part C: warped into Rock Tunnel 1F",
+          g == ROCK_TUNNEL_1F.group and n == ROCK_TUNNEL_1F.num)
+    local cx, cy = mm.player_tile()
+    fw.log(string.format("Part C: player at map(%d,%d)", cx, cy))
+    check("Part C: player is not on a solid tile", not tile_is_solid(cx, cy))
+    local walked = walk.step_onto(cx - 1, cy)
+    settle()
+    local wx, wy = mm.player_tile()
+    g, n = mm.current_map()
+    fw.log(string.format("Part C: after stepping west, map %d.%d player at map(%d,%d)", g, n, wx, wy))
+    check("Part C: player can walk off the ladder (west) and stays in Rock Tunnel 1F",
+          walked and g == ROCK_TUNNEL_1F.group and n == ROCK_TUNNEL_1F.num
+          and wx == cx - 1 and wy == cy and not tile_is_solid(wx, wy))
+
+    -- ================================================================== --
+    -- Part D: Route 4 east door -> Mt. Moon B2F (arrival on a generated
+    --         up-ladder whose top, to the north, is solid)
+    -- ================================================================== --
+    fw.log("--- Part D: Route 4 east door -> Mt. Moon B2F ---")
+    fresh_start()
+    g, n = walk_into_door(mm.ROUTE4, 32, 5)
+    check("Part D: warped into Mt. Moon B2F",
+          g == MT_MOON_B2F.group and n == MT_MOON_B2F.num)
+    local ladder = mm.read_warps()[2]  -- warp 1: the up-ladder to Route 4's east door
+    local dx, dy = mm.player_tile()
+    fw.log(string.format("Part D: arrival ladder at map(%d,%d), player at map(%d,%d)",
+        ladder.x, ladder.y, dx, dy))
+    check("Part D: player is not on a solid tile", not tile_is_solid(dx, dy))
+
+    -- ================================================================== --
+    -- Part E: on the Mach Bike through Route 4's west door -> Mt. Moon 1F
+    -- ================================================================== --
+    fw.log("--- Part E: Mach Bike -> Mt. Moon 1F ---")
+    fresh_start()
+    -- Setting the bike bit in gPlayerAvatar.flags is what mounting the bike
+    -- does to the state a warp reads (StoreInitialPlayerAvatarState tests
+    -- these flags); the new map then draws the player on the bike.
+    g, n = walk_into_door(mm.ROUTE4, 19, 5, function()
+        local pa = sym.addr("gPlayerAvatar")
+        emu:write8(pa, PLAYER_AVATAR_FLAG_MACH_BIKE)
+        fw.wait_frames(5)
+    end)
+    check("Part E: warped into Mt. Moon 1F",
+          g == MT_MOON_MAP_GROUP and n == MT_MOON_MAP_NUM)
+    local flags = emu:read8(sym.addr("gPlayerAvatar"))
+    fw.log(string.format("Part E: gPlayerAvatar.flags = 0x%02x", flags))
+    check("Part E: player is still on the Mach Bike", (flags & PLAYER_AVATAR_FLAG_MACH_BIKE) ~= 0)
+    local ex, ey = mm.player_tile()
+    check("Part E: player stepped forward to map(18,36) on the bike", ex == 18 and ey == 36)
+
+    -- ================================================================== --
+    -- Part F: Indigo Plateau north door -> Lorelei's room (indoors; the
+    --         room's own script walks the player in)
+    -- ================================================================== --
+    fw.log("--- Part F: Indigo Plateau north door -> Lorelei's room ---")
+    fresh_start()
+    g, n = walk_into_door(INDIGO_PLATEAU_PC_1F, 4, 1)
+    check("Part F: warped into Lorelei's room",
+          g == LORELEIS_ROOM.group and n == LORELEIS_ROOM.num)
+    local fx2, fy2 = mm.player_tile()
+    fw.log(string.format("Part F: player at map(%d,%d) after the room's walk-in", fx2, fy2))
+    check("Part F: player ends at vanilla's map(6,7)", fx2 == 6 and fy2 == 7)
 
     -- ================================================================== --
     -- Summary
