@@ -46,6 +46,7 @@ void ShutdownMultiplayer(void);
 void UpdateMultiplayerState(void);
 void SpawnRemotePlayerSprites(void);
 void DespawnRemotePlayerSprites(void);
+void ClearRemotePlayersFromSaveBlock(void);
 bool8 IsMultiplayerActive(void);
 
 #endif // GUARD_MULTIPLAYER_H
