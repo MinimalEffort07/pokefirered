@@ -1,7 +1,8 @@
 -------------------------------------------------------------------------------
 -- test_slaveless_hm_obstacle.lua
--- Issue #5: Slaveless HM system must prompt at Cut obstacles when the player
--- has the HM item + badge but no party Pokémon that knows the move.
+-- Issue #5: Slaveless HM system must prompt at HM obstacles (Cut tree, water
+-- for Surf, ...) when the player has the HM item + badge but no party Pokémon
+-- that knows the move.
 --
 -- FIXTURE STATE (self-healing):
 --   Tries to load pokefirered-slaveless-hm.ss from this run's output directory
@@ -28,6 +29,14 @@
 --      FLAG_TEMP_11 NOT set (tree stays standing).
 --   B. Badge set + HM01 in bag, empty party: slaveless prompt → YES.
 --      FLAG_TEMP_11 SET (tree was removed by the cut animation).
+--   C. HM03 in bag but no BADGE05, empty party, facing the Viridian pond at
+--      tile (15, 26) from (15, 25): press A → no Surf prompt (the message
+--      buffer gStringVar4 is not Text_WantToSurf) and the player is not
+--      surfing (gPlayerAvatar.flags bit PLAYER_AVATAR_FLAG_SURFING clear).
+--   D. BADGE05 + HM03 in bag, empty party, same spot: press A → the Surf
+--      YES/NO prompt (gStringVar4 == Text_WantToSurf from the ROM) → YES →
+--      dismiss "A mysterious POKéMON appeared and used SURF!" → the player is
+--      surfing (PLAYER_AVATAR_FLAG_SURFING set).
 --
 -- Run:    bash test/run_test.sh test/tests/test_slaveless_hm_obstacle.lua
 -- Record: bash test/record_test.sh test/tests/test_slaveless_hm_obstacle.lua
@@ -66,12 +75,25 @@ local REPEL_VAR_IDX = 32
 
 -- Item IDs
 local ITEM_HM01 = 339   -- Cut
+local ITEM_HM03 = 341   -- Surf
 
 -- Flags (numeric values)
 -- FLAG_BADGE02_GET = SYS_FLAGS + 0x21 = 0x800 + 0x21 = 0x821 = 2081
 local FLAG_BADGE02_GET = 2081
 -- FLAG_SYS_POKEMON_GET = SYS_FLAGS + 0x28 = 0x800 + 0x28 = 0x828 = 2088
 local FLAG_SYS_POKEMON_GET = 2088
+-- FLAG_BADGE05_GET = SYS_FLAGS + 0x24 = 0x824 = 2084 (Soul Badge: Surf)
+local FLAG_BADGE05_GET = 2084
+
+-- gPlayerAvatar.flags bit set while the player rides a Pokémon on water
+-- (PLAYER_AVATAR_FLAG_SURFING = 1 << PLAYER_AVATAR_STATE_SURFING = 1 << 3).
+local PLAYER_AVATAR_FLAG_SURFING = 0x08
+
+-- gStringVar4 is the buffer every field message box is expanded into before
+-- it is printed (ShowFieldMessage → StringExpandPlaceholders). Comparing it
+-- with a text label in the ROM tells which message the game is showing.
+local G_STRING_VAR4 = sym.addr("gStringVar4")
+local EOS = 0xFF  -- end-of-string byte in the game's character encoding
 
 local function map_packed()
     local sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
@@ -136,12 +158,53 @@ local SB2_ENCRYPTION_KEY = 0xF20  -- offsetof(SaveBlock2, encryptionKey)
 -- gBagPockets[3].itemSlots pointer lives at gBagPockets + 3*8 (BagPocket = 8 bytes).
 local GBAGPOCKETS_TMHM_SLOTS_ADDR = sym.addr("gBagPockets") + 3 * 8
 
-local function inject_hm01(sb1)
+local function inject_hm(sb1, item_id)
     local sb2     = fw.read32(ADDR.gSaveBlock2Ptr)
     local enc_key = fw.read32(sb2 + SB2_ENCRYPTION_KEY)
     local slot0   = sb1 + SB1_BAG_TMHM
-    emu:write16(slot0,     ITEM_HM01)                -- itemId = 339
+    emu:write16(slot0,     item_id)
     emu:write16(slot0 + 2, (1 ~ enc_key) & 0xFFFF)  -- encrypted quantity; decodes to 1
+end
+
+local function inject_hm01(sb1)
+    inject_hm(sb1, ITEM_HM01)
+end
+
+-- True when gStringVar4 holds exactly the ROM string at `label`
+-- (bytes compared up to and including the end-of-string byte).
+local function message_is(label)
+    local rom = sym.addr(label)
+    for i = 0, 255 do
+        local want = emu:read8(rom + i)
+        if fw.read8(G_STRING_VAR4 + i) ~= want then return false end
+        if want == EOS then return true end
+    end
+    return false
+end
+
+-- Empty gStringVar4 so a later message_is() can only match a message shown
+-- after this point, not one left over in the buffer from the fixture.
+local function clear_message()
+    emu:write8(G_STRING_VAR4, EOS)
+end
+
+local function is_surfing()
+    return (fw.read8(ADDR.gPlayerAvatar + ADDR.PA_FLAGS) & PLAYER_AVATAR_FLAG_SURFING) ~= 0
+end
+
+-- From the fixture spot (tile 11,23) walk to tile (15, 25) and face south,
+-- toward the Viridian City pond (water at tiles x 11-16, y 26-30; tile
+-- (15, 26) is open water with nothing standing on it). Route: east along
+-- row 23 to x=15 (world 22), then south down column 15 to y=25 (world 32).
+local function walk_to_pond_edge()
+    fw.hold_until("RIGHT", function() local x, _ = read_pos(); return x >= 22 end, 200, 4)
+    fw.wait_frames(16)
+    fw.hold_until("DOWN", function() local _, y = read_pos(); return y >= 32 end, 200, 4)
+    fw.wait_frames(16)
+    fw.hold("DOWN", 4)  -- already facing south; a short tap cannot step onto water
+    fw.wait_frames(16)
+    local x, y = read_pos()
+    return x - 7, y - 7
 end
 
 -- Clear ITEM_HM01 from bag slot 0.
@@ -536,6 +599,51 @@ fw.run(function()
     local tree_after_b = read_flag(sb1, TREE_FLAG)
     fw.log(string.format("  FLAG_TEMP_11 after B-test: %s", tostring(tree_after_b)))
     check("B: tree cut (FLAG_TEMP_11 set after slaveless YES)", tree_after_b)
+
+    -- ── Sub-test C: HM03 but no BADGE05 → no Surf prompt ──────────────────
+    fw.log("--- Sub-test C: HM03 in bag, no BADGE05, empty party, facing water ---")
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(60)
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    inject_hm(sb1, ITEM_HM03)
+    local cx, cy = walk_to_pond_edge()
+    fw.log(string.format("  at tile(%d,%d) badge05=%s", cx, cy,
+        tostring(read_flag(sb1, FLAG_BADGE05_GET))))
+    check("C: player reached the pond edge at tile (15,25)", cx == 15 and cy == 25)
+    clear_message()
+    fw.press("A")
+    fw.wait_frames(120)
+    fw.screenshot(fw.out_path("mgba-slaveless-c-no-badge.png"))
+    check("C: no Surf prompt without BADGE05", not message_is("Text_WantToSurf"))
+    fw.press("B")
+    fw.wait_frames(60)
+    check("C: not surfing without BADGE05", not is_surfing())
+
+    -- ── Sub-test D: BADGE05 + HM03, empty party → slaveless Surf ──────────
+    fw.log("--- Sub-test D: BADGE05 + HM03 in bag, empty party, facing water ---")
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(60)
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    set_flag(sb1, FLAG_BADGE05_GET)
+    inject_hm(sb1, ITEM_HM03)
+    local dx, dy = walk_to_pond_edge()
+    check("D: player reached the pond edge at tile (15,25)", dx == 15 and dy == 25)
+    clear_message()
+    fw.press("A")          -- A1: face the water and interact
+    fw.wait_frames(60)
+    local surf_prompt = message_is("Text_WantToSurf")
+    fw.screenshot(fw.out_path("mgba-slaveless-d-prompt.png"))
+    check("D: Surf YES/NO prompt shown (gStringVar4 == Text_WantToSurf)", surf_prompt)
+    fw.wait_frames(300)    -- text scroll + YES/NO cursor
+    fw.screenshot(fw.out_path("mgba-slaveless-d-yesno.png"))
+    fw.press("A")          -- A2: YES (the cursor starts on YES)
+    fw.wait_frames(250)
+    fw.screenshot(fw.out_path("mgba-slaveless-d-used.png"))
+    fw.press("A")          -- A3: dismiss "...used SURF!" → field effect runs
+    fw.wait_until(is_surfing, 600, "player starts surfing")
+    fw.wait_frames(60)
+    fw.screenshot(fw.out_path("mgba-slaveless-d-surfing.png"))
+    check("D: player is surfing after slaveless YES", is_surfing())
 
     -- Summary
     local passed = 0
