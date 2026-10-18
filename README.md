@@ -25,7 +25,7 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![Quick Select Menu](gifs/quickselect.gif)
 
-- **Slaveless HM Obstacles** — HM obstacles (CUT trees, boulders, waterfalls, etc.) can be used without a party Pokémon that knows the move. If the player has the required HM item and badge but no eligible party member, a mysterious Pokémon silhouette appears and offers to use the move.
+- **Slaveless HM Obstacles** — Pressing A at an HM obstacle (CUT tree, ROCK SMASH rock, STRENGTH boulder, water to SURF on, WATERFALL) works without a party Pokémon that knows the move. If no party member knows it but the player has the HM in the bag and the badge that allows it, the usual "Would you like to use it?" prompt appears; after YES, a mysterious Pokémon (a dark grey silhouette of a random species that can learn the move) appears on the field-move banner and uses it. Tested by `test/tests/test_slaveless_hm_obstacle.lua` (Cut, Surf, Strength indoors, Waterfall).
 
   ![Slaveless HM Obstacles](gifs/slaveless_hm.gif)
 
