@@ -8,6 +8,12 @@
 --                       on load). FAILS before fix (follower IS written to SB1).
 --   Test 2 (regression): no follower at save-time → no localId=254 slot active
 --                         in save block. Should PASS both before and after fix.
+--   Test 2b-2d (regression): the same save must keep the player's own slot
+--                         (2b), and soft reset + CONTINUE must reach the
+--                         overworld with control (2c) and a player object
+--                         (2d). The first version of the fix zeroed slot
+--                         sFollower.objEventId, which is 0 -- the player --
+--                         whenever WALK hadn't been used since boot.
 --
 -- Note: Test 3 (warp regression) was intentionally omitted. It tests post-fix
 -- behaviour (DespawnFollowerSprite + SpawnFollowerSprite cycle survives a map
@@ -50,6 +56,8 @@ local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local sym  = dofile(project_dir .. "test/lib/symbols.lua")
+-- Only for mm.continue_game(): soft reset, pick CONTINUE, wait for control.
+local mm   = dofile(project_dir .. "test/lib/mt_moon.lua")
 
 -- The fixture save state goes in this run's private output directory (see
 -- fw.out_path in test/lib/framework.lua). A fixed /tmp path would be shared
@@ -136,6 +144,31 @@ local function saveblock_slot_active(i)
     local oe_base = sb1 + SB1_OBJECT_EVENTS + i * ADDR.OBJECT_EVENT_SIZE
     local flags = fw.read32(oe_base + ADDR.OE_FLAGS)
     return (flags & 1) ~= 0
+end
+
+-- In the ObjectEvent flags word, bit 0 is `active` and bit 16 is `isPlayer`
+-- (the one object the game rebuilds the player from on Continue).
+local OE_FLAG_ACTIVE    = 0x00001
+local OE_FLAG_IS_PLAYER = 0x10000
+
+-- Return the gObjectEvents slot index of the active player object, or -1.
+local function find_player_slot()
+    for i = 0, ADDR.OBJECT_EVENTS_COUNT - 1 do
+        local base = ADDR.gObjectEvents + i * ADDR.OBJECT_EVENT_SIZE
+        local flags = fw.read32(base + ADDR.OE_FLAGS)
+        if (flags & OE_FLAG_ACTIVE) ~= 0 and (flags & OE_FLAG_IS_PLAYER) ~= 0 then
+            return i
+        end
+    end
+    return -1
+end
+
+-- True when save-block slot `i` holds an active player object.
+local function saveblock_slot_is_player(i)
+    local sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    local oe_base = sb1 + SB1_OBJECT_EVENTS + i * ADDR.OBJECT_EVENT_SIZE
+    local flags = fw.read32(oe_base + ADDR.OE_FLAGS)
+    return (flags & OE_FLAG_ACTIVE) ~= 0 and (flags & OE_FLAG_IS_PLAYER) ~= 0
 end
 
 -- Navigate the party menu to activate the follower for slot 0.
@@ -280,8 +313,15 @@ fw.run(function()
     inject_pikachu()
     set_pokemon_flag()
     fw.wait_frames(5)
-    -- deliberately do NOT activate follower
+    -- deliberately do NOT activate follower. sFollower is all zeroes here,
+    -- as it is after every power-on and every Continue (EWRAM is cleared at
+    -- boot), so its objEventId reads 0 -- the index the player usually has.
+    local player_slot = find_player_slot()
+    local save_counter = sym.addr("gSaveCounter")
+    local saves_before = fw.read32(save_counter)
     ingame_save()
+    check("Test 2 sanity: the save fired (gSaveCounter changed)",
+          fw.read32(save_counter) ~= saves_before)
 
     local any_follower_in_sb = false
     local sb1_t2 = fw.read32(ADDR.gSaveBlock1Ptr)
@@ -295,6 +335,19 @@ fw.run(function()
     end
     check("Test 2: no follower localId in save block when follower was inactive",
           not any_follower_in_sb)
+
+    -- The player's own slot must reach the save untouched: Continue rebuilds
+    -- the player from it, and without it there is no player to control.
+    fw.log(string.format("Player ObjectEvent slot at save: %d", player_slot))
+    check("Test 2b: player's save-block slot still active after saving",
+          player_slot ~= -1 and saveblock_slot_is_player(player_slot))
+
+    -- Soft reset and CONTINUE, as a player would after saving.
+    local continued = mm.continue_game()
+    check("Test 2c: Continue reaches the overworld with control",
+          continued ~= nil and continued ~= false)
+    check("Test 2d: Continue restores an active player ObjectEvent",
+          find_player_slot() ~= -1)
 
     -- ------------------------------------------------------------------ --
     -- Summary
