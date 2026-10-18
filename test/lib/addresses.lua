@@ -442,7 +442,7 @@ ADDR.gPlayerPartyCount               = 0x02024029
 -- offset that is a multiple of its own size, so the u32s sit at 12 and 16
 -- (prevY ends at 12) with no padding needed:
 --   offset 0:  bool8 active      <- FOLLOWER_OFF_ACTIVE
---   offset 1:  bool8 spriteSpawned
+--   offset 1:  bool8 spriteSpawned <- FOLLOWER_OFF_SPRITE_SPAWNED
 --   offset 2:  u8  partySlot
 --   offset 3:  u8  stuckFrames   (catch-up stuck counter, issue #2)
 --   offset 4:  u16 species       <- FOLLOWER_OFF_SPECIES
@@ -455,6 +455,7 @@ ADDR.gPlayerPartyCount               = 0x02024029
 -- These offsets must be redone whenever a field is added to the struct.
 ADDR.sFollower                 = 0x0203f624
 ADDR.FOLLOWER_OFF_ACTIVE       = 0x00
+ADDR.FOLLOWER_OFF_SPRITE_SPAWNED = 0x01
 ADDR.FOLLOWER_OFF_SPECIES      = 0x04
 ADDR.FOLLOWER_OBJ_EVENT_ID_OFF = 0x07
 ADDR.FOLLOWER_OFF_PID          = 0x0C

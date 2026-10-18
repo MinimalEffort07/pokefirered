@@ -38,6 +38,13 @@
 --   3. Slot 0 -> option [1], which must still be RETURN.
 --                                      Check: follower deactivated.
 --
+-- Scenario D: the walker is deposited with the party menu's MOVE TO PC.
+--   1. WALK Pikachu (slot 0).          Check: active.
+--   2. Slot 0 -> MOVE TO PC.           Check: party is down to 2, the
+--      follower is deactivated and its sprite is gone (a follower whose
+--      Pokemon is in a PC box could never be RETURNed).
+--   3. WALK Meowth (slot 0 now).       Check: active, species Meowth.
+--
 -- Run:
 --   bash test/run_test.sh test/tests/test_walking_pokemon_return.lua
 --
@@ -63,6 +70,7 @@ local POKEMON_SIZE = 100         -- sizeof(struct Pokemon)
 -- sFollower field offsets defined in test/lib/addresses.lua
 local FOLLOWER_ACTIVE  = ADDR.sFollower + ADDR.FOLLOWER_OFF_ACTIVE
 local FOLLOWER_SPECIES = ADDR.sFollower + ADDR.FOLLOWER_OFF_SPECIES  -- u16
+local FOLLOWER_SPRITE_SPAWNED = ADDR.sFollower + ADDR.FOLLOWER_OFF_SPRITE_SPAWNED
 
 local SPECIES_PIKACHU = 25
 local SPECIES_RAICHU  = 26
@@ -155,6 +163,9 @@ end
 --   another Pokemon is following:  [0] SUMMARY [1] SWITCH [2] ITEM ...
 local ACTION_WALK_OR_RETURN = 1
 local ACTION_SWITCH_WHILE_FOLLOWER = 2
+-- The follower's own list: [0] SUMMARY [1] RETURN [2] SWITCH [3] ITEM
+-- [4] MOVE TO PC [5] CANCEL
+local ACTION_MOVE_TO_PC_ON_FOLLOWER = 4
 
 -- WALK the Pokemon in party slot `slot`.
 local function walk(slot)
@@ -276,10 +287,42 @@ local function scenario_evolve_to_non_walker()
           fw.read8(FOLLOWER_ACTIVE) == 0)
 end
 
+-------------------------------------------------------------------------------
+-- Scenario D: the walker is deposited with the party menu's MOVE TO PC
+-------------------------------------------------------------------------------
+local function scenario_move_to_pc()
+    fw.log("--- Scenario D: WALK Pikachu, MOVE TO PC, WALK Meowth ---")
+    load_fixture()
+
+    walk(0)
+    check("D: follower active after WALK Pikachu",
+          fw.read8(FOLLOWER_ACTIVE) == 1)
+
+    -- MOVE TO PC prints "<name> was sent to the PC!" and then closes the
+    -- party menu by itself; B only closes the start menu if it reopened.
+    open_actions(0)
+    pick_action(ACTION_MOVE_TO_PC_ON_FOLLOWER)
+    fw.wait_frames(120)
+    fw.press("B");     fw.wait_frames(60)
+    check("D: Pikachu was deposited (party of 2)",
+          fw.read8(ADDR.gPlayerPartyCount) == 2)
+    check("D: follower deactivated when its Pokemon went to the PC",
+          fw.read8(FOLLOWER_ACTIVE) == 0)
+    check("D: follower sprite gone after MOVE TO PC",
+          fw.read8(FOLLOWER_SPRITE_SPAWNED) == 0)
+
+    walk(0)                                     -- Meowth moved up to slot 0
+    back_out()
+    check("D: WALK offered on another Pokemon afterwards (Meowth follows)",
+          fw.read8(FOLLOWER_ACTIVE) == 1
+          and fw.read16(FOLLOWER_SPECIES) == SPECIES_MEOWTH)
+end
+
 fw.run(function()
     fw.log("=== Walking Pokemon Return Test ===")
     scenario_switch()
     scenario_evolve_to_walker()
     scenario_evolve_to_non_walker()
+    scenario_move_to_pc()
     fw.finish()
 end)
