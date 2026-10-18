@@ -21,8 +21,9 @@
  *
  * LIFECYCLE:
  * - ActivateFollower(): Called from party menu "WALK" option. Stores
- *   which party slot to follow. Does NOT spawn the sprite yet (we're
- *   still in the party menu screen).
+ *   the chosen Pokemon's identity (PID + OTID, see IsFollowerPokemon) so
+ *   it is recognised in any party slot. Does NOT spawn the sprite yet
+ *   (we're still in the party menu screen).
  * - SpawnFollowerSprite(): Called by overworld.c after map transitions.
  *   Allocates an ObjectEvent slot, creates the sprite. Same pattern as
  *   multiplayer.c's SpawnRemoteSprite().
@@ -288,8 +289,9 @@ static bool8 IsFollowerInParty(void)
  *          Called from the party menu "WALK" callback.
  *
  * HOW IT WORKS:
- * Caches the species and graphics ID, clears the trail buffer, and
- * snapshots the player's current position for change detection.
+ * Caches the species and graphics ID, and stores the Pokemon's identity
+ * (PID + OTID) so IsFollowerPokemon() can find it after SWITCH or
+ * evolution.
  * Does NOT spawn the sprite -- that happens when SpawnFollowerSprite()
  * is called during the return-to-field transition, because the party
  * menu screen has its own separate graphics state.
@@ -318,7 +320,9 @@ void ActivateFollower(u8 partySlot)
  * FUNCTION: DeactivateFollower
  *
  * PURPOSE: Fully disable the follower and remove its sprite.
- *          Called from the party menu "RETURN" callback.
+ *          Called from the party menu "RETURN" callback, and by
+ *          SpawnFollowerSprite() / UpdateFollowerPokemon() when the
+ *          follower's Pokemon has left the party.
  */
 void DeactivateFollower(void)
 {
