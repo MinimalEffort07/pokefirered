@@ -914,6 +914,16 @@ static bool8 TryStartWarpEventScript(struct MapPosition *position, u16 metatileB
     if (warpEventId != -1 && IsWarpMetatileBehavior(metatileBehavior) == TRUE)
     {
         StoreInitialPlayerAvatarState();
+        /* MB_CAVE_DOOR ("non-animated door") is the tile of a cave entrance,
+         * and also of some building doors with no opening animation. Ask the
+         * warp's exit task (Task_ExitNonDoor in field_fadetransition.c) to
+         * walk the player one tile in once the screen has faded in. It only
+         * does so when the new map is a cave and that tile is open; see
+         * TryStartCaveEntryStep there for why. The stored avatar state above
+         * is left exactly as vanilla stores it, so a player on a bike stays
+         * on it and faces the way the arrival tile says. */
+        if (MetatileBehavior_IsNonAnimDoor(metatileBehavior) == TRUE)
+            SetCaveEntryWarpExitFlag();
         SetupWarp(&gMapHeader, warpEventId, position);
         if (MetatileBehavior_IsEscalator(metatileBehavior) == TRUE)
         {
