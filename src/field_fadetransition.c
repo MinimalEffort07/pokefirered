@@ -58,16 +58,79 @@
 #include "constants/event_object_movement.h"
 #include "constants/event_objects.h"
 #include "constants/field_weather.h"
+#include "constants/map_types.h"
 
-/* Set by TryStartWarpEventScript when entering via MB_CAVE_DOOR (NonAnimDoor
- * source tile, e.g. a cave entrance on a route). Task_ExitNonDoor reads this
- * via task->data[1] and queues a step-forward so the player walks into the
- * cave rather than stopping at the warp landing tile. */
+/* Set by TryStartWarpEventScript when the player walks onto an MB_CAVE_DOOR
+ * tile (a cave entrance, or a building door with no opening animation).
+ * SetUpWarpExitTask copies it into the exit task's data[1] and clears it,
+ * and Task_ExitNonDoor then calls TryStartCaveEntryStep. */
 static bool8 sCaveEntryWarpExit;
 
 void SetCaveEntryWarpExitFlag(void)
 {
     sCaveEntryWarpExit = TRUE;
+}
+
+/* TRUE if any warp of the current map sits on tile (x, y). (x, y) are
+ * object-event coordinates, which are map coordinates plus MAP_OFFSET (the
+ * 7-tile border the game keeps around every map); warp events store plain
+ * map coordinates. gMapHeader.events is the live event table, so this also
+ * sees the warps Mt. Moon's generator moved. */
+static bool8 IsWarpEventAt(s16 x, s16 y)
+{
+    s32 i;
+    const struct WarpEvent *warp = gMapHeader.events->warps;
+
+    for (i = 0; i < gMapHeader.events->warpCount; i++, warp++)
+    {
+        if (warp->x + MAP_OFFSET == x && warp->y + MAP_OFFSET == y)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/* After walking into a cave, walk the player one tile further in, in the
+ * direction they face, so a follower Pokemon spawned next to the arrival
+ * tile is left behind them instead of standing in their way (issue #1).
+ * Returns TRUE if the step was started.
+ *
+ * The step is skipped (the player just stays on the arrival tile, as in
+ * vanilla) unless all of these hold:
+ *   - The new map is a cave: its header's map type is MAP_TYPE_UNDERGROUND.
+ *     MB_CAVE_DOOR also sits on gatehouse, harbour and house back doors and
+ *     on the door to Lorelei's room, whose own script walks the player in;
+ *     those keep vanilla's arrival.
+ *   - The tile ahead is one the player could walk onto: GetCollisionAtCoords
+ *     returns COLLISION_NONE when the tile's collision bits are clear, it is
+ *     not a ledge or wall from this side, its elevation (height level)
+ *     matches the player's, and no object (NPC, item ball, the follower)
+ *     stands on it. This check matters because a "held movement" (a
+ *     one-step walk command played out by the sprite system) moves the
+ *     player without any collision test of its own. Rock Tunnel's north
+ *     entrance lands on a ladder with rock directly north of it: walking
+ *     into the rock left stepping back onto the ladder as the only move,
+ *     which warped the player out again, so Rock Tunnel could never be
+ *     entered from that side.
+ *   - The tile ahead holds no warp. A held movement doesn't trigger warps,
+ *     so the player would end up standing on one without using it. */
+static bool8 TryStartCaveEntryStep(void)
+{
+    struct ObjectEvent *player = &gObjectEvents[gPlayerAvatar.objectEventId];
+    u8 direction = GetPlayerFacingDirection();
+    s16 x = player->currentCoords.x;
+    s16 y = player->currentCoords.y;
+
+    if (GetCurrentMapType() != MAP_TYPE_UNDERGROUND)
+        return FALSE;
+    MoveCoords(direction, &x, &y);
+    if (GetCollisionAtCoords(player, x, y, direction) != COLLISION_NONE)
+        return FALSE;
+    if (IsWarpEventAt(x, y))
+        return FALSE;
+    /* Starting a held movement also lets this one object move while
+     * FreezeObjectEvents keeps every other object (and the follower) still. */
+    ObjectEventSetHeldMovement(player, GetWalkNormalMovementAction(direction));
+    return TRUE;
 }
 
 static void ExitWarpFadeInScreen(u8 playerNotMoving);
@@ -519,14 +582,17 @@ static void SetUpWarpExitTask(bool8 playerNotMoving)
     }
     gExitStairsMovementDisabled = FALSE;
     {
-        /* Consume the cave-entry flag immediately so it can't bleed into
-         * subsequent warps if something goes wrong before the task runs. */
-        bool8 shouldStep = sCaveEntryWarpExit;
+        /* Consume the cave-entry flag now, whatever exit this is, so it can't
+         * carry over into a later warp. Only Task_ExitNonDoor (arrival on a
+         * plain tile, an arrow warp or a ladder, which is where every cave
+         * entrance lands) knows the flag; the other exit tasks use data[1]
+         * for their own purposes. */
+        bool8 cameThroughCaveDoor = sCaveEntryWarpExit;
         u8 taskId;
         sCaveEntryWarpExit = FALSE;
         taskId = CreateTask(func, 10);
-        if (shouldStep)
-            gTasks[taskId].data[1] = 1;
+        if (cameThroughCaveDoor && func == Task_ExitNonDoor)
+            gTasks[taskId].data[1] = TRUE;
     }
 }
 
@@ -788,19 +854,20 @@ static void Task_ExitNonAnimDoor(u8 taskId)
 /**
  * FUNCTION: Task_ExitNonDoor
  *
- * PURPOSE: Warp exit for boundary warps (route transitions) and directional-stair
- * warps when stair movement is disabled. Waits for the fade-in to finish, then
- * unfreezes object events and unlocks player controls.
+ * PURPOSE: Warp exit for arrivals that need no door animation: on a plain tile,
+ * an arrow warp or a ladder (every cave entrance lands on one of these), or a
+ * directional stair warp when stair movement is disabled. Waits for the fade-in
+ * to finish, then unfreezes object events and unlocks player controls.
  *
- * When data[1] is set (cave-entry warp from a NonAnimDoor source tile), adds two
- * extra states that walk the player one tile forward in their facing direction.
- * This ensures the follower spawns behind the player rather than in the path
- * the player needs to walk.
+ * When data[1] is set (the player walked in through an MB_CAVE_DOOR tile, see
+ * SetUpWarpExitTask), it may first walk the player one tile further in; see
+ * TryStartCaveEntryStep for when it does and why.
  *
  * State 0: Freeze NPCs and lock player input.
- * State 1: Wait for fade to finish; start walk if data[1] set, else finish.
- * State 2 (cave only): Wait for walk to complete.
- * State 3 (cave only): Unfreeze and unlock.
+ * State 1: Wait for fade to finish; then start the step and go to state 2, or
+ *          finish straight away if there is no step to take.
+ * State 2 (step only): Wait for the step to complete.
+ * State 3 (step only): Unfreeze and unlock.
  *
  * @param taskId — task identifier
  */
@@ -817,14 +884,8 @@ static void Task_ExitNonDoor(u8 taskId)
     case 1:
         if (FieldFadeTransitionBackgroundEffectIsFinished())
         {
-            if (task->data[1])
+            if (task->data[1] && TryStartCaveEntryStep())
             {
-                /* Cave entry: step player one tile in their facing direction.
-                 * ObjectEventSetHeldMovement unfreezes the player OE so the walk
-                 * proceeds while all other OEs remain frozen. */
-                ObjectEventSetHeldMovement(
-                    &gObjectEvents[GetObjectEventIdByLocalIdAndMap(LOCALID_PLAYER, 0, 0)],
-                    GetWalkNormalMovementAction(GetPlayerFacingDirection()));
                 task->data[0] = 2;
             }
             else

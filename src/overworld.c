@@ -889,7 +889,7 @@ void ResetInitialPlayerAvatarState(void)
     sInitialPlayerAvatarState.hasDirectionSet = FALSE;
 }
 
-void SetInitialPlayerAvatarStateWithDirection(u8 dirn)
+static void SetInitialPlayerAvatarStateWithDirection(u8 dirn)
 {
     sInitialPlayerAvatarState.direction = dirn;
     sInitialPlayerAvatarState.transitionFlags = PLAYER_AVATAR_FLAG_ON_FOOT;
