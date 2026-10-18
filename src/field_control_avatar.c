@@ -32,6 +32,7 @@
 #include "field_player_avatar.h"
 #include "field_poison.h"
 #include "field_specials.h"
+#include "item.h"
 #include "item_menu.h"
 #include "quick_select_menu.h"
 #include "link.h"
@@ -50,6 +51,7 @@
 #include "constants/songs.h"
 #include "constants/event_bg.h"
 #include "constants/event_objects.h"
+#include "constants/items.h"
 #include "constants/maps.h"
 #include "constants/metatile_behaviors.h"
 
@@ -623,11 +625,38 @@ static const u8 *GetInteractedMetatileScript(struct MapPosition *position, u8 me
     return NULL;
 }
 
+/*
+ * Is there someone to carry the player onto the water? Either a party
+ * Pokémon knows SURF (the vanilla rule), or, under the slaveless HM system
+ * (issue #5), HM03 is in the bag: EventScript_UseSurf then has a
+ * "mysterious POKéMON" do the surfing, so no party member needs the move.
+ *
+ * PartyHasMonWithSurf() returns FALSE while the player is already surfing,
+ * so the bag check carries the same guard (TestPlayerAvatarFlags reads
+ * gPlayerAvatar.flags, where PLAYER_AVATAR_FLAG_SURFING is set while on the
+ * water). That keeps both callers below behaving exactly as for a party
+ * Surfer: a player already on the water who faces fast water gets no
+ * "current is much too fast" message. (The Surf prompt itself is also kept
+ * away while surfing by IsPlayerFacingSurfableFishableWater, which needs the
+ * player to stand on land, one elevation above the water.)
+ *
+ * The badge is not checked here: the caller checks FLAG_BADGE05_GET, and
+ * EventScript_UseSurf checks it again before offering the slaveless prompt.
+ */
+static bool8 CanSurfFromPartyOrBag(void)
+{
+    if (PartyHasMonWithSurf() == TRUE)
+        return TRUE;
+    if (!TestPlayerAvatarFlags(PLAYER_AVATAR_FLAG_SURFING) && CheckBagHasItem(ITEM_HM03, 1) == TRUE)
+        return TRUE;
+    return FALSE;
+}
+
 static const u8 *GetInteractedWaterScript(struct MapPosition *unused1, u8 metatileBehavior, u8 direction)
 {
-    if (MetatileBehavior_IsFastWater(metatileBehavior) == TRUE && PartyHasMonWithSurf() == TRUE)
+    if (MetatileBehavior_IsFastWater(metatileBehavior) == TRUE && CanSurfFromPartyOrBag() == TRUE)
         return EventScript_CurrentTooFast;
-    if (FlagGet(FLAG_BADGE05_GET) == TRUE && PartyHasMonWithSurf() == TRUE && IsPlayerFacingSurfableFishableWater() == TRUE)
+    if (FlagGet(FLAG_BADGE05_GET) == TRUE && CanSurfFromPartyOrBag() == TRUE && IsPlayerFacingSurfableFishableWater() == TRUE)
         return EventScript_UseSurf;
 
     if (MetatileBehavior_IsWaterfall(metatileBehavior) == TRUE)

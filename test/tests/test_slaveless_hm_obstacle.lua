@@ -1,0 +1,856 @@
+-------------------------------------------------------------------------------
+-- test_slaveless_hm_obstacle.lua
+-- Issue #5: Slaveless HM system must prompt at HM obstacles (Cut tree, water
+-- for Surf, ...) when the player has the HM item + badge but no party Pokémon
+-- that knows the move.
+--
+-- FIXTURE STATE (self-healing):
+--   Tries to load pokefirered-slaveless-hm.ss from this run's output directory
+--   (fw.out_path: private per run under test/run_test.sh, /tmp when the
+--   script is loaded by hand) — player at tile (11, 23)
+--   in Viridian City, one tile NORTH of the CUT tree at (11, 24), with an
+--   empty party and no HM items or badges set.
+--
+--   On first run, the test boots through Oak's speech and navigates to
+--   Viridian City automatically. If navigation succeeds the fixture is saved
+--   for subsequent runs. If it fails, see MANUAL SETUP below.
+--
+-- MANUAL SETUP (if automatic fixture creation fails):
+--   1. Open the ROM in mgba-qt.
+--   2. Play through Oak's speech (or load any save that is in Pallet Town).
+--   3. Walk to Viridian City and stand at tile (11, 23) — one tile NORTH of
+--      the CUT tree at (11, 24), flag=FLAG_TEMP_11.
+--   4. In the mGBA scripting console run:
+--        emu:saveStateFile("/tmp/pokefirered-slaveless-hm.ss", 31)
+--      and load this script by hand (fw.out_path is /tmp outside run_test.sh).
+--
+-- TEST CASES:
+--   A. No badge + no HM01 in bag: press A on tree → "can't cut" sign.
+--      FLAG_TEMP_11 NOT set (tree stays standing).
+--   B. Badge set + HM01 in bag, empty party: slaveless prompt → YES.
+--      FLAG_TEMP_11 SET (tree was removed by the cut animation). While the
+--      outdoor field-move banner is up, the "mysterious POKéMON" portrait can
+--      be seen on it (see SILHOUETTE VISIBILITY below).
+--   C. HM03 in bag but no BADGE05, empty party, facing the Viridian pond at
+--      tile (15, 26) from (15, 25): press A → no Surf prompt (the message
+--      buffer gStringVar4 is not Text_WantToSurf) and the player is not
+--      surfing (gPlayerAvatar.flags bit PLAYER_AVATAR_FLAG_SURFING clear).
+--   D. BADGE05 + HM03 in bag, empty party, same spot: press A → the Surf
+--      YES/NO prompt (gStringVar4 == Text_WantToSurf from the ROM) → YES →
+--      dismiss "A mysterious POKéMON appeared and used SURF!" → the player is
+--      surfing (PLAYER_AVATAR_FLAG_SURFING set) on the water tile (15, 26).
+--      Pressing A again on the water shows no second Surf prompt.
+--   E. Indoors: warp to Fuchsia City's Warden's House (an INDOOR map, so the
+--      indoor banner is used) at tile (11, 7), below the Strength boulder at
+--      (11, 6). BADGE04 + HM04 in bag, empty party: A → YES → the portrait
+--      can be seen on the indoor banner, and FLAG_SYS_USE_STRENGTH is set.
+--   F. Waterfall: warp onto the water at Two Island's Cape Brink, tile
+--      (12, 27) (warping onto water starts the player surfing), surf one tile
+--      north to (12, 26) below the waterfall (tiles x 11-13, y 23-25).
+--      BADGE07 + HM07 in bag, empty party: A → YES → the portrait can be seen,
+--      and the player climbs to the water above the falls at (12, 22).
+--
+-- SILHOUETTE VISIBILITY:
+--   The field-move portrait is the only 64x64 sprite on screen while the
+--   banner is up. Once it stops in the middle of the screen (sprite x = 120,
+--   so its top-left corner is at x = 88), the test grabs the screen and counts
+--   the pixels inside the portrait's 64x64 box whose colour appears nowhere
+--   on the same screen rows outside the box. Those rows show only the banner
+--   (its background and streaks), so a portrait painted in the banner's own
+--   colours, like the all-black silhouette on the black outdoor banner,
+--   scores 0. Passing needs at least 64 such pixels; a real portrait has
+--   hundreds.
+--
+-- Run:    bash test/run_test.sh test/tests/test_slaveless_hm_obstacle.lua
+-- Record: bash test/record_test.sh test/tests/test_slaveless_hm_obstacle.lua
+-------------------------------------------------------------------------------
+
+local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
+local project_dir = script_dir .. "../../"
+local fw   = dofile(project_dir .. "test/lib/framework.lua")
+local cs   = dofile(project_dir .. "test/lib/character_select.lua")
+local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
+local sym  = dofile(project_dir .. "test/lib/symbols.lua")
+local warp = dofile(project_dir .. "test/lib/warp.lua")
+
+local STATE_PATH = fw.out_path("pokefirered-slaveless-hm.ss")
+-- RAM addresses come from pokefirered.elf by symbol name (symbols.lua), so
+-- they stay right when unrelated code adds or removes RAM variables.
+local PARTY_BASE = sym.addr("gPlayerParty")  -- struct Pokemon[PARTY_SIZE]
+local POKEMON_SIZE = 100       -- sizeof(struct Pokemon)
+
+-- Map packed IDs: (mapGroup << 8) | mapNum
+local MAP_PALLET   = (3 * 256) + 0
+local MAP_ROUTE1   = (3 * 256) + 19
+local MAP_VIRIDIAN = (3 * 256) + 1
+
+-- Cut tree in Viridian City: at tile (11, 24), player stands at (11, 23) (north).
+-- FLAG_TEMP_11 = 17; set by removeobject when tree is cut.
+local TREE_FLAG = 17
+
+-- SaveBlock1 offsets (actual, after +0x28 expansion of registeredItems):
+--   bagPocket_TMHM : stale 0x0464 + 0x28 = 0x048c
+--   vars[]         : stale 0x1000 + 0x28 = 0x1028
+-- flags[] offset: SB1_FLAGS = 0x0F08 (verified, stored in ADDR)
+local SB1_BAG_TMHM  = 0x048c
+local SB1_VARS      = 0x1028
+-- VAR_REPEL_STEP_COUNT = 0x4020; index in vars[] = 0x4020 - 0x4000 = 0x20 = 32
+local REPEL_VAR_IDX = 32
+
+-- Item IDs
+local ITEM_HM01 = 339   -- Cut
+local ITEM_HM03 = 341   -- Surf
+
+-- Flags (numeric values)
+-- FLAG_BADGE02_GET = SYS_FLAGS + 0x21 = 0x800 + 0x21 = 0x821 = 2081
+local FLAG_BADGE02_GET = 2081
+-- FLAG_SYS_POKEMON_GET = SYS_FLAGS + 0x28 = 0x800 + 0x28 = 0x828 = 2088
+local FLAG_SYS_POKEMON_GET = 2088
+-- FLAG_BADGE05_GET = SYS_FLAGS + 0x24 = 0x824 = 2084 (Soul Badge: Surf)
+local FLAG_BADGE05_GET = 2084
+-- FLAG_BADGE04_GET = SYS_FLAGS + 0x23 = 0x823 = 2083 (Rainbow Badge: Strength)
+local FLAG_BADGE04_GET = 2083
+-- FLAG_SYS_USE_STRENGTH = SYS_FLAGS + 0x5 = 0x805 = 2053: boulders can be pushed
+local FLAG_SYS_USE_STRENGTH = 2053
+local ITEM_HM04 = 342   -- Strength
+local ITEM_HM07 = 345   -- Waterfall
+-- FLAG_BADGE07_GET = SYS_FLAGS + 0x26 = 0x826 = 2086 (Volcano Badge: Waterfall)
+local FLAG_BADGE07_GET = 2086
+
+-- Two Island Cape Brink: MAP_TWO_ISLAND_CAPE_BRINK = (47 | (3 << 8)), a ROUTE
+-- (outdoor) map. Waterfall at tiles x 11-13, y 23-25, open water below
+-- (y >= 26) and above (y <= 22).
+local CAPE_BRINK_GROUP, CAPE_BRINK_NUM = 3, 47
+
+-- Fuchsia City Warden's House: MAP_FUCHSIA_CITY_WARDENS_HOUSE = (7 | (11 << 8)),
+-- map type INDOOR. Strength boulder at tile (11, 6); the player stands at
+-- (11, 7) below it.
+local WARDENS_HOUSE_GROUP, WARDENS_HOUSE_NUM = 11, 7
+
+-- Smallest number of portrait pixels that must differ from the banner.
+local MIN_VISIBLE_PORTRAIT_PIXELS = 64
+
+-- gPlayerAvatar.flags bit set while the player rides a Pokémon on water
+-- (PLAYER_AVATAR_FLAG_SURFING = 1 << PLAYER_AVATAR_STATE_SURFING = 1 << 3).
+local PLAYER_AVATAR_FLAG_SURFING = 0x08
+
+-- gStringVar4 is the buffer every field message box is expanded into before
+-- it is printed (ShowFieldMessage → StringExpandPlaceholders). Comparing it
+-- with a text label in the ROM tells which message the game is showing.
+local G_STRING_VAR4 = sym.addr("gStringVar4")
+local EOS = 0xFF  -- end-of-string byte in the game's character encoding
+
+local function map_packed()
+    local sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    local g = fw.read8(sb1 + ADDR.SB1_LOC_MAP_GROUP)
+    local n = fw.read8(sb1 + ADDR.SB1_LOC_MAP_NUM)
+    return (g * 256) + n
+end
+
+local function read_pos()
+    local oeid = fw.read8(ADDR.gPlayerAvatar + ADDR.PA_OBJECT_EVENT_ID)
+    local oa = ADDR.gObjectEvents + oeid * ADDR.OBJECT_EVENT_SIZE
+    return fw.read16(oa + ADDR.OE_CURRENT_X),
+           fw.read16(oa + ADDR.OE_CURRENT_Y)
+end
+
+-- Write a minimal unencrypted Pokémon (PID=0, OTID=0, XOR key=0 → substruct
+-- order GAEM). Used during navigation to enable the repel check.
+local function inject_pokemon(base, species, level)
+    for i = 0, POKEMON_SIZE - 1 do emu:write8(base + i, 0) end
+    emu:write8(base + 0x13, 0x02)            -- hasSpecies flag
+    emu:write8(base + 0x55, 0xFF)            -- no mail
+    emu:write8(base + 0x20, species % 256)   -- Growth.species low byte
+    emu:write8(base + 0x21, math.floor(species / 256))
+    emu:write8(base + 0x1C, species % 256)   -- checksum = species (only non-zero field)
+    emu:write8(base + 0x1D, math.floor(species / 256))
+    emu:write8(base + 0x54, level)           -- level
+    emu:write8(base + 0x56, 20)              -- currentHP
+    emu:write8(base + 0x57, 0)
+    emu:write8(base + 0x58, 20)             -- maxHP
+    emu:write8(base + 0x59, 0)
+end
+
+-- Set a single flag bit in SaveBlock1.flags[].
+local function set_flag(sb1, flag_idx)
+    local byte_off = math.floor(flag_idx / 8)
+    local bit_mask = 1 << (flag_idx % 8)
+    local addr = sb1 + ADDR.SB1_FLAGS + byte_off
+    emu:write8(addr, fw.read8(addr) | bit_mask)
+end
+
+-- Clear a single flag bit.
+local function clear_flag(sb1, flag_idx)
+    local byte_off = math.floor(flag_idx / 8)
+    local bit_mask = 1 << (flag_idx % 8)
+    local addr = sb1 + ADDR.SB1_FLAGS + byte_off
+    emu:write8(addr, fw.read8(addr) & (~bit_mask & 0xFF))
+end
+
+-- Read a single flag bit.
+local function read_flag(sb1, flag_idx)
+    local byte_off = math.floor(flag_idx / 8)
+    local bit_mask = 1 << (flag_idx % 8)
+    return (fw.read8(sb1 + ADDR.SB1_FLAGS + byte_off) & bit_mask) ~= 0
+end
+
+-- Inject ITEM_HM01 (Cut, id=339) into the first slot of bagPocket_TMHM.
+-- ItemSlot layout: {u16 itemId, u16 quantity} = 4 bytes.
+-- IMPORTANT: bag quantities are XOR-encrypted with gSaveBlock2Ptr->encryptionKey
+-- (see GetBagItemQuantity / SetBagItemQuantity in src/item.c). We must store
+-- (1 XOR enc_key) & 0xFFFF so that GetBagItemQuantity decodes back to 1.
+local SB2_ENCRYPTION_KEY = 0xF20  -- offsetof(SaveBlock2, encryptionKey)
+-- gBagPockets[3].itemSlots pointer lives at gBagPockets + 3*8 (BagPocket = 8 bytes).
+local GBAGPOCKETS_TMHM_SLOTS_ADDR = sym.addr("gBagPockets") + 3 * 8
+
+local function inject_hm(sb1, item_id)
+    local sb2     = fw.read32(ADDR.gSaveBlock2Ptr)
+    local enc_key = fw.read32(sb2 + SB2_ENCRYPTION_KEY)
+    local slot0   = sb1 + SB1_BAG_TMHM
+    emu:write16(slot0,     item_id)
+    emu:write16(slot0 + 2, (1 ~ enc_key) & 0xFFFF)  -- encrypted quantity; decodes to 1
+end
+
+local function inject_hm01(sb1)
+    inject_hm(sb1, ITEM_HM01)
+end
+
+-- True when gStringVar4 holds exactly the ROM string at `label`
+-- (bytes compared up to and including the end-of-string byte).
+local function message_is(label)
+    local rom = sym.addr(label)
+    for i = 0, 255 do
+        local want = emu:read8(rom + i)
+        if fw.read8(G_STRING_VAR4 + i) ~= want then return false end
+        if want == EOS then return true end
+    end
+    return false
+end
+
+-- Empty gStringVar4 so a later message_is() can only match a message shown
+-- after this point, not one left over in the buffer from the fixture.
+local function clear_message()
+    emu:write8(G_STRING_VAR4, EOS)
+end
+
+local function is_surfing()
+    return (fw.read8(ADDR.gPlayerAvatar + ADDR.PA_FLAGS) & PLAYER_AVATAR_FLAG_SURFING) ~= 0
+end
+
+-- Where the field-move portrait (the "mysterious POKéMON") is on screen.
+-- It is the only 64x64 sprite while the banner is up. struct Sprite starts
+-- with its OAM entry (the GBA's per-sprite hardware attributes), which the
+-- sprite code rewrites every frame with the on-screen position:
+--   attribute 0 (u16 at +0): bits 0-7 = y of the top-left corner,
+--                            bits 14-15 = shape (0 = square)
+--   attribute 1 (u16 at +2): bits 0-8 = x of the top-left corner,
+--                            bits 14-15 = size (3 = 64x64 for a square)
+-- Returns x, y of the top-left corner, or nil when no such sprite is in use.
+local function portrait_position()
+    for i = 0, 63 do
+        local spr = ADDR.gSprites + i * ADDR.SPRITE_STRUCT_SIZE
+        if (fw.read8(spr + ADDR.SPRITE_OFF_FLAGS_3E) & 1) ~= 0 then  -- inUse
+            local attr0 = fw.read16(spr + 0)
+            local attr1 = fw.read16(spr + 2)
+            if ((attr0 >> 14) & 3) == 0 and ((attr1 >> 14) & 3) == 3 then
+                return attr1 & 0x1FF, attr0 & 0xFF
+            end
+        end
+    end
+    return nil
+end
+
+-- Wait for the portrait to stop in the middle of the screen. It slides in
+-- from the right and rests at sprite x = 120 (top-left x = 88) for 30
+-- frames before sliding out. Returns its top-left x, y, or nil on timeout.
+local PORTRAIT_REST_X = 88
+local function wait_for_portrait_at_rest(timeout)
+    for _ = 1, timeout do
+        local x, y = portrait_position()
+        if x == PORTRAIT_REST_X then
+            fw.wait_frames(2)  -- let the frame with the portrait at rest be drawn
+            return x, y
+        end
+        fw.wait_frames(1)
+    end
+    return nil
+end
+
+-- Count the pixels inside the 64x64 portrait box whose colour appears nowhere
+-- on the same screen rows outside the box (see SILHOUETTE VISIBILITY above).
+-- emu:screenshotToImage() returns the last drawn frame; getPixel gives one
+-- pixel's colour as a number, so equal numbers mean equal colours.
+local function portrait_pixels_unlike_banner(px, py)
+    local img = emu:screenshotToImage()
+    local x0, x1 = px, math.min(px + 63, 239)
+    local y0, y1 = math.max(py, 0), math.min(py + 63, 159)
+    local banner_colours = {}
+    for y = y0, y1 do
+        for x = 0, 239 do
+            if x < x0 or x > x1 then banner_colours[img:getPixel(x, y)] = true end
+        end
+    end
+    local count = 0
+    for y = y0, y1 do
+        for x = x0, x1 do
+            if not banner_colours[img:getPixel(x, y)] then count = count + 1 end
+        end
+    end
+    return count
+end
+
+-- After the last A press of a slaveless HM: wait for the portrait, take a
+-- screenshot and return how many of its pixels stand out from the banner
+-- (0 when no portrait showed up).
+local function measure_portrait(shot_name)
+    local x, y = wait_for_portrait_at_rest(200)
+    fw.screenshot(fw.out_path(shot_name))
+    if x == nil then
+        fw.log("  no 64x64 portrait came to rest within 200 frames")
+        return 0
+    end
+    local n = portrait_pixels_unlike_banner(x, y)
+    fw.log(string.format("  portrait at (%d,%d): %d pixels unlike the banner", x, y, n))
+    return n
+end
+
+-- Warp to (group, num) with the player on tile (x, y). warp.warp_to_pos
+-- reloads the map but the player is placed from SaveBlock1.pos (offset 0,
+-- two s16 in map tiles), so write that too before the reload.
+local function warp_player_to(group, num, x, y)
+    local sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    emu:write16(sb1 + 0, x)
+    emu:write16(sb1 + 2, y)
+    return warp.warp_to_pos(group, num, x, y)
+end
+
+-- From the fixture spot (tile 11,23) walk to tile (15, 25) and face south,
+-- toward the Viridian City pond (water at tiles x 11-16, y 26-30; tile
+-- (15, 26) is open water with nothing standing on it). Route: east along
+-- row 23 to x=15 (world 22), then south down column 15 to y=25 (world 32).
+local function walk_to_pond_edge()
+    fw.hold_until("RIGHT", function() local x, _ = read_pos(); return x >= 22 end, 200, 4)
+    fw.wait_frames(16)
+    fw.hold_until("DOWN", function() local _, y = read_pos(); return y >= 32 end, 200, 4)
+    fw.wait_frames(16)
+    fw.hold("DOWN", 4)  -- already facing south; a short tap cannot step onto water
+    fw.wait_frames(16)
+    local x, y = read_pos()
+    return x - 7, y - 7
+end
+
+-- Clear ITEM_HM01 from bag slot 0.
+local function remove_hm01(sb1)
+    local slot0 = sb1 + SB1_BAG_TMHM
+    emu:write16(slot0,     0)  -- ITEM_NONE
+    emu:write16(slot0 + 2, 0)
+end
+
+-- Set VAR_REPEL_STEP_COUNT = n (activates repel for n steps).
+local function set_repel(sb1, n)
+    emu:write16(sb1 + SB1_VARS + REPEL_VAR_IDX * 2, n)
+end
+
+-- Build fixture: boot intro → navigate bedroom → house → Pallet → Route 1 → Viridian.
+-- Saves player at (11, 25), empty party, no items/badges, to STATE_PATH.
+local function build_fixture()
+    fw.log("No cached state — booting through Oak's speech…")
+    local sel = cs.find_selection_press()
+    if not sel then
+        fw.log("ERROR: character select discovery failed")
+        return false
+    end
+
+    emu:reset()
+    cs.boot_and_open_list(sel)
+    cs.confirm_and_enter_overworld()
+
+    local sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+
+    -- Set FLAG_SYS_POKEMON_GET to skip the Pallet Town "Oak runs up" cutscene.
+    -- Without this flag, Oak's contact-trigger script locks the player.
+    set_flag(sb1, FLAG_SYS_POKEMON_GET)
+
+    -- Inject a level-100 Bulbasaur so the repel check has a lead Pokémon.
+    -- IsWildLevelAllowedByRepel returns TRUE (allow encounter) if party is empty,
+    -- regardless of VAR_REPEL_STEP_COUNT. A lv100 lead repels all Route 1 Pokémon.
+    inject_pokemon(PARTY_BASE, 1, 100)
+    emu:write8(ADDR.gPlayerPartyCount, 1)
+    set_repel(sb1, 9999)
+
+    fw.wait_frames(15)
+
+    fw.log(string.format("  [nav] start: map=0x%04X pos=(%d,%d)",
+        map_packed(), read_pos()))
+
+    -- ── Step 1: Exit bedroom (PalletTown_PlayersHouse_2F) ──────────────────
+    -- Player spawns at tile (6, 6) = world (13, 13).
+    -- Staircase metatile (MB_DOWN_LEFT_STAIR_WARP) at tile (10, 2) = world (17, 9).
+    -- TryArrowWarp fires when player is ON world(17,9) moving LEFT (DIR_WEST).
+    -- Approach: go RIGHT past staircase column to x>=18 (tile 11), walk UP
+    -- to the staircase row y<=9 (tile 2), then step LEFT to trigger the warp.
+    local map_2f = map_packed()
+    fw.hold_until("RIGHT",
+        function() local x, _ = read_pos(); return x >= 18 end, 150, 4)
+    fw.wait_frames(16)
+    fw.hold_until("UP",
+        function() local _, y = read_pos(); return y <= 9 end, 200, 4)
+    fw.wait_frames(16)
+    fw.log(string.format("  [nav] at staircase approach: pos=(%d,%d)", read_pos()))
+    -- Step LEFT from world(18,9)→world(17,9): DOWN_LEFT_STAIR_WARP + DIR_WEST fires.
+    fw.hold_until("LEFT",
+        function() return map_packed() ~= map_2f end, 60, 4)
+    fw.wait_frames(180)  -- wait for stair animation + 1F map load
+
+    fw.log(string.format("  [nav] after bedroom: map=0x%04X pos=(%d,%d)",
+        map_packed(), read_pos()))
+
+    -- ── Step 2: Exit house 1F ──────────────────────────────────────────────
+    -- Player arrives at tile (10, 2) = world (17, 9) in 1F.
+    -- Exit door tile (4, 8) = world (11, 15) has MB_SOUTH_ARROW_WARP (0x65).
+    -- TryArrowWarp fires when player steps SOUTH onto world(11,15).
+    -- Path: DOWN to row 7 (world y=14), LEFT to col 4 (world x=11), DOWN to (11,15).
+    local map_1f = map_packed()
+    fw.hold_until("DOWN",
+        function() local _, y = read_pos(); return y >= 14 end, 200, 4)
+    fw.wait_frames(16)
+    fw.hold_until("LEFT",
+        function() local x, _ = read_pos(); return x <= 11 end, 200, 4)
+    fw.wait_frames(16)
+    fw.log(string.format("  [nav] at door approach: pos=(%d,%d)", read_pos()))
+    fw.screenshot(fw.out_path("mgba-slaveless-1f-door.png"))
+    -- Step SOUTH from world(11,14)→world(11,15): SOUTH_ARROW_WARP fires.
+    fw.hold_until("DOWN",
+        function() return map_packed() ~= map_1f end, 60, 4)
+    fw.wait_frames(180)  -- wait for fade + Pallet Town load
+
+    fw.log(string.format("  [nav] after house 1F: map=0x%04X (expect 0x%04X for Pallet)",
+        map_packed(), MAP_PALLET))
+
+    if map_packed() ~= MAP_PALLET then
+        fw.log(string.format("ERROR: still not in Pallet Town (map=0x%04X)", map_packed()))
+        fw.log("  → See MANUAL SETUP at the top of this test file.")
+        return false
+    end
+
+    -- ── Step 3: Pallet Town → Route 1 ─────────────────────────────────────
+    -- Player exits house to ~world(13,15)=tile(6,8). House door warp at (6,7)
+    -- is directly above — holding UP re-enters the house. Walk RIGHT first to
+    -- tile x=12 (world x=19) where column is clear all the way to Route 1.
+    fw.log("  Clearing house door (walking right)…")
+    fw.hold_until("RIGHT",
+        function() local x, _ = read_pos(); return x >= 19 end, 200, 4)
+    fw.wait_frames(16)
+    fw.log("  Walking to Route 1…")
+    fw.hold_until("UP",
+        function() return map_packed() == MAP_ROUTE1 end,
+        800, 8)
+    fw.wait_frames(180)
+
+    fw.log(string.format("  [nav] after Pallet: map=0x%04X (expect 0x%04X for Route1)",
+        map_packed(), MAP_ROUTE1))
+
+    if map_packed() ~= MAP_ROUTE1 then
+        fw.log(string.format("ERROR: could not reach Route 1 (map=0x%04X)", map_packed()))
+        fw.log("  → See MANUAL SETUP at the top of this test file.")
+        return false
+    end
+
+    -- ── Step 4: Route 1 → Viridian City ───────────────────────────────────
+    -- Route 1 is 24x40 with scattered obstacle rows. A straight-UP path is
+    -- blocked at y=31, 25-26, 20, 16-15, and 5 (tile coords). Navigate using
+    -- BFS-derived waypoints (world = tile + 7):
+    --   y=39: step left to x=15, pass y=31 obstacle at x=8
+    --   y=34: step right to x=19, pass y=25-26 at x=12
+    --   y=28: step left to x=17, pass y=20 at x=10
+    --   y=24: step right to x=23, pass y=16-15 and y=5 at x=16
+    --   y=9:  step left to x=20, then exit to Viridian
+    fw.log("  Walking to Viridian City…")
+    fw.hold_until("UP",
+        function() local _, y = read_pos(); return y <= 39 end, 300, 4)
+    fw.wait_frames(8)
+    fw.hold_until("LEFT",
+        function() local x, _ = read_pos(); return x <= 15 end, 200, 4)
+    fw.wait_frames(8)
+    fw.hold_until("UP",
+        function() local _, y = read_pos(); return y <= 34 end, 200, 4)
+    fw.wait_frames(8)
+    fw.hold_until("RIGHT",
+        function() local x, _ = read_pos(); return x >= 19 end, 200, 4)
+    fw.wait_frames(8)
+    fw.hold_until("UP",
+        function() local _, y = read_pos(); return y <= 28 end, 200, 4)
+    fw.wait_frames(8)
+    fw.hold_until("LEFT",
+        function() local x, _ = read_pos(); return x <= 17 end, 200, 4)
+    fw.wait_frames(8)
+    fw.hold_until("UP",
+        function() local _, y = read_pos(); return y <= 24 end, 200, 4)
+    fw.wait_frames(8)
+    fw.hold_until("RIGHT",
+        function() local x, _ = read_pos(); return x >= 23 end, 200, 4)
+    fw.wait_frames(8)
+    fw.hold_until("UP",
+        function() local _, y = read_pos(); return y <= 9 end, 400, 4)
+    fw.wait_frames(8)
+    fw.hold_until("LEFT",
+        function() local x, _ = read_pos(); return x <= 20 end, 200, 4)
+    fw.wait_frames(8)
+    fw.hold_until("UP",
+        function() return map_packed() == MAP_VIRIDIAN end, 400, 8)
+    fw.wait_frames(180)
+
+    fw.log(string.format("  [nav] after Route 1: map=0x%04X (expect 0x%04X for Viridian)",
+        map_packed(), MAP_VIRIDIAN))
+
+    if map_packed() ~= MAP_VIRIDIAN then
+        fw.log(string.format("ERROR: could not reach Viridian City (map=0x%04X)", map_packed()))
+        fw.log("  → See MANUAL SETUP at the top of this test file.")
+        return false
+    end
+
+    -- ── Step 5: Navigate within Viridian City to tile(11, 23) ─────────────
+    -- Player enters from Route 1 at tile(25,39)=world(32,46). Target is
+    -- tile(11,23)=world(18,30): one tile NORTH of the CUT tree at tile(11,24).
+    -- We stop here (not south of tree) so the tree's OBJ_EVENT stays in the
+    -- active pool — a large memory-injection jump would flush the pool.
+    -- BFS waypoints avoid the pond (water tiles at tile y=25-28, world y=32-35):
+    --   UP  to world y≤38 (tile y=31, clears south Viridian obstacles)
+    --   LEFT to world x≤29 (tile x=22, moves west past eastern cluster)
+    --   UP  to world y≤30 (tile y=23, gets above the pond/water zone)
+    --   LEFT to world x≤18 (tile x=11, aligns with tree column)
+    fw.log("  Walking to CUT tree position (tile 11, 23)…")
+    local function log_nav(label)
+        local x, y = read_pos()
+        fw.log(string.format("  [nav] %s: world(%d,%d)=tile(%d,%d)", label, x, y, x-7, y-7))
+    end
+    log_nav("Viridian entry")
+    fw.hold_until("UP",   function() local _, y = read_pos(); return y <= 38 end, 300, 4)
+    fw.wait_frames(16)
+    log_nav("after UP-1")
+    fw.hold_until("LEFT", function() local x, _ = read_pos(); return x <= 29 end, 300, 4)
+    fw.wait_frames(16)
+    log_nav("after LEFT-2")
+    fw.hold_until("UP",   function() local _, y = read_pos(); return y <= 30 end, 300, 4)
+    fw.wait_frames(16)
+    log_nav("after UP-3")
+    fw.hold_until("LEFT", function() local x, _ = read_pos(); return x <= 18 end, 400, 4)
+    fw.wait_frames(60)
+    log_nav("after LEFT-4 (final)")
+
+    -- Explicitly sync SaveBlock1.location to the navigation end point.
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    emu:write16(sb1 + ADDR.SB1_LOC_X, 11)   -- tile x = 11
+    emu:write16(sb1 + ADDR.SB1_LOC_Y, 23)   -- tile y = 23 (north of tree)
+
+    local fx, fy = read_pos()
+    fw.log(string.format("  Final position: world(%d,%d)=tile(%d,%d)",
+        fx, fy, fx-7, fy-7))
+
+    -- ── Teardown navigation state ──────────────────────────────────────────
+    -- Clear party, repel, and FLAG_SYS_POKEMON_GET so fixture starts clean.
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    for i = 0, POKEMON_SIZE - 1 do emu:write8(PARTY_BASE + i, 0) end
+    emu:write8(ADDR.gPlayerPartyCount, 0)
+    set_repel(sb1, 0)
+    clear_flag(sb1, FLAG_SYS_POKEMON_GET)
+    fw.wait_frames(10)
+
+    fw.save_state(STATE_PATH)
+    fw.log("  Fixture saved to " .. STATE_PATH)
+    return true
+end
+
+-- ── Main test ──────────────────────────────────────────────────────────────
+
+local results = {}
+-- Record the check in the framework's pass/fail counts too: run_test.sh's
+-- exit code comes only from fw.assert_*, so a check that only logged would
+-- leave a failing run reporting success.
+local function check(name, cond)
+    results[#results + 1] = {name = name, pass = cond}
+    fw.assert_true(cond, name)
+end
+
+fw.run(function()
+    fw.log("=== Test: Slaveless HM Obstacle (issue #5) ===")
+
+    -- Load or create fixture.
+    if not fw.try_load_state(STATE_PATH) then
+        local ok = build_fixture()
+        if not ok then
+            fw.assert_true(false, "fixture creation failed — see log for details")
+            fw.finish()
+            return
+        end
+        -- Reload to confirm fixture round-trips correctly.
+        if not fw.try_load_state(STATE_PATH) then
+            fw.assert_true(false, "fixture reload after creation failed")
+            fw.finish()
+            return
+        end
+    end
+    fw.wait_frames(60)
+
+    local px, py = read_pos()
+    fw.log(string.format("Fixture loaded: player at (%d, %d), map packed=0x%04X",
+        px, py, map_packed()))
+
+    if map_packed() ~= MAP_VIRIDIAN then
+        fw.assert_true(false,
+            string.format("fixture map is 0x%04X, expected MAP_VIRIDIAN 0x%04X",
+                map_packed(), MAP_VIRIDIAN))
+        fw.log("  → Delete " .. STATE_PATH .. " and re-run to recreate the fixture.")
+        fw.finish()
+        return
+    end
+
+    -- ── Sub-test A: no badge, no HM → sign message, tree intact ───────────
+    fw.log("--- Sub-test A: no badge, no HM01 ---")
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(60)
+
+    local sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+
+    -- Confirm initial state is clean (no badge, no HM).
+    local badge_before = read_flag(sb1, FLAG_BADGE02_GET)
+    local tree_before  = read_flag(sb1, TREE_FLAG)
+    fw.log(string.format("  badge02_get=%s, FLAG_TEMP_11=%s",
+        tostring(badge_before), tostring(tree_before)))
+
+    -- Interact with the tree: press DOWN to face/bump it (player is NORTH of
+    -- tree at tile 11,23; tree is at tile 11,24), then A to confirm.
+    fw.hold("DOWN", 8)
+    fw.wait_frames(60)
+    fw.press("A")     -- dismiss the sign-style "can't cut" message
+    fw.wait_frames(60)
+    fw.press("A")     -- extra press in case dialog needs two A taps to clear
+    fw.wait_frames(60)
+
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    local tree_after_a = read_flag(sb1, TREE_FLAG)
+    fw.log(string.format("  FLAG_TEMP_11 after A-test: %s", tostring(tree_after_a)))
+    check("A: tree intact (no prompt without badge/HM)", not tree_after_a)
+
+    -- ── Sub-test B: badge + HM01, empty party → slaveless → tree cut ──────
+    fw.log("--- Sub-test B: badge set, HM01 in bag, empty party ---")
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(60)
+
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+
+    -- Inject prerequisites for slaveless path.
+    set_flag(sb1, FLAG_BADGE02_GET)
+    inject_hm01(sb1)
+    fw.wait_frames(5)
+
+    -- Diagnostic: verify gBagPockets[3].itemSlots points to our injection site
+    -- and that the written values read back correctly.
+    do
+        local bx, by = read_pos()
+        local sb2       = fw.read32(ADDR.gSaveBlock2Ptr)
+        local enc_key   = fw.read32(sb2 + SB2_ENCRYPTION_KEY)
+        local tmhm_ptr  = fw.read32(GBAGPOCKETS_TMHM_SLOTS_ADDR)
+        local expected  = sb1 + SB1_BAG_TMHM
+        local stored_id = fw.read16(expected)
+        local stored_q  = fw.read16(expected + 2)
+        local decoded_q = (stored_q ~ enc_key) & 0xFFFF
+        fw.log(string.format("  party count: %d, start pos: world(%d,%d)=tile(%d,%d)",
+            fw.read8(ADDR.gPlayerPartyCount), bx, by, bx-7, by-7))
+        fw.log(string.format("  encryptionKey=0x%08X", enc_key))
+        fw.log(string.format("  gBagPockets[3].itemSlots=0x%08X expected=0x%08X match=%s",
+            tmhm_ptr, expected, tostring(tmhm_ptr == expected)))
+        fw.log(string.format("  slot0: itemId=%d stored_qty=%d decoded_qty=%d",
+            stored_id, stored_q, decoded_q))
+    end
+
+    -- OBJ_EVENT sanity check: tree (lid=2, gfx=OBJ_EVENT_GFX_CUT_TREE≈43) must be active.
+    for i = 0, 15 do
+        local oa = ADDR.gObjectEvents + i * ADDR.OBJECT_EVENT_SIZE
+        if (fw.read32(oa + ADDR.OE_FLAGS) & 1) ~= 0 then
+            local lid, gfx = fw.read8(oa + ADDR.OE_LOCAL_ID), fw.read8(oa + ADDR.OE_GRAPHICS_ID)
+            local ex, ey = fw.read16(oa + ADDR.OE_CURRENT_X), fw.read16(oa + ADDR.OE_CURRENT_Y)
+            fw.log(string.format("  OE[%d] lid=%d gfx=%d tile(%d,%d)", i, lid, gfx, ex-7, ey-7))
+        end
+    end
+
+    -- Interact with tree: press DOWN to face/bump it (player is NORTH of
+    -- tree at tile 11,23; tree is at tile 11,24). Three A presses:
+    --   A1: open YESNO obstacle description prompt
+    --   A2: confirm YES → "mysterious POKéMON" message shows
+    --   A3: dismiss message → silhouette animation plays
+    fw.hold("DOWN", 8)
+    do
+        local ax, ay = read_pos()
+        fw.log(string.format("  after DOWN hold: world(%d,%d)=tile(%d,%d)", ax, ay, ax-7, ay-7))
+    end
+    fw.screenshot(fw.out_path("mgba-slaveless-b-after-down.png"))
+    fw.wait_frames(80)    -- wait for dialog box to render
+    fw.screenshot(fw.out_path("mgba-slaveless-b-dialog.png"))
+    do  -- mid-test: verify sb1 hasn't moved and item is still present
+        local cur_sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+        local sb2     = fw.read32(ADDR.gSaveBlock2Ptr)
+        local enc_key = fw.read32(sb2 + SB2_ENCRYPTION_KEY)
+        local stored_id = fw.read16(cur_sb1 + SB1_BAG_TMHM)
+        local stored_q  = fw.read16(cur_sb1 + SB1_BAG_TMHM + 2)
+        -- Check badge flag is still set
+        local badge_byte_off = math.floor(FLAG_BADGE02_GET / 8)
+        local badge_bit = 1 << (FLAG_BADGE02_GET % 8)
+        local badge_byte = fw.read8(cur_sb1 + ADDR.SB1_FLAGS + badge_byte_off)
+        -- Check gBagPockets[3] capacity
+        local bp3_capacity = fw.read8(GBAGPOCKETS_TMHM_SLOTS_ADDR + 4)
+        -- Check player facing direction (stored in the player's ObjectEvent)
+        local oeid = fw.read8(ADDR.gPlayerAvatar + ADDR.PA_OBJECT_EVENT_ID)
+        local oa_base = ADDR.gObjectEvents + oeid * ADDR.OBJECT_EVENT_SIZE
+        local oe_flags = fw.read32(oa_base + ADDR.OE_FLAGS)
+        fw.log(string.format("  PRE-A1: sb1=0x%08X (orig=0x%08X moved=%s) itemId=%d decoded_qty=%d",
+            cur_sb1, sb1, tostring(cur_sb1 ~= sb1),
+            stored_id, (stored_q ~ enc_key) & 0xFFFF))
+        fw.log(string.format("  badge_byte=0x%02X badge_set=%s capacity=%d oe_flags=0x%08X",
+            badge_byte, tostring((badge_byte & badge_bit) ~= 0), bp3_capacity, oe_flags))
+    end
+    fw.press("A")         -- A1: open YESNO obstacle description
+    fw.wait_frames(60)    -- wait for dialog text to start rendering
+    fw.screenshot(fw.out_path("mgba-slaveless-b-post-a1.png"))
+    -- FireRed ignores A while text is scrolling (~4 frames/char × 57 chars ≈ 260 frames).
+    -- Wait generously past that, then press A once the YES/NO cursor is live.
+    fw.wait_frames(300)   -- wait for text scroll + YES/NO cursor
+    fw.screenshot(fw.out_path("mgba-slaveless-b-yesno.png"))
+    fw.press("A")         -- A2: confirm YES → "mysterious POKéMON appeared" message shows
+    fw.wait_frames(250)   -- wait for appeared text to scroll
+    fw.screenshot(fw.out_path("mgba-slaveless-b-appeared.png"))
+    fw.slow_down("slaveless HM silhouette animation")
+    fw.press("A")         -- A3: dismiss appeared message → animation starts
+    local outdoor_pixels = measure_portrait("mgba-slaveless-b-silhouette.png")
+    check("B: mysterious POKéMON visible on the outdoor banner",
+        outdoor_pixels >= MIN_VISIBLE_PORTRAIT_PIXELS)
+    fw.wait_frames(600)   -- full animation + tree removal
+    fw.screenshot(fw.out_path("mgba-slaveless-b-after-anim.png"))
+    fw.speed_up()
+
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    local tree_after_b = read_flag(sb1, TREE_FLAG)
+    fw.log(string.format("  FLAG_TEMP_11 after B-test: %s", tostring(tree_after_b)))
+    check("B: tree cut (FLAG_TEMP_11 set after slaveless YES)", tree_after_b)
+
+    -- ── Sub-test C: HM03 but no BADGE05 → no Surf prompt ──────────────────
+    fw.log("--- Sub-test C: HM03 in bag, no BADGE05, empty party, facing water ---")
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(60)
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    inject_hm(sb1, ITEM_HM03)
+    local cx, cy = walk_to_pond_edge()
+    fw.log(string.format("  at tile(%d,%d) badge05=%s", cx, cy,
+        tostring(read_flag(sb1, FLAG_BADGE05_GET))))
+    check("C: player reached the pond edge at tile (15,25)", cx == 15 and cy == 25)
+    clear_message()
+    fw.press("A")
+    fw.wait_frames(120)
+    fw.screenshot(fw.out_path("mgba-slaveless-c-no-badge.png"))
+    check("C: no Surf prompt without BADGE05", not message_is("Text_WantToSurf"))
+    fw.press("B")
+    fw.wait_frames(60)
+    check("C: not surfing without BADGE05", not is_surfing())
+
+    -- ── Sub-test D: BADGE05 + HM03, empty party → slaveless Surf ──────────
+    fw.log("--- Sub-test D: BADGE05 + HM03 in bag, empty party, facing water ---")
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(60)
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    set_flag(sb1, FLAG_BADGE05_GET)
+    inject_hm(sb1, ITEM_HM03)
+    local dx, dy = walk_to_pond_edge()
+    check("D: player reached the pond edge at tile (15,25)", dx == 15 and dy == 25)
+    clear_message()
+    fw.press("A")          -- A1: face the water and interact
+    fw.wait_frames(60)
+    local surf_prompt = message_is("Text_WantToSurf")
+    fw.screenshot(fw.out_path("mgba-slaveless-d-prompt.png"))
+    check("D: Surf YES/NO prompt shown (gStringVar4 == Text_WantToSurf)", surf_prompt)
+    fw.wait_frames(300)    -- text scroll + YES/NO cursor
+    fw.screenshot(fw.out_path("mgba-slaveless-d-yesno.png"))
+    fw.press("A")          -- A2: YES (the cursor starts on YES)
+    fw.wait_frames(250)
+    fw.screenshot(fw.out_path("mgba-slaveless-d-used.png"))
+    fw.press("A")          -- A3: dismiss "...used SURF!" → field effect runs
+    -- FldEff_UseSurf sets the surfing flag as it starts; the jump onto the
+    -- water comes after the mon banner, so wait for the player to reach the
+    -- water tile (15, 26) = world (22, 33).
+    fw.wait_until(function() local _, y = read_pos(); return y == 33 end, 600,
+        "player reaches the water tile")
+    fw.wait_frames(60)
+    fw.screenshot(fw.out_path("mgba-slaveless-d-surfing.png"))
+    local sx, sy = read_pos()
+    check("D: player is surfing after slaveless YES", is_surfing())
+    check("D: player moved onto the water at tile (15,26)", sx == 22 and sy == 33)
+    -- Already on the water, facing more water to the south: A must not offer
+    -- Surf again.
+    clear_message()
+    fw.press("A")
+    fw.wait_frames(120)
+    check("D: no second Surf prompt while already surfing", not message_is("Text_WantToSurf"))
+
+    -- ── Sub-test E: indoors, BADGE04 + HM04 → slaveless Strength ──────────
+    fw.log("--- Sub-test E: Warden's House (indoor), BADGE04 + HM04, empty party ---")
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(60)
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    set_flag(sb1, FLAG_BADGE04_GET)
+    inject_hm(sb1, ITEM_HM04)
+    warp_player_to(WARDENS_HOUSE_GROUP, WARDENS_HOUSE_NUM, 11, 7)
+    fw.hold("UP", 4)       -- face the boulder at (11, 6); it blocks the step
+    fw.wait_frames(30)
+    local ex, ey = read_pos()
+    check("E: player stands below the boulder at tile (11,7)", ex == 18 and ey == 14)
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    fw.press("A")          -- A1: boulder → slaveless Strength YES/NO prompt
+    fw.wait_frames(360)
+    fw.screenshot(fw.out_path("mgba-slaveless-e-yesno.png"))
+    fw.press("A")          -- A2: YES → "A mysterious POKéMON appeared..."
+    fw.wait_frames(250)
+    fw.press("A")          -- A3: dismiss → banner + portrait
+    local indoor_pixels = measure_portrait("mgba-slaveless-e-silhouette.png")
+    check("E: mysterious POKéMON visible on the indoor banner",
+        indoor_pixels >= MIN_VISIBLE_PORTRAIT_PIXELS)
+    fw.wait_frames(400)
+    fw.press("A")          -- dismiss "STRENGTH made it possible..."
+    fw.wait_frames(60)
+    check("E: FLAG_SYS_USE_STRENGTH set after slaveless Strength",
+        read_flag(sb1, FLAG_SYS_USE_STRENGTH))
+
+    -- ── Sub-test F: BADGE07 + HM07, surfing below a waterfall ─────────────
+    fw.log("--- Sub-test F: Cape Brink waterfall, BADGE07 + HM07, empty party ---")
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(60)
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    set_flag(sb1, FLAG_BADGE07_GET)
+    inject_hm(sb1, ITEM_HM07)
+    warp_player_to(CAPE_BRINK_GROUP, CAPE_BRINK_NUM, 12, 27)
+    check("F: player starts surfing on the water at tile (12,27)", is_surfing())
+    -- Surf one tile north (world y 34 → 33), which also faces the falls.
+    fw.hold_until("UP", function() local _, y = read_pos(); return y <= 33 end, 120, 2)
+    fw.wait_frames(30)
+    local fx, fy = read_pos()
+    check("F: player surfs to tile (12,26) below the waterfall", fx == 19 and fy == 33)
+    fw.press("A")          -- A1: waterfall → slaveless Waterfall YES/NO prompt
+    fw.wait_frames(360)
+    fw.screenshot(fw.out_path("mgba-slaveless-f-yesno.png"))
+    fw.press("A")          -- A2: YES → "A mysterious POKéMON appeared..."
+    fw.wait_frames(250)
+    fw.press("A")          -- A3: dismiss → banner + portrait, then the climb
+    local falls_pixels = measure_portrait("mgba-slaveless-f-silhouette.png")
+    check("F: mysterious POKéMON visible while using Waterfall",
+        falls_pixels >= MIN_VISIBLE_PORTRAIT_PIXELS)
+    fw.wait_until(function() local _, y = read_pos(); return y == 29 end, 600,
+        "player climbs above the waterfall")
+    fw.wait_frames(30)
+    fw.screenshot(fw.out_path("mgba-slaveless-f-climbed.png"))
+    local tx, ty = read_pos()
+    check("F: player climbed the waterfall to tile (12,22)", tx == 19 and ty == 29)
+
+    -- Summary
+    local passed = 0
+    for _, r in ipairs(results) do if r.pass then passed = passed + 1 end end
+    fw.log(string.format("Results: %d/%d passed", passed, #results))
+    fw.finish()
+end)

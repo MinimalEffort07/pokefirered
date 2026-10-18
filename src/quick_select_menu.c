@@ -37,6 +37,8 @@
 #include "constants/songs.h"
 #include "event_scripts.h"
 #include "pokemon_storage_system.h"
+#include "pokemon.h"
+#include "random.h"
 
 /* ── Constants ─────────────────────────────────────────────────────────── */
 
@@ -107,6 +109,75 @@ static bool8 IsHmUsable(u8 hmIndex)
     if (!CheckBagHasItem(sHmData[hmIndex].itemId, 1))
         return FALSE;
     return FlagGet(FLAG_BADGE01_GET + sHmData[hmIndex].fieldMove);
+}
+
+/* ── Slaveless HM silhouette helpers ───────────────────────────────────── */
+
+/* Maps FIELD_MOVE_* constants (0–6) to TMHM table indices (50–56).
+ * Gen 3: TMs occupy indices 0–49; HMs follow from 50. */
+static const u8 sFieldMoveToTmhm[NUM_HMS] = {
+    54,  /* FIELD_MOVE_FLASH      → HM05 (index 54) */
+    50,  /* FIELD_MOVE_CUT        → HM01 (index 50) */
+    51,  /* FIELD_MOVE_FLY        → HM02 (index 51) */
+    53,  /* FIELD_MOVE_STRENGTH   → HM04 (index 53) */
+    52,  /* FIELD_MOVE_SURF       → HM03 (index 52) */
+    55,  /* FIELD_MOVE_ROCK_SMASH → HM06 (index 55) */
+    56,  /* FIELD_MOVE_WATERFALL  → HM07 (index 56) */
+};
+
+/*
+ * Returns a random species (1–NUM_SPECIES-1) that can learn the HM
+ * corresponding to fieldMove.  Two-pass algorithm: count candidates,
+ * then pick the nth one.  Returns SPECIES_NONE if fieldMove is invalid
+ * (should never happen for the 5 obstacle HMs).
+ */
+static u16 GetRandomHmLearner(u8 fieldMove)
+{
+    u8 tmhmIdx;
+    u16 count = 0;
+    u16 species;
+    u16 pick;
+
+    if (fieldMove >= NUM_HMS)
+        return SPECIES_NONE;
+
+    tmhmIdx = sFieldMoveToTmhm[fieldMove];
+
+    for (species = 1; species < NUM_SPECIES; species++)
+    {
+        if (CanSpeciesLearnTMHM(species, tmhmIdx))
+            count++;
+    }
+
+    if (count == 0)
+        return SPECIES_NONE;
+
+    pick = Random() % count;
+    count = 0;
+    for (species = 1; species < NUM_SPECIES; species++)
+    {
+        if (CanSpeciesLearnTMHM(species, tmhmIdx))
+        {
+            if (count == pick)
+                return species;
+            count++;
+        }
+    }
+    return SPECIES_NONE; /* unreachable */
+}
+
+/*
+ * Script special: reads FIELD_MOVE_* from gSpecialVar_0x8004, picks a
+ * random species that can learn that HM, and stores it as the silhouette
+ * species for the next FldEff_FieldMoveShowMonInit call.
+ *
+ * Usage in scripts:
+ *   setvar VAR_0x8004, FIELD_MOVE_CUT
+ *   special Special_SetSlavelessHmSilhouette
+ */
+void Special_SetSlavelessHmSilhouette(void)
+{
+    SetSlavelessHmSilhouetteSpecies(GetRandomHmLearner((u8)gSpecialVar_0x8004));
 }
 
 /* ── List building ─────────────────────────────────────────────────────── */
