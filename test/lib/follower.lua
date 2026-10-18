@@ -44,8 +44,9 @@
 -- (solid) ledge, the landing tile one further on is the one checked.
 --
 -- A TELEPORT is a frame on which the follower's tile changes by more than
--- one tile (walking and the two halves of a jump move it one tile at a
--- time).
+-- one tile, other than the start of a ledge jump (whose tile, the landing
+-- tile, is two tiles on in the jump's direction). Walking moves it one tile
+-- at a time.
 --
 -- Everything that waits for frames must be called from inside fw.run().
 -------------------------------------------------------------------------------
@@ -320,7 +321,7 @@ end
 --
 -- The watch records:
 --   watch.tiles      the follower's tile on every frame (1-based; [0] start)
---   watch.changes    list of { frame, from_x, from_y, x, y, teleport }
+--   watch.changes    list of { frame, from_x, from_y, x, y, teleport, jump }
 --   watch.teleports  the subset of changes that were teleports
 --   watch.failed     true once the per-frame rule has failed (reported once)
 function follower.new_watch(name, snap)
@@ -371,7 +372,7 @@ function follower.new_watch(name, snap)
     function watch.frame()
         watch.frame_no = watch.frame_no + 1
         local n = watch.frame_no
-        local x, y = watch.tile()
+        local x, y, cur = watch.tile()
         if x == nil then
             if not watch.failed then
                 watch.failed = true
@@ -382,13 +383,23 @@ function follower.new_watch(name, snap)
         local prev = watch.tiles[n - 1]
         watch.tiles[n] = { x = x, y = y }
         if x ~= prev.x or y ~= prev.y then
-            local far = math.abs(x - prev.x) + math.abs(y - prev.y) > 1
-            local change = { frame = n, from_x = prev.x, from_y = prev.y, x = x, y = y, teleport = far }
+            -- A ledge jump takes the follower's tile (the landing tile, see
+            -- the header) two tiles on in the jump's direction in one go;
+            -- any other change of more than one tile is a teleport.
+            local jump = false
+            if cur.jump_dir then
+                local d = DIR_DELTA[cur.jump_dir]
+                jump = x == prev.x + 2 * d[1] and y == prev.y + 2 * d[2]
+            end
+            local far = not jump and math.abs(x - prev.x) + math.abs(y - prev.y) > 1
+            local change = { frame = n, from_x = prev.x, from_y = prev.y, x = x, y = y,
+                             teleport = far, jump = jump }
             watch.changes[#watch.changes + 1] = change
             if far then watch.teleports[#watch.teleports + 1] = change end
             watch.stepped = true
             fw.log(string.format("  %s frame %d: follower (%d,%d) -> (%d,%d)%s",
-                name, n, prev.x, prev.y, x, y, far and " TELEPORT" or ""))
+                name, n, prev.x, prev.y, x, y,
+                far and " TELEPORT" or (jump and " (ledge jump)" or "")))
         end
         local why = watch.violation(x, y)
         if why and not watch.failed then

@@ -53,6 +53,7 @@
 #include "field_screen_effect.h"
 #include "field_specials.h"
 #include "event_object_lock.h"
+#include "field_control_avatar.h"
 #include "start_menu.h"
 #include "constants/songs.h"
 #include "constants/event_object_movement.h"
@@ -69,24 +70,6 @@ static bool8 sCaveEntryWarpExit;
 void SetCaveEntryWarpExitFlag(void)
 {
     sCaveEntryWarpExit = TRUE;
-}
-
-/* TRUE if any warp of the current map sits on tile (x, y). (x, y) are
- * object-event coordinates, which are map coordinates plus MAP_OFFSET (the
- * 7-tile border the game keeps around every map); warp events store plain
- * map coordinates. gMapHeader.events is the live event table, so this also
- * sees the warps Mt. Moon's generator moved. */
-static bool8 IsWarpEventAt(s16 x, s16 y)
-{
-    s32 i;
-    const struct WarpEvent *warp = gMapHeader.events->warps;
-
-    for (i = 0; i < gMapHeader.events->warpCount; i++, warp++)
-    {
-        if (warp->x + MAP_OFFSET == x && warp->y + MAP_OFFSET == y)
-            return TRUE;
-    }
-    return FALSE;
 }
 
 /* After walking into a cave, walk the player one tile further in, in the

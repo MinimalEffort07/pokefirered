@@ -5,19 +5,29 @@
  * visible sprite that trails 1-2 tiles behind.
  *
  * HOW IT WORKS:
- * The system maintains a FIFO ring buffer of the player's recent tile
- * positions (the "trail"). Each time the player completes a step to a
- * new tile, the OLD position is pushed into the trail. The follower
- * pokemon dequeues positions from the trail and walks to them using the
- * standard ObjectEvent held-movement system, which handles walk
- * animations, per-frame sprite updates, and coordinate changes.
+ * Every frame, UpdateFollowerPokemon() looks at how far the follower is
+ * from the player (counted in tiles, east-west plus north-south) and, when
+ * it should move, starts a one-tile step toward the player. Steps are
+ * "held movements" of the standard ObjectEvent system, which plays the walk
+ * animation and moves the sprite over the following frames.
+ *   - Within FOLLOW_DIST tiles it stands still.
+ *   - Up to TELEPORT_DIST tiles it follows at a relaxed pace, with random
+ *     pauses and the odd step to the side.
+ *   - Farther away (the player ran, cycled or surfed off faster than it
+ *     walks) it is in "catch-up mode": it hurries straight toward the
+ *     player, and only if it can't make a step for STUCK_FRAMES frames does
+ *     it teleport next to them.
  *
- * This creates a natural trailing effect: the follower walks the same
- * path the player took, but 1-2 tiles behind. If the follower falls more
- * than TELEPORT_DIST tiles behind (the player ran, cycled or surfed away
- * faster than the follower walks), it does not teleport: it switches to
- * "catch-up mode" and walks fast straight toward the player, with no random
- * pauses or detours, until it is close again (see UpdateFollowerPokemon).
+ * WALKABLE TILES (issue #46):
+ * A held movement moves its object without any collision check of its own,
+ * so the follower checks every tile itself before stepping, spawning or
+ * teleporting onto it (IsFollowerWalkableTile): the tile must pass the
+ * engine's NPC collision check, hold no warp, and not be water. A blocked
+ * step tries the other direction that also leads toward the player, or
+ * waits for the next frame; a ledge in the step's own direction is jumped,
+ * as the player does. So the follower never walks through walls, onto
+ * ledges from the side, onto water or onto other characters. While the
+ * player surfs, it waits on the shore and rejoins them when they land.
  *
  * LIFECYCLE:
  * - ActivateFollower(): Called from party menu "WALK" option. Stores
@@ -71,8 +81,10 @@
 #include "constants/event_object_movement.h"
 #include "constants/species.h"
 #include "event_object_movement.h"
+#include "field_control_avatar.h"
 #include "field_player_avatar.h"
 #include "fieldmap.h"
+#include "metatile_behavior.h"
 #include "pokemon.h"
 #include "random.h"
 #include "sprite.h"
@@ -88,8 +100,9 @@
  *   below. The name is kept from when this distance did trigger a teleport.
  * - IDLE_CHANCE: 1-in-N chance per frame that the follower skips a move when
  *   at medium distance. Creates a relaxed, organic following pace.
- * - DEVIATE_CHANCE: 1-in-N chance that the follower picks a random perpendicular
- *   direction instead of walking straight toward the player.
+ * - DEVIATE_CHANCE: 1-in-N chance that the follower tries a random step to
+ *   the side (perpendicular to the way toward the player) instead of
+ *   walking straight toward the player.
  */
 #define FOLLOW_DIST     2
 #define TELEPORT_DIST   5
@@ -97,26 +110,24 @@
 #define DEVIATE_CHANCE  4
 
 /*
- * STUCK_FRAMES: in catch-up mode, how many checks in a row may find the
- * follower on the same tile as before its last catch-up move before it
- * gives up and teleports next to the player (a last resort so it can never
- * be left behind for good).
+ * STUCK_FRAMES: in catch-up mode, how many frames in a row the follower may
+ * go without making a step before it teleports next to the player (a last
+ * resort, so it is never left behind for good). 120 frames is 2 seconds at
+ * the GBA's 60 frames per second.
  *
- * TODAY THIS NEVER HAPPENS. The follower moves with "held movements": a
- * one-step command (e.g. "walk fast east") stored on its ObjectEvent, which
- * the sprite system then plays out over the next few frames. Starting a
- * held walk moves the ObjectEvent's tile coordinate to the next tile
- * straight away, without checking whether that tile is a wall, water or a
- * ledge (InitNpcForMovement in event_object_movement.c). So every catch-up
- * move changes the follower's tile, the counter is reset to 0 on the next
- * check, and it never reaches STUCK_FRAMES. The follower walks through
- * obstacles instead (the same is true of the normal following below).
+ * "Without a step" means every frame it tried and found no walkable tile
+ * toward the player: a wall or a tree in the way, water between it and a
+ * surfing player, a ledge from the side. The count starts again from 0
+ * whenever it does step, and whenever it gets back within TELEPORT_DIST.
+ * Frames in the middle of a step don't count either way: a step resets the
+ * count when it starts.
  *
- * The check becomes live once issue #3 ("Ensure pokemon only walk on tiles
- * that characters can walk on") adds collision checks, so a catch-up move
- * can be refused and the follower can stay on its tile.
+ * The teleport only lands on a walkable tile behind or beside the player
+ * (FindFollowerTileNearPlayer). If there is none, for example while the
+ * player is surfing with water all around, the follower keeps waiting and
+ * tries again every frame.
  */
-#define STUCK_FRAMES    5
+#define STUCK_FRAMES    120
 
 /*
  * All follower state lives in EWRAM. Persists across map warps (EWRAM is
@@ -128,12 +139,10 @@ static EWRAM_DATA struct {
     bool8 active;           /* Follower is logically enabled */
     bool8 spriteSpawned;    /* Sprite currently exists on screen */
     u8 partySlot;           /* Index into gPlayerParty[] */
-    u8 stuckFrames;         /* Catch-up checks in a row with no tile change (see STUCK_FRAMES) */
+    u8 stuckFrames;         /* Catch-up frames in a row with no step (see STUCK_FRAMES) */
     u16 species;            /* Species at WALK time (not identity: evolution changes it) */
     u8 graphicsId;          /* OBJ_EVENT_GFX_* constant for the sprite */
     u8 objEventId;          /* Index into gObjectEvents[] */
-    s16 prevX;              /* Follower X before last catch-up move (stuck detection) */
-    s16 prevY;              /* Follower Y before last catch-up move (stuck detection) */
     /*
      * Identity of the walking Pokemon: its personality value (PID) and its
      * original trainer's ID (OTID). partySlot can't identify it, because it
@@ -144,7 +153,7 @@ static EWRAM_DATA struct {
      * to tell individual Pokemon apart). See IsFollowerPokemon().
      *
      * Both are u32, so the compiler places them at offsets that are
-     * multiples of 4 (12 and 16 here), as the ARM CPU requires for 32-bit
+     * multiples of 4 (8 and 12 here), as the ARM CPU requires for 32-bit
      * loads; test/lib/addresses.lua lists the full layout.
      */
     u32 pid;                /* Personality value of the walking Pokemon */
@@ -395,79 +404,203 @@ void ClearFollowerFromSaveBlock(void)
 }
 
 /**
- * Get the tile offset (dx, dy) for a given direction.
+ * FUNCTION: IsFollowerWalkableTile
+ *
+ * PURPOSE: Decide whether the follower may stand on tile (x, y), arriving
+ *          there while moving in `direction`. Every step, spawn tile and
+ *          teleport tile of the follower is checked with this.
+ *
+ * (x, y) are object coordinates: map coordinates plus MAP_OFFSET, the
+ * 7-tile margin the engine keeps around every map.
+ *
+ * WHY THE FOLLOWER NEEDS ITS OWN CHECK:
+ * The follower moves with "held movements": a one-step command (e.g.
+ * "walk east") stored on its ObjectEvent, which the sprite system plays out
+ * over the next frames. Starting one moves the ObjectEvent's tile to the
+ * next tile straight away, with no collision check at all
+ * (InitNpcForMovement in event_object_movement.c). NPCs that wander on their
+ * own check first; the follower has to do the same before every step.
+ *
+ * A tile is walkable when all three of these hold:
+ *   1. GetCollisionAtCoords() returns COLLISION_NONE. This is the engine's
+ *      own check for wandering NPCs. It refuses the tile when:
+ *        - its collision bits are set (walls, trees, ledges: a ledge is
+ *          solid, only a jump crosses it, see GetFollowerStepAction);
+ *        - it is past the edge of the map with no connected map there;
+ *        - it is one-way (MB_IMPASSABLE_* behaviours) from this direction;
+ *        - its elevation (height level, 1 for water, 3 for most ground,
+ *          4 and up for bridges) differs from the follower's;
+ *        - an object stands on it or is walking onto or off it: an NPC, an
+ *          item ball, a roaming Pokemon or the player.
+ *   2. No warp event sits on it. A building door is solid anyway, but
+ *      walk-on warps such as cave mouths (MB_CAVE_DOOR) and arrow warps
+ *      have collision 0, and a held movement never triggers a warp, so the
+ *      follower would end up standing on one.
+ *   3. It is not water (MetatileBehavior_IsSurfable). Check 1 usually
+ *      refuses water already, because water has elevation 1 and land 3.
+ *      But the engine skips the height test while an object's elevation is
+ *      0, and the follower's is 0 just after it spawns and while it stands
+ *      on a ledge's landing or a door tile (elevation-0 tiles). So water is
+ *      refused by its tile type too.
+ *
+ * `mover` is the ObjectEvent being moved: the follower, or a stand-in for
+ * it when choosing a spawn tile (see SpawnFollowerSprite). The collision
+ * check reads its elevation and the behaviour of the tile it stands on, and
+ * skips it when looking for objects in the way.
  */
-static void GetDirectionOffset(u8 direction, s16 *dx, s16 *dy)
+static bool8 IsFollowerWalkableTile(struct ObjectEvent *mover, s16 x, s16 y, u8 direction)
 {
-    *dx = 0;
-    *dy = 0;
-    switch (direction)
+    if (GetCollisionAtCoords(mover, x, y, direction) != COLLISION_NONE)
+        return FALSE;
+    if (IsWarpEventAt(x, y))
+        return FALSE;
+    if (MetatileBehavior_IsSurfable(MapGridGetMetatileBehaviorAt(x, y)))
+        return FALSE;
+    return TRUE;
+}
+
+/**
+ * FUNCTION: GetFollowerStepAction
+ *
+ * PURPOSE: Find the held movement that takes the follower one step in
+ *          `direction`, or MOVEMENT_ACTION_NONE if it can't go that way.
+ *
+ * - The next tile is walkable: walk there. Normal walk (16 frames per tile)
+ *   when following at a relaxed pace; walk fast (8 frames per tile, the
+ *   player's running speed) in catch-up mode (`fast`).
+ * - The next tile is a ledge that can be jumped in this direction
+ *   (GetLedgeJumpDirection: e.g. MB_JUMP_SOUTH when stepping south) and the
+ *   landing tile beyond it is walkable: jump over it with the same 2-tile
+ *   jump the player uses (GetJump2MovementAction). The jump moves the
+ *   follower's tile onto the ledge as it starts and onto the landing tile
+ *   halfway, while the sprite is in the air.
+ * - Anything else, including a ledge seen from its side or from below, is a
+ *   wall.
+ */
+static u8 GetFollowerStepAction(struct ObjectEvent *followerObj, u8 direction, bool8 fast)
+{
+    s16 x = followerObj->currentCoords.x;
+    s16 y = followerObj->currentCoords.y;
+
+    MoveCoords(direction, &x, &y);
+    if (IsFollowerWalkableTile(followerObj, x, y, direction))
+        return fast ? GetWalkFastMovementAction(direction) : GetWalkNormalMovementAction(direction);
+
+    if (GetLedgeJumpDirection(x, y, direction) != DIR_NONE)
     {
-    case DIR_SOUTH: *dy = 1;  break;
-    case DIR_NORTH: *dy = -1; break;
-    case DIR_EAST:  *dx = 1;  break;
-    case DIR_WEST:  *dx = -1; break;
+        MoveCoords(direction, &x, &y);
+        if (IsFollowerWalkableTile(followerObj, x, y, direction))
+            return GetJump2MovementAction(direction);
+    }
+    return MOVEMENT_ACTION_NONE;
+}
+
+/**
+ * FUNCTION: TryFollowerStepTowardPlayer
+ *
+ * PURPOSE: Start a step that brings the follower closer to the player, if
+ *          one is possible. Returns TRUE if a step was started.
+ *
+ * First choice: along the axis with the larger gap (east-west or
+ * north-south; a random one of the two when the gaps are equal). If that
+ * way is blocked, the other axis, but only when the player is off that axis
+ * too, so that a step along it also gets closer. If both are blocked the
+ * follower makes no step this frame and tries again on the next one. It
+ * never steps away from the player: there is no pathfinding, so a follower
+ * walled off from the player waits (and, in catch-up mode, teleports after
+ * STUCK_FRAMES).
+ */
+static bool8 TryFollowerStepTowardPlayer(struct ObjectEvent *followerObj, struct ObjectEvent *playerObj, bool8 fast)
+{
+    s16 dx = playerObj->currentCoords.x - followerObj->currentCoords.x;
+    s16 dy = playerObj->currentCoords.y - followerObj->currentCoords.y;
+    s16 absDx = dx < 0 ? -dx : dx;
+    s16 absDy = dy < 0 ? -dy : dy;
+    u8 xDir = DIR_NONE;
+    u8 yDir = DIR_NONE;
+    u8 firstDir, secondDir;
+    u8 action = MOVEMENT_ACTION_NONE;
+
+    if (dx != 0)
+        xDir = (dx > 0) ? DIR_EAST : DIR_WEST;
+    if (dy != 0)
+        yDir = (dy > 0) ? DIR_SOUTH : DIR_NORTH;
+
+    if (absDx > absDy || (absDx == absDy && (Random() & 1)))
+    {
+        firstDir = xDir;
+        secondDir = yDir;
+    }
+    else
+    {
+        firstDir = yDir;
+        secondDir = xDir;
+    }
+
+    if (firstDir != DIR_NONE)
+        action = GetFollowerStepAction(followerObj, firstDir, fast);
+    if (action == MOVEMENT_ACTION_NONE && secondDir != DIR_NONE)
+        action = GetFollowerStepAction(followerObj, secondDir, fast);
+    if (action == MOVEMENT_ACTION_NONE)
+        return FALSE;
+
+    ObjectEventSetHeldMovement(followerObj, action);
+    return TRUE;
+}
+
+/**
+ * The direction to the left of someone facing `facing` (e.g. west for
+ * someone facing north). The direction to their right is the opposite.
+ */
+static u8 GetLeftOfDirection(u8 facing)
+{
+    switch (facing)
+    {
+    case DIR_NORTH: return DIR_WEST;
+    case DIR_SOUTH: return DIR_EAST;
+    case DIR_WEST:  return DIR_SOUTH;
+    default:        return DIR_NORTH;  /* DIR_EAST */
     }
 }
 
 /**
- * Try to find a walkable tile near the player for spawning the follower.
+ * FUNCTION: FindFollowerTileNearPlayer
  *
- * Tries in order: behind the player, then left/right of behind, then
- * left/right of player. Falls back to the player's tile if nothing
- * else is walkable (the follower will separate on the first step).
+ * PURPOSE: Find where the follower should appear next to the player, when
+ *          it spawns or teleports. Returns FALSE if no candidate is
+ *          walkable.
  *
- * "Behind" means opposite of the player's facing direction.
+ * Candidates, in this order: the tile behind the player (opposite the way
+ * they face), the tile to their left, the tile to their right. Never the
+ * tile in front of them, where the follower would block their way, and
+ * never their own tile. The first one that passes IsFollowerWalkableTile,
+ * judged for `mover` (its height, and with the objects around it), wins.
+ * Each candidate is judged as if entered moving away from the player.
  */
-static void FindFollowerSpawnPosition(struct ObjectEvent *playerObj, s16 *outX, s16 *outY)
+static bool8 FindFollowerTileNearPlayer(struct ObjectEvent *mover, struct ObjectEvent *playerObj, s16 *outX, s16 *outY)
 {
-    u8 playerDir = GetPlayerFacingDirection();
-    u8 behindDir = GetOppositeDirection(playerDir);
-    s16 px = playerObj->currentCoords.x;
-    s16 py = playerObj->currentCoords.y;
-    s16 dx, dy;
-    /*
-     * Candidate offsets to try, in priority order:
-     * 1. Directly behind player
-     * 2-3. Perpendicular to behind direction (left/right of behind)
-     * 4-5. Directly left/right of player
-     */
-    u8 tryDirs[5];
+    u8 facing = GetPlayerFacingDirection();
+    u8 candidates[3];
     u8 i;
-    s16 tx, ty;
+    s16 x, y;
 
-    tryDirs[0] = behindDir;
-    /* Perpendicular directions */
-    if (playerDir == DIR_SOUTH || playerDir == DIR_NORTH)
-    {
-        tryDirs[1] = DIR_WEST;
-        tryDirs[2] = DIR_EAST;
-    }
-    else
-    {
-        tryDirs[1] = DIR_SOUTH;
-        tryDirs[2] = DIR_NORTH;
-    }
-    /* Opposite perpendicular (already covered) + forward (least ideal) */
-    tryDirs[3] = tryDirs[2];
-    tryDirs[4] = tryDirs[1];
+    candidates[0] = GetOppositeDirection(facing);
+    candidates[1] = GetLeftOfDirection(facing);
+    candidates[2] = GetOppositeDirection(candidates[1]);
 
-    for (i = 0; i < 3; i++)
+    for (i = 0; i < NELEMS(candidates); i++)
     {
-        GetDirectionOffset(tryDirs[i], &dx, &dy);
-        tx = px + dx;
-        ty = py + dy;
-        if (!MapGridGetCollisionAt(tx, ty))
+        x = playerObj->currentCoords.x;
+        y = playerObj->currentCoords.y;
+        MoveCoords(candidates[i], &x, &y);
+        if (IsFollowerWalkableTile(mover, x, y, candidates[i]))
         {
-            *outX = tx;
-            *outY = ty;
-            return;
+            *outX = x;
+            *outY = y;
+            return TRUE;
         }
     }
-
-    /* Fallback: spawn at player's tile */
-    *outX = px;
-    *outY = py;
+    return FALSE;
 }
 
 /**
@@ -497,13 +630,16 @@ static void FindFollowerSpawnPosition(struct ObjectEvent *playerObj, s16 *outX, 
  * UpdateObjectEventCurrentMovement checks held movements BEFORE the
  * autonomous step functions.
  *
- * The follower is placed on a walkable tile near (but not on top of)
- * the player, preferring the tile directly behind the player.
+ * The follower is placed on a walkable tile next to the player: behind
+ * them, else to their left, else to their right (FindFollowerTileNearPlayer).
+ * If none of those is walkable it spawns on the player's own tile and
+ * steps off once the player has moved away.
  */
 void SpawnFollowerSprite(void)
 {
     struct ObjectEvent *playerObj;
     struct ObjectEvent *objEvent;
+    struct ObjectEvent standIn;
     u8 objEventId;
     s16 spawnX, spawnY;
 
@@ -530,8 +666,31 @@ void SpawnFollowerSprite(void)
 
     playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
 
-    /* Find a walkable tile near the player (behind them if possible) */
-    FindFollowerSpawnPosition(playerObj, &spawnX, &spawnY);
+    /*
+     * Choose the spawn tile. The walkable check needs an ObjectEvent to judge
+     * the tile for, and the follower's doesn't exist yet, so a blank one
+     * stands in for it, holding just what GetCollisionAtCoords reads:
+     *   - elevation 0, the height the follower spawns with (see the spawn
+     *     call below; the engine skips its height test at elevation 0, and
+     *     IsFollowerWalkableTile still refuses water by tile type);
+     *   - the behaviour of the player's tile as the tile it "stands on", so
+     *     a tile the player's own tile can't be left toward (one-way
+     *     MB_IMPASSABLE_* edges) is refused;
+     *   - no movement range (rangeX/rangeY 0) and not followed by the
+     *     camera, like the real follower.
+     * It is not in gObjectEvents, so every live object, the player
+     * included, counts as being in the way.
+     */
+    memset(&standIn, 0, sizeof(standIn));
+    standIn.currentCoords = playerObj->currentCoords;
+    standIn.currentMetatileBehavior = MapGridGetMetatileBehaviorAt(playerObj->currentCoords.x,
+                                                                   playerObj->currentCoords.y);
+    if (!FindFollowerTileNearPlayer(&standIn, playerObj, &spawnX, &spawnY))
+    {
+        /* Fallback: spawn on the player's tile (see the comment above) */
+        spawnX = playerObj->currentCoords.x;
+        spawnY = playerObj->currentCoords.y;
+    }
 
     /*
      * SpawnSpecialObjectEventParameterized creates a full ObjectEvent with
@@ -605,26 +764,37 @@ void DespawnFollowerSprite(void)
 }
 
 /**
- * Teleport the follower to a walkable tile near the player.
+ * Teleport the follower to a walkable tile next to the player. Returns
+ * FALSE, leaving it where it is, if there is none.
  *
- * Only used as catch-up mode's last resort, when the follower has stayed on
- * the same tile for STUCK_FRAMES checks in a row (which cannot happen until
- * the follower's moves check collision; see STUCK_FRAMES). A follower that
- * is merely far away walks back instead. Finds a walkable tile near the
- * player and snaps the follower there.
+ * Only used as catch-up mode's last resort, when the follower has gone
+ * STUCK_FRAMES frames in a row without a step (see STUCK_FRAMES). A
+ * follower that is merely far away walks back instead.
+ *
+ * The tile is judged at the follower's own height (its current elevation),
+ * so it never lands on a bridge above it or the ground below one.
  */
-static void TeleportFollowerNearPlayer(struct ObjectEvent *followerObj, struct ObjectEvent *playerObj)
+static bool8 TeleportFollowerNearPlayer(struct ObjectEvent *followerObj, struct ObjectEvent *playerObj)
 {
     struct Sprite *sprite;
     const struct ObjectEventGraphicsInfo *gfxInfo;
     s16 newX, newY;
 
-    FindFollowerSpawnPosition(playerObj, &newX, &newY);
+    if (!FindFollowerTileNearPlayer(followerObj, playerObj, &newX, &newY))
+        return FALSE;
 
     followerObj->currentCoords.x = newX;
     followerObj->currentCoords.y = newY;
     followerObj->previousCoords.x = newX;
     followerObj->previousCoords.y = newY;
+    /*
+     * Record what the new tile is, as the end of a normal step would: its
+     * metatile behaviour (read by the next collision check as "the tile
+     * being left") and its elevation.
+     */
+    followerObj->currentMetatileBehavior = MapGridGetMetatileBehaviorAt(newX, newY);
+    followerObj->previousMetatileBehavior = followerObj->currentMetatileBehavior;
+    ObjectEventUpdateElevation(followerObj);
 
     /* Reposition the sprite to match the new tile */
     if (followerObj->spriteId < MAX_SPRITES)
@@ -642,59 +812,44 @@ static void TeleportFollowerNearPlayer(struct ObjectEvent *followerObj, struct O
     ObjectEventClearHeldMovementIfFinished(followerObj);
     followerObj->heldMovementActive = FALSE;
     followerObj->heldMovementFinished = FALSE;
+    return TRUE;
 }
 
 /**
- * Choose a direction for the follower to move.
+ * Random side-step for the relaxed following pace: with a 1-in-
+ * DEVIATE_CHANCE chance, try one step perpendicular to the way toward the
+ * player (the axis with the larger gap; a random one on a tie), to a random
+ * side. This makes the follower wander a little instead of beelining.
  *
- * Usually picks the axis with the greatest distance to the player.
- * With a random chance (1-in-DEVIATE_CHANCE), picks a perpendicular
- * walkable direction instead, creating a less robotic following path.
- * The deviation is only allowed if it doesn't increase the distance
- * to the player (so the follower still trends toward the player).
+ * The step is only taken onto a walkable tile (IsFollowerWalkableTile), and
+ * it is a plain walk: a side-step never jumps a ledge. Returns TRUE if a
+ * side-step was started; otherwise the caller steps toward the player.
  */
-static u8 ChooseFollowerDirection(struct ObjectEvent *followerObj, s16 playerX, s16 playerY)
+static bool8 TryFollowerSideStep(struct ObjectEvent *followerObj, struct ObjectEvent *playerObj)
 {
-    s16 dx = playerX - followerObj->currentCoords.x;
-    s16 dy = playerY - followerObj->currentCoords.y;
+    s16 dx = playerObj->currentCoords.x - followerObj->currentCoords.x;
+    s16 dy = playerObj->currentCoords.y - followerObj->currentCoords.y;
     s16 absDx = dx < 0 ? -dx : dx;
     s16 absDy = dy < 0 ? -dy : dy;
-    u8 idealDir;
-    u8 altDir;
-    s16 altDx, altDy;
-    s16 altX, altY;
+    u8 sideDir;
+    s16 x, y;
 
-    /*
-     * Pick the primary direction: move along the axis with the greater
-     * distance. When equal, pick randomly between the two.
-     */
+    if ((Random() % DEVIATE_CHANCE) != 0)
+        return FALSE;
+
     if (absDx > absDy || (absDx == absDy && (Random() & 1)))
-        idealDir = (dx > 0) ? DIR_EAST : DIR_WEST;
+        sideDir = (Random() & 1) ? DIR_SOUTH : DIR_NORTH;  /* toward the player is east/west */
     else
-        idealDir = (dy > 0) ? DIR_SOUTH : DIR_NORTH;
+        sideDir = (Random() & 1) ? DIR_EAST : DIR_WEST;    /* toward the player is north/south */
 
-    /*
-     * Random deviation: with DEVIATE_CHANCE probability, try a perpendicular
-     * direction instead. This makes the follower wander slightly rather
-     * than beelining toward the player.
-     */
-    if ((Random() % DEVIATE_CHANCE) == 0)
-    {
-        /* Pick a random perpendicular direction */
-        if (idealDir == DIR_EAST || idealDir == DIR_WEST)
-            altDir = (Random() & 1) ? DIR_SOUTH : DIR_NORTH;
-        else
-            altDir = (Random() & 1) ? DIR_EAST : DIR_WEST;
+    x = followerObj->currentCoords.x;
+    y = followerObj->currentCoords.y;
+    MoveCoords(sideDir, &x, &y);
+    if (!IsFollowerWalkableTile(followerObj, x, y, sideDir))
+        return FALSE;
 
-        /* Only deviate if the tile is walkable */
-        GetDirectionOffset(altDir, &altDx, &altDy);
-        altX = followerObj->currentCoords.x + altDx;
-        altY = followerObj->currentCoords.y + altDy;
-        if (!MapGridGetCollisionAt(altX, altY))
-            return altDir;
-    }
-
-    return idealDir;
+    ObjectEventSetHeldMovement(followerObj, GetWalkNormalMovementAction(sideDir));
+    return TRUE;
 }
 
 /**
@@ -710,13 +865,19 @@ static u8 ChooseFollowerDirection(struct ObjectEvent *followerObj, s16 playerX, 
  * Uses a distance-based approach with randomness for natural movement:
  * 1. Compute Manhattan distance from follower to player.
  * 2. If distance > TELEPORT_DIST, catch-up mode: walk fast straight toward
- *    the player, with no random idle or deviation (steps 3 and 5 are
- *    skipped). Teleport only via the STUCK_FRAMES last resort.
- * 3. If distance > FOLLOW_DIST, move toward the player (with occasional
- *    random perpendicular deviation for organic movement).
+ *    the player, with no random idle or side-step (steps 3 and 5 are
+ *    skipped). When no step toward the player is possible, count the frame;
+ *    after STUCK_FRAMES of them in a row, teleport next to the player.
+ * 3. If distance > FOLLOW_DIST, move toward the player (with an occasional
+ *    random side-step for organic movement).
  * 4. If distance <= FOLLOW_DIST, idle — the follower is close enough.
  * 5. With IDLE_CHANCE probability, skip a movement even when far,
  *    creating a relaxed "pet following" pace.
+ *
+ * Every step goes only onto a walkable tile (IsFollowerWalkableTile), or
+ * jumps a ledge in its own direction (GetFollowerStepAction). A blocked
+ * step tries the other direction that also leads toward the player, or
+ * waits for the next frame.
  *
  * The held-movement system (ObjectEventSetHeldMovement) handles the full
  * walk animation cycle: sprite frame animation, per-frame position
@@ -726,8 +887,7 @@ void UpdateFollowerPokemon(void)
 {
     struct ObjectEvent *playerObj;
     struct ObjectEvent *followerObj;
-    s16 dx, dy, dist, absDx, absDy;
-    u8 moveDir;
+    s16 dx, dy, dist;
 
     if (!sFollower.active)
         return;
@@ -767,45 +927,31 @@ void UpdateFollowerPokemon(void)
     dist = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
 
     /* Too far away — catch-up mode: move directly toward player without randomness.
-     * No IDLE_CHANCE skip, no DEVIATE_CHANCE deviation. Uses the walk-fast
+     * No IDLE_CHANCE skip, no DEVIATE_CHANCE side-step. Uses the walk-fast
      * movement (GetWalkFastMovementAction): the normal walking frames played
      * at double speed, 2 pixels per frame, so one 16-pixel tile takes 8
      * frames instead of 16. That is the player's running speed, so the
      * follower visibly hurries.
      *
-     * Stuck detection: if the follower is still on the tile it stood on
-     * before its last catch-up move, increment stuckFrames; after
-     * STUCK_FRAMES checks in a row, teleport so the follower cannot be left
-     * behind for good. Held movements skip collision, so today every move
-     * changes the tile and this never fires; it becomes live once issue #3
-     * adds collision checks (see STUCK_FRAMES). */
+     * Stuck detection: a frame with no possible step toward the player
+     * counts toward STUCK_FRAMES; any step starts the count again. Once it
+     * reaches STUCK_FRAMES the follower teleports next to the player, or,
+     * if no tile there is walkable, keeps the count where it is and tries
+     * again next frame. The count stops at STUCK_FRAMES, so the u8 never
+     * wraps around to 0. */
     if (dist > TELEPORT_DIST)
     {
-        if (followerObj->currentCoords.x == sFollower.prevX &&
-            followerObj->currentCoords.y == sFollower.prevY)
-            sFollower.stuckFrames++;
-        else
-            sFollower.stuckFrames = 0;
-
-        if (sFollower.stuckFrames >= STUCK_FRAMES)
+        if (TryFollowerStepTowardPlayer(followerObj, playerObj, TRUE))
         {
-            TeleportFollowerNearPlayer(followerObj, playerObj);
             sFollower.stuckFrames = 0;
-            sFollower.prevX = followerObj->currentCoords.x;
-            sFollower.prevY = followerObj->currentCoords.y;
             return;
         }
 
-        absDx = dx < 0 ? -dx : dx;
-        absDy = dy < 0 ? -dy : dy;
-        if (absDx > absDy || (absDx == absDy && (Random() & 1)))
-            moveDir = (dx > 0) ? DIR_EAST : DIR_WEST;
-        else
-            moveDir = (dy > 0) ? DIR_SOUTH : DIR_NORTH;
-
-        sFollower.prevX = followerObj->currentCoords.x;
-        sFollower.prevY = followerObj->currentCoords.y;
-        ObjectEventSetHeldMovement(followerObj, GetWalkFastMovementAction(moveDir));
+        if (sFollower.stuckFrames < STUCK_FRAMES)
+            sFollower.stuckFrames++;
+        if (sFollower.stuckFrames >= STUCK_FRAMES
+         && TeleportFollowerNearPlayer(followerObj, playerObj))
+            sFollower.stuckFrames = 0;
         return;
     }
 
@@ -824,9 +970,8 @@ void UpdateFollowerPokemon(void)
     if ((Random() % IDLE_CHANCE) == 0)
         return;
 
-    /* Pick a direction (usually toward player, sometimes deviating) */
-    moveDir = ChooseFollowerDirection(followerObj, playerObj->currentCoords.x, playerObj->currentCoords.y);
-
-    /* Issue the walk command */
-    ObjectEventSetHeldMovement(followerObj, GetWalkNormalMovementAction(moveDir));
+    /* Sometimes a step to the side; otherwise (or if that side is blocked)
+     * a step toward the player, or none if both ways are blocked. */
+    if (!TryFollowerSideStep(followerObj, playerObj))
+        TryFollowerStepTowardPlayer(followerObj, playerObj, FALSE);
 }
