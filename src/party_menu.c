@@ -2993,17 +2993,22 @@ static void SetPartyMonFieldSelectionActions(struct Pokemon *mons, u8 slotId)
 
     sPartyMenuInternal->numActions = 0;
     AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_SUMMARY);
-    /* Add WALK or RETURN option for pokemon with overworld walking sprites */
-    {
-        species = GetMonData(&mons[slotId], MON_DATA_SPECIES);
-        if (CanSpeciesFollowPlayer(species))
-        {
-            if (IsFollowerPokemon(&mons[slotId]))
-                AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_RETURN_MON);
-            else if (!IsFollowerActive())
-                AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_WALK);
-        }
-    }
+    /*
+     * Add RETURN for the walking Pokemon, or WALK for a Pokemon that has an
+     * overworld walking sprite while nothing is walking.
+     *
+     * RETURN is checked first and does not depend on the species, so the
+     * walking Pokemon can always be put away: it may have evolved into a
+     * species with no walking sprite (Pikachu -> Raichu) since it was sent
+     * out, and its sprite keeps the old look until RETURN.
+     * IsFollowerPokemon() matches by identity (PID + OTID), so this works in
+     * whatever slot SWITCH has moved it to.
+     */
+    species = GetMonData(&mons[slotId], MON_DATA_SPECIES);
+    if (IsFollowerPokemon(&mons[slotId]))
+        AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_RETURN_MON);
+    else if (!IsFollowerActive() && CanSpeciesFollowPlayer(species))
+        AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_WALK);
     // Add field moves to action list
     for (i = 0; i < MAX_MON_MOVES; ++i)
     {
