@@ -58,10 +58,6 @@ follower.bind(fw)   -- the library's assertions count in this test's results
 local STATE_PATH = fw.out_path("pokefirered-follower-collision.ss")
 local VIRIDIAN = { 3, 1 }
 
-local function distance(ax, ay, bx, by)
-    return math.abs(ax - bx) + math.abs(ay - by)
-end
-
 -- (20,32) is right below the TRAINER TIPS sign at (20,31). In FireRed a
 -- sign opens when you walk into it, and its message box would hold up the
 -- walk, so the routes never use that tile.
@@ -96,7 +92,7 @@ fw.run(function()
         fw.finish()
         return
     end
-    follower.wait_still(300)
+    fw.assert_true(follower.wait_still(300), "player and follower standing still before the demo")
     fw.wait_frames(20)
 
     local watch = follower.new_watch("demo")
@@ -127,7 +123,8 @@ fw.run(function()
         return y == 31
     end, 60, 1)
     local jumped_at = watch.frame_no
-    fw.wait_until(walk.ready, 120, "player standing after the ledge jump")
+    fw.assert_true(fw.wait_until(walk.ready, 120, "player standing after the ledge jump"),
+        "beat 2: player jumped the ledge and stands on (28,31)")
     walk_to(28, 33)
     local function follower_jumped()
         for _, c in ipairs(watch.changes) do
@@ -149,28 +146,14 @@ fw.run(function()
     walk_to(22, 31)
     walk_to(22, 28)
     walk_to(17, 28)
-    fw.wait_until(function()
-        local px, py = follower.player()
-        local fx, fy = follower_tile(watch)
-        return distance(fx, fy, px, py) <= 2
-    end, 240, "follower next to the player on the shore")
+    fw.assert_true(follower.wait_rejoin(watch, 240),
+        "beat 3: follower within 2 tiles of the player on the shore before SURF")
     follower.face("LEFT")   -- the water is west; holding LEFT just turns and bumps
     fw.assert_true(follower.use_surf(16, 28), "beat 3: player surfs onto (16,28)")
-    local teleport_on_water = nil
-    local landed = nil
-    emu:addKey(fw.KEY.LEFT)
-    for _ = 1, 600 do
-        local before = #watch.teleports
-        fw.yield()
-        local px, py = follower.player()
-        if #watch.teleports > before and watch.snap.water(px, py) and teleport_on_water == nil then
-            teleport_on_water = watch.frame_no
-        end
-        if px == 10 and py == 28 then landed = watch.frame_no break end
-    end
-    emu:clearKey(fw.KEY.LEFT)
-    fw.assert_true(teleport_on_water == nil, "beat 3: no teleport while the player is on water")
-    if not fw.assert_true(landed ~= nil, "beat 4: player lands at (10,28)") then
+    local landed = follower.surf_to("LEFT", 10, 28, watch)
+    local tp = watch.teleport_while_player_on_water()
+    fw.assert_true(tp == nil, "beat 3: no teleport while the player is on water")
+    if not fw.assert_true(landed, "beat 4: player lands at (10,28)") then
         watch.detach()
         capture.stop()
         fw.finish()
@@ -179,14 +162,10 @@ fw.run(function()
 
     -- 4. Landing: the follower appears beside the player.
     capture.caption("…and catches up when you land")
-    local rejoined = fw.wait_until(function()
-        local px, py = follower.player()
-        local fx, fy = follower_tile(watch)
-        return distance(fx, fy, px, py) <= 2
-    end, 180, "follower within 2 tiles of the player")
-    fw.assert_true(rejoined and watch.frame_no - landed <= 180, string.format(
-        "beat 4: follower within 2 tiles of the player within 180 frames of landing (%d frames)",
-        watch.frame_no - landed))
+    local rejoined = follower.wait_rejoin(watch, 180)
+    fw.assert_true(rejoined, string.format(
+        "beat 4: follower within 2 tiles of the player within 180 frames of landing%s",
+        rejoined and (" (" .. (rejoined - landed) .. " frames)") or ""))
     fw.wait_frames(90)
 
     capture.stop()

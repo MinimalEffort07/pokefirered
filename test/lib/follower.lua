@@ -72,33 +72,26 @@ function follower.bind(test_fw)
     T = test_fw
 end
 
-local MAP_OFFSET = 7
+local MAP_OFFSET = mm.MAP_OFFSET
 
 -------------------------------------------------------------------------------
 -- Layout facts (see include/global.fieldmap.h)
 -------------------------------------------------------------------------------
 
--- struct ObjectEvent, 36 bytes:
+-- The struct ObjectEvent fields read here that mt_moon.lua's object readers
+-- (mm.live_objects) don't report. 36 bytes per object:
 --   0x00 u32 bit flags: bit 0 active, bit 6 heldMovementActive,
---        bit 7 heldMovementFinished, bit 8 frozen, bit 16 isPlayer
---   0x08 u8 localId
+--        bit 7 heldMovementFinished
 --   0x10 s16 currentCoords.x, 0x12 currentCoords.y
---   0x14 s16 previousCoords.x, 0x16 previousCoords.y
---   0x18 u8 facingDirection (low 4 bits), movementDirection (high 4 bits)
 --   0x1C u8 movementActionId (the held movement being played)
 local OE_SIZE       = 0x24
 local OE_FLAGS      = 0x00
-local OE_LOCAL_ID   = 0x08
 local OE_CURRENT    = 0x10
-local OE_PREVIOUS   = 0x14
-local OE_FACING     = 0x18
 local OE_ACTION     = 0x1C
 
 local FLAG_ACTIVE          = 0x001
 local FLAG_HELD_ACTIVE     = 0x040
 local FLAG_HELD_FINISHED   = 0x080
-local FLAG_FROZEN          = 0x100
-local FLAG_IS_PLAYER       = 0x10000
 
 -- sFollower (src/pokemon_follower.c), see test/lib/addresses.lua for the
 -- whole layout: u8 objEventId at offset 7.
@@ -115,12 +108,6 @@ local DIR_DELTA = {
 -- event_object_movement.h) and the direction each one jumps.
 local JUMP_2_DIR = { [0x14] = 1, [0x15] = 2, [0x16] = 3, [0x17] = 4 }
 
--- Roaming Pokemon (src/roaming_pokemon.c) use local ids 200-205 (the player
--- is 255 and the follower 254, so "200 and up" alone would match them too).
-local function is_roamer(o)
-    return not o.player and o.local_id >= 200 and o.local_id <= 205
-end
-
 -------------------------------------------------------------------------------
 -- Small helpers
 -------------------------------------------------------------------------------
@@ -134,10 +121,15 @@ local function object_addr(i)
     return sym.addr("gObjectEvents") + i * OE_SIZE
 end
 
-local function key(x, y)
-    return y * 1000 + x
-end
+-- The same tile key as mt_moon.lua's (mm.key), for sets of tiles.
+local key = mm.key
 follower.key = key
+
+-- Tiles between (ax, ay) and (bx, by), counting east-west plus north-south
+-- steps (the "Manhattan distance" the follower code uses).
+function follower.distance(ax, ay, bx, by)
+    return math.abs(ax - bx) + math.abs(ay - by)
+end
 
 -------------------------------------------------------------------------------
 -- The follower's ObjectEvent
@@ -173,34 +165,19 @@ end
 
 -- The player's tile and facing direction (DIR_* above).
 function follower.player()
-    for i = 0, OBJECT_EVENTS_COUNT - 1 do
-        local a = object_addr(i)
-        local flags = emu:read32(a + OE_FLAGS)
-        if (flags & FLAG_ACTIVE) ~= 0 and (flags & FLAG_IS_PLAYER) ~= 0 then
-            return s16(emu:read16(a + OE_CURRENT)) - MAP_OFFSET,
-                   s16(emu:read16(a + OE_CURRENT + 2)) - MAP_OFFSET,
-                   emu:read8(a + OE_FACING) & 0xF
-        end
+    for _, o in ipairs(mm.live_objects()) do
+        if o.is_player then return o.x, o.y, o.facing end
     end
     return nil
 end
 
--- Every live object except the follower: { index, x, y, local_id, player }.
+-- Every live object except the follower, as mm.live_objects lists them
+-- ({ index, x, y, local_id, is_player, ... }).
 function follower.other_objects()
     local mine = follower.object_index()
     local list = {}
-    for i = 0, OBJECT_EVENTS_COUNT - 1 do
-        local a = object_addr(i)
-        local flags = emu:read32(a + OE_FLAGS)
-        if i ~= mine and (flags & FLAG_ACTIVE) ~= 0 then
-            list[#list + 1] = {
-                index = i,
-                x = s16(emu:read16(a + OE_CURRENT)) - MAP_OFFSET,
-                y = s16(emu:read16(a + OE_CURRENT + 2)) - MAP_OFFSET,
-                local_id = emu:read8(a + OE_LOCAL_ID),
-                player = (flags & FLAG_IS_PLAYER) ~= 0,
-            }
-        end
+    for _, o in ipairs(mm.live_objects()) do
+        if o.index ~= mine then list[#list + 1] = o end
     end
     return list
 end
@@ -222,11 +199,7 @@ end
 function follower.place(x, y)
     local f = follower.read()
     assert(f ~= nil, "no follower to place")
-    local a = object_addr(f.index)
-    for _, field in ipairs({ OE_CURRENT, OE_PREVIOUS }) do
-        emu:write16(a + field, (x + MAP_OFFSET) & 0xFFFF)
-        emu:write16(a + field + 2, (y + MAP_OFFSET) & 0xFFFF)
-    end
+    mm.poke_object(f.index, x, y)
 end
 
 -- Set the game's random number state (gRngValue, the seed Random() steps
@@ -250,7 +223,7 @@ function follower.clear_roamers()
     emu:write16(sym.addr("gRoamerNextSpawnTimer"), 0xFFFF)
     local px, py = follower.player()
     for _, o in ipairs(follower.other_objects()) do
-        if is_roamer(o) then
+        if mm.is_roamer(o) then
             -- 40 tiles from the player along x: well past the despawn
             -- distance whichever side of the map it lands on.
             mm.poke_object(o.index, px + 40, py)
@@ -258,7 +231,7 @@ function follower.clear_roamers()
     end
     fw.wait_frames(2)
     for _, o in ipairs(follower.other_objects()) do
-        if is_roamer(o) then return false end
+        if mm.is_roamer(o) then return false end
     end
     return true
 end
@@ -316,7 +289,11 @@ end
 -------------------------------------------------------------------------------
 
 -- The watch attached to the frame callback below (watch.attach), if any.
--- mGBA calls every "frame" callback once after each emulated frame.
+-- mGBA calls every "frame" callback once after each emulated frame, in the
+-- order they were added. This one is added when a test loads this file,
+-- before the test's fw.run() adds the one that resumes the test, so when a
+-- test's fw.yield() returns, the attached watch has already checked that
+-- frame.
 local attached = nil
 callbacks:add("frame", function()
     if attached then attached.frame() end
@@ -328,7 +305,8 @@ end)
 --
 -- The watch records:
 --   watch.tiles      the follower's tile on every frame (1-based; [0] start)
---   watch.changes    list of { frame, from_x, from_y, x, y, teleport, jump }
+--   watch.changes    list of { frame, from_x, from_y, x, y, teleport, jump,
+--                    player_x, player_y (the player's tile that frame) }
 --   watch.teleports  the subset of changes that were teleports
 --   watch.failed     true once the per-frame rule has failed (reported once)
 function follower.new_watch(name, snap)
@@ -341,6 +319,11 @@ function follower.new_watch(name, snap)
         failed = false, stepped = false,
     }
     watch.tiles[0] = { x = f.x, y = f.y }
+    -- The spawn fallback (see the header): the watch starts with the
+    -- follower on the player's tile. Only then may it share that tile, and
+    -- only until its first step.
+    local px, py = follower.player()
+    watch.spawn_fallback = px == f.x and py == f.y
 
     -- The follower's tile for the rule: its ObjectEvent's tile, or the
     -- landing tile during the first half of a 2-tile ledge jump.
@@ -366,10 +349,10 @@ function follower.new_watch(name, snap)
         end
         for _, o in ipairs(follower.other_objects()) do
             if o.x == x and o.y == y then
-                -- Spawn fallback: on the player's tile until the first step.
-                if not (o.player and not watch.stepped) then
+                local fallback = o.is_player and watch.spawn_fallback and not watch.stepped
+                if not fallback then
                     return string.format("shared with object %d (local id %d%s)",
-                        o.index, o.local_id, o.player and ", the player" or "")
+                        o.index, o.local_id, o.is_player and ", the player" or "")
                 end
             end
         end
@@ -399,8 +382,9 @@ function follower.new_watch(name, snap)
                 jump = x == prev.x + 2 * d[1] and y == prev.y + 2 * d[2]
             end
             local far = not jump and math.abs(x - prev.x) + math.abs(y - prev.y) > 1
+            local px, py = follower.player()
             local change = { frame = n, from_x = prev.x, from_y = prev.y, x = x, y = y,
-                             teleport = far, jump = jump }
+                             teleport = far, jump = jump, player_x = px, player_y = py }
             watch.changes[#watch.changes + 1] = change
             if far then watch.teleports[#watch.teleports + 1] = change end
             watch.stepped = true
@@ -450,6 +434,14 @@ function follower.new_watch(name, snap)
     end
 
     -- True if the follower ever stood on (x, y) during the watch.
+    -- The first teleport made while the player's tile was water, or nil.
+    function watch.teleport_while_player_on_water()
+        for _, c in ipairs(watch.teleports) do
+            if c.player_x and snap.water(c.player_x, c.player_y) then return c end
+        end
+        return nil
+    end
+
     function watch.visited(x, y)
         for i = 0, watch.frame_no do
             local t = watch.tiles[i]
@@ -523,7 +515,7 @@ function follower.ensure_fixture(path)
         fw.save_state(path)
     end
     fw.wait_frames(30)
-    return follower.object_index() ~= nil
+    return T.assert_true(follower.object_index() ~= nil, "fixture: Pikachu is walking")
 end
 
 -- Make the field calm for a scenario: Pikachu (the follower, party slot 0)
@@ -566,11 +558,11 @@ end
 -- quantity XOR-ed with SaveBlock2.encryptionKey (at 0xF20), so storing
 -- (1 XOR key) reads back as 1.
 function follower.give_surf()
-    local ITEM_HM03 = 341
+    local item_hm03 = mm.read_defines("include/constants/items.h").ITEM_HM03
     local sb1 = mm.sb1()
-    local key = emu:read32(emu:read32(sym.addr("gSaveBlock2Ptr")) + 0xF20)
-    emu:write16(sb1 + 0x048c, ITEM_HM03)
-    emu:write16(sb1 + 0x048c + 2, (1 ~ key) & 0xFFFF)
+    local enc_key = emu:read32(emu:read32(sym.addr("gSaveBlock2Ptr")) + 0xF20)
+    emu:write16(sb1 + 0x048c, item_hm03)
+    emu:write16(sb1 + 0x048c + 2, (1 ~ enc_key) & 0xFFFF)
     mm.set_flag(0x824)
 end
 
@@ -586,6 +578,40 @@ function follower.use_surf(wx, wy)
     end
     local px, py = follower.player()
     return follower.is_surfing() and px == wx and py == wy
+end
+
+-- While surfing, hold `key_name` until the player's tile is (lx, ly), the
+-- landing tile on the far shore, or 600 frames pass. `watch` must be
+-- attached (watch.attach). Returns the watch frame the player's tile became
+-- (lx, ly), or nil if they never got there.
+function follower.surf_to(key_name, lx, ly, watch)
+    local landed = nil
+    local idx = fw.KEY[key_name]
+    emu:addKey(idx)
+    for _ = 1, 600 do
+        fw.yield()
+        local px, py = follower.player()
+        if px == lx and py == ly then
+            landed = watch.frame_no
+            break
+        end
+    end
+    emu:clearKey(idx)
+    return landed
+end
+
+-- Wait up to `frames` frames for the follower to be within 2 tiles of the
+-- player. `watch` must be attached. Returns the watch frame it got there,
+-- or nil.
+function follower.wait_rejoin(watch, frames)
+    local start = watch.frame_no
+    while true do
+        local px, py = follower.player()
+        local t = watch.tiles[watch.frame_no]
+        if follower.distance(t.x, t.y, px, py) <= 2 then return watch.frame_no end
+        if watch.frame_no - start >= frames then return nil end
+        fw.yield()
+    end
 end
 
 -- Turn the player to face `key` ("UP", "DOWN", "LEFT", "RIGHT") without

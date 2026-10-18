@@ -444,9 +444,9 @@ void ClearFollowerFromSaveBlock(void)
  *      refused by its tile type too.
  *
  * `mover` is the ObjectEvent being moved: the follower, or a stand-in for
- * it when choosing a spawn tile (see SpawnFollowerSprite). The collision
- * check reads its elevation and the behaviour of the tile it stands on, and
- * skips it when looking for objects in the way.
+ * it when choosing a spawn or teleport tile (see FindFollowerTileNearPlayer).
+ * The collision check reads its elevation and the behaviour of the tile it
+ * stands on, and skips it when looking for objects in the way.
  */
 static bool8 IsFollowerWalkableTile(struct ObjectEvent *mover, s16 x, s16 y, u8 direction)
 {
@@ -496,6 +496,19 @@ static u8 GetFollowerStepAction(struct ObjectEvent *followerObj, u8 direction, b
 }
 
 /**
+ * Is the follower's main way toward the player east-west? TRUE when the
+ * east-west gap (dx, in tiles) is larger than the north-south gap (dy), and
+ * on a random half of the times the two are equal. FALSE means north-south.
+ */
+static bool8 IsMainGapEastWest(s16 dx, s16 dy)
+{
+    s16 absDx = dx < 0 ? -dx : dx;
+    s16 absDy = dy < 0 ? -dy : dy;
+
+    return absDx > absDy || (absDx == absDy && (Random() & 1));
+}
+
+/**
  * FUNCTION: TryFollowerStepTowardPlayer
  *
  * PURPOSE: Start a step that brings the follower closer to the player, if
@@ -514,8 +527,6 @@ static bool8 TryFollowerStepTowardPlayer(struct ObjectEvent *followerObj, struct
 {
     s16 dx = playerObj->currentCoords.x - followerObj->currentCoords.x;
     s16 dy = playerObj->currentCoords.y - followerObj->currentCoords.y;
-    s16 absDx = dx < 0 ? -dx : dx;
-    s16 absDy = dy < 0 ? -dy : dy;
     u8 xDir = DIR_NONE;
     u8 yDir = DIR_NONE;
     u8 firstDir, secondDir;
@@ -526,7 +537,7 @@ static bool8 TryFollowerStepTowardPlayer(struct ObjectEvent *followerObj, struct
     if (dy != 0)
         yDir = (dy > 0) ? DIR_SOUTH : DIR_NORTH;
 
-    if (absDx > absDy || (absDx == absDy && (Random() & 1)))
+    if (IsMainGapEastWest(dx, dy))
     {
         firstDir = xDir;
         secondDir = yDir;
@@ -573,16 +584,39 @@ static u8 GetLeftOfDirection(u8 facing)
  * Candidates, in this order: the tile behind the player (opposite the way
  * they face), the tile to their left, the tile to their right. Never the
  * tile in front of them, where the follower would block their way, and
- * never their own tile. The first one that passes IsFollowerWalkableTile,
- * judged for `mover` (its height, and with the objects around it), wins.
- * Each candidate is judged as if entered moving away from the player.
+ * never their own tile. The first one that passes IsFollowerWalkableTile
+ * wins, judged at height `elevation` (the follower's current elevation for
+ * a teleport, 0 for a spawn: see the callers).
+ *
+ * Each candidate is judged as if the follower stepped onto it from the
+ * player's tile, moving away from the player. The walkable check needs an
+ * ObjectEvent to judge for, so a blank one stands in for the follower,
+ * holding just what GetCollisionAtCoords reads:
+ *   - its elevation: `elevation`;
+ *   - the behaviour of the tile it "stands on": the player's tile's, so a
+ *     tile that the player's tile can't be left toward (one-way
+ *     MB_IMPASSABLE_* edges) is refused. The follower's own tile, far away
+ *     for a teleport, has nothing to do with it;
+ *   - no movement range (rangeX/rangeY 0) and not followed by the camera,
+ *     like the real follower.
+ * The stand-in is not in gObjectEvents, so every live object counts as
+ * being in the way, the player included. The real follower is an object
+ * too, but it is never on a candidate tile: it only teleports from more
+ * than TELEPORT_DIST tiles away, and doesn't exist yet when it spawns.
  */
-static bool8 FindFollowerTileNearPlayer(struct ObjectEvent *mover, struct ObjectEvent *playerObj, s16 *outX, s16 *outY)
+static bool8 FindFollowerTileNearPlayer(u8 elevation, struct ObjectEvent *playerObj, s16 *outX, s16 *outY)
 {
+    struct ObjectEvent standIn;
     u8 facing = GetPlayerFacingDirection();
     u8 candidates[3];
     u8 i;
     s16 x, y;
+
+    memset(&standIn, 0, sizeof(standIn));
+    standIn.currentCoords = playerObj->currentCoords;
+    standIn.currentElevation = elevation;
+    standIn.currentMetatileBehavior = MapGridGetMetatileBehaviorAt(playerObj->currentCoords.x,
+                                                                   playerObj->currentCoords.y);
 
     candidates[0] = GetOppositeDirection(facing);
     candidates[1] = GetLeftOfDirection(facing);
@@ -593,7 +627,7 @@ static bool8 FindFollowerTileNearPlayer(struct ObjectEvent *mover, struct Object
         x = playerObj->currentCoords.x;
         y = playerObj->currentCoords.y;
         MoveCoords(candidates[i], &x, &y);
-        if (IsFollowerWalkableTile(mover, x, y, candidates[i]))
+        if (IsFollowerWalkableTile(&standIn, x, y, candidates[i]))
         {
             *outX = x;
             *outY = y;
@@ -639,7 +673,6 @@ void SpawnFollowerSprite(void)
 {
     struct ObjectEvent *playerObj;
     struct ObjectEvent *objEvent;
-    struct ObjectEvent standIn;
     u8 objEventId;
     s16 spawnX, spawnY;
 
@@ -667,25 +700,12 @@ void SpawnFollowerSprite(void)
     playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
 
     /*
-     * Choose the spawn tile. The walkable check needs an ObjectEvent to judge
-     * the tile for, and the follower's doesn't exist yet, so a blank one
-     * stands in for it, holding just what GetCollisionAtCoords reads:
-     *   - elevation 0, the height the follower spawns with (see the spawn
-     *     call below; the engine skips its height test at elevation 0, and
-     *     IsFollowerWalkableTile still refuses water by tile type);
-     *   - the behaviour of the player's tile as the tile it "stands on", so
-     *     a tile the player's own tile can't be left toward (one-way
-     *     MB_IMPASSABLE_* edges) is refused;
-     *   - no movement range (rangeX/rangeY 0) and not followed by the
-     *     camera, like the real follower.
-     * It is not in gObjectEvents, so every live object, the player
-     * included, counts as being in the way.
+     * Choose the spawn tile, judged at elevation 0: the height the follower
+     * spawns with (see the spawn call below). The engine skips its height
+     * test at elevation 0; IsFollowerWalkableTile still refuses water by
+     * tile type.
      */
-    memset(&standIn, 0, sizeof(standIn));
-    standIn.currentCoords = playerObj->currentCoords;
-    standIn.currentMetatileBehavior = MapGridGetMetatileBehaviorAt(playerObj->currentCoords.x,
-                                                                   playerObj->currentCoords.y);
-    if (!FindFollowerTileNearPlayer(&standIn, playerObj, &spawnX, &spawnY))
+    if (!FindFollowerTileNearPlayer(0, playerObj, &spawnX, &spawnY))
     {
         /* Fallback: spawn on the player's tile (see the comment above) */
         spawnX = playerObj->currentCoords.x;
@@ -780,7 +800,7 @@ static bool8 TeleportFollowerNearPlayer(struct ObjectEvent *followerObj, struct 
     const struct ObjectEventGraphicsInfo *gfxInfo;
     s16 newX, newY;
 
-    if (!FindFollowerTileNearPlayer(followerObj, playerObj, &newX, &newY))
+    if (!FindFollowerTileNearPlayer(followerObj->currentElevation, playerObj, &newX, &newY))
         return FALSE;
 
     followerObj->currentCoords.x = newX;
@@ -829,15 +849,13 @@ static bool8 TryFollowerSideStep(struct ObjectEvent *followerObj, struct ObjectE
 {
     s16 dx = playerObj->currentCoords.x - followerObj->currentCoords.x;
     s16 dy = playerObj->currentCoords.y - followerObj->currentCoords.y;
-    s16 absDx = dx < 0 ? -dx : dx;
-    s16 absDy = dy < 0 ? -dy : dy;
     u8 sideDir;
     s16 x, y;
 
     if ((Random() % DEVIATE_CHANCE) != 0)
         return FALSE;
 
-    if (absDx > absDy || (absDx == absDy && (Random() & 1)))
+    if (IsMainGapEastWest(dx, dy))
         sideDir = (Random() & 1) ? DIR_SOUTH : DIR_NORTH;  /* toward the player is east/west */
     else
         sideDir = (Random() & 1) ? DIR_EAST : DIR_WEST;    /* toward the player is north/south */

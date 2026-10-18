@@ -47,14 +47,10 @@ local DIRS = {
     { key = "RIGHT", dx = 1,  dy = 0 },
 }
 
--- Local ids of the overworld roaming Pokemon (src/roaming_pokemon.c):
--- 200-205. Not "200 and up": the walking Pokemon (the follower) is 254, and
--- it doesn't start a battle, so it needs no gap around it.
-local ROAMER_LOCAL_ID_MIN = 200
-local ROAMER_LOCAL_ID_MAX = 205
-local function is_roamer(o)
-    return o.local_id >= ROAMER_LOCAL_ID_MIN and o.local_id <= ROAMER_LOCAL_ID_MAX
-end
+-- Roaming Pokemon are mm.is_roamer (local ids 200-205). The walking Pokemon
+-- (the follower, 254) is not one: it doesn't start a battle, so it needs no
+-- gap around it.
+local is_roamer = mm.is_roamer
 
 -------------------------------------------------------------------------------
 -- No wild battles

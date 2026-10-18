@@ -66,22 +66,11 @@ local STATE_PATH = fw.out_path("pokefirered-follower-collision.ss")
 -- FOLLOWER_COLLISION_SEED overrides it, e.g. to try other random paths.
 local SEED = tonumber(os.getenv("FOLLOWER_COLLISION_SEED") or "") or 1
 
--- FOLLOWER_COLLISION_ONLY=S5 (or "S1,S3") runs only those scenarios, for
--- working on one of them. Unset, all run.
-local ONLY = os.getenv("FOLLOWER_COLLISION_ONLY")
-local function wanted(id)
-    return ONLY == nil or ONLY == "" or ("," .. ONLY .. ","):find("," .. id .. ",", 1, true) ~= nil
-end
-
 -- Map ids (group, number), include/constants/map_groups.h.
 local VIRIDIAN = { 3, 1 }
 local PEWTER   = { 3, 2 }
 local ROUTE1   = { 3, 19 }
 local ROUTE2   = { 3, 20 }
-
-local function distance(ax, ay, bx, by)
-    return math.abs(ax - bx) + math.abs(ay - by)
-end
 
 -- Warp to the scenario's spot, face `facing` if given (only where that way
 -- is solid), wait for a still picture and put the follower on (fx, fy).
@@ -203,7 +192,7 @@ local function s5()
     if not watch then return end
     local man = false
     for _, o in ipairs(follower.other_objects()) do
-        if o.x == 21 and o.y == 28 and not o.player then man = true end
+        if o.x == 21 and o.y == 28 and not o.is_player then man = true end
     end
     fw.assert_true(man, "S5: the man stands at (21,28)")
     watch.run(300)
@@ -223,62 +212,24 @@ local function s6()
     -- the follower is behind them at (18,28).
     local watch = setup(name, VIRIDIAN, 17, 28, 18, 28, "LEFT")
     if not watch then return end
-    local snap = watch.snap
-    local teleport_on_water = nil
-    local function watch_frame()
-        fw.yield()
-        watch.frame()
-        local px, py = follower.player()
-        local last = watch.changes[#watch.changes]
-        if last and last.teleport and last.frame == watch.frame_no
-                and snap.water(px, py) and teleport_on_water == nil then
-            teleport_on_water = watch.frame_no
-        end
-    end
+    watch.attach()   -- checks every frame while the helpers below press keys
 
     -- Surf: A on the water, YES, dismiss the message; the player jumps
-    -- onto (16,28). The watch runs on every frame of it.
-    local surfing = false
-    for _ = 1, 60 do
-        local px, py = follower.player()
-        if follower.is_surfing() and px == 16 and py == 28 then surfing = true break end
-        if not follower.is_surfing() then
-            emu:addKey(fw.KEY.A); watch_frame(); emu:clearKey(fw.KEY.A); watch_frame()
-        end
-        for _ = 1, 20 do watch_frame() end
-    end
-    if not fw.assert_true(surfing, "S6: player surfs onto the pond at (16,28)") then return end
-
-    -- Surf west until the player lands on (10,28).
-    local landed = nil
-    emu:addKey(fw.KEY.LEFT)
-    for _ = 1, 600 do
-        watch_frame()
-        local px, py = follower.player()
-        if px == 10 and py == 28 then landed = watch.frame_no break end
-    end
-    emu:clearKey(fw.KEY.LEFT)
-    if not fw.assert_true(landed ~= nil, "S6: player lands at (10,28)") then return end
-
-    local rejoined = nil
-    for _ = 1, 180 do
-        local px, py = follower.player()
-        local t = watch.tiles[watch.frame_no]
-        if distance(t.x, t.y, px, py) <= 2 then rejoined = watch.frame_no - landed break end
-        watch_frame()
-    end
-    if rejoined == nil then
-        local px, py = follower.player()
-        local t = watch.tiles[watch.frame_no]
-        if distance(t.x, t.y, px, py) <= 2 then rejoined = watch.frame_no - landed end
-    end
+    -- onto (16,28). Then surf west until the player lands on (10,28).
+    local surfing = fw.assert_true(follower.use_surf(16, 28), "S6: player surfs onto the pond at (16,28)")
+    local landed = surfing and follower.surf_to("LEFT", 10, 28, watch)
+    local rejoined = landed and follower.wait_rejoin(watch, 180)
+    watch.detach()
     watch.finish()
-    fw.assert_true(teleport_on_water == nil, string.format(
+
+    fw.assert_true(landed, "S6: player lands at (10,28)")
+    local tp = watch.teleport_while_player_on_water()
+    fw.assert_true(tp == nil, string.format(
         "S6: no teleport while the player is on water%s",
-        teleport_on_water and (" (frame " .. teleport_on_water .. ")") or ""))
-    fw.assert_true(rejoined ~= nil, string.format(
+        tp and string.format(" (frame %d, player at (%d,%d))", tp.frame, tp.player_x, tp.player_y) or ""))
+    fw.assert_true(rejoined, string.format(
         "S6: follower within 2 tiles of the player within 180 frames of landing%s",
-        rejoined and (" (" .. rejoined .. " frames)") or ""))
+        rejoined and (" (" .. (rejoined - landed) .. " frames)") or ""))
 end
 
 fw.run(function()
@@ -289,12 +240,13 @@ fw.run(function()
     end
     follower.make_calm()
 
-    if wanted("S1") then s1(26); s1(27) end
-    if wanted("S2") then s2() end
-    if wanted("S3") then s3() end
-    if wanted("S4") then s4() end
-    if wanted("S5") then s5() end
-    if wanted("S6") then s6() end
+    s1(26)
+    s1(27)
+    s2()
+    s3()
+    s4()
+    s5()
+    s6()
 
     fw.finish()
 end)

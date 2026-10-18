@@ -30,6 +30,7 @@ filter, which comes with builds linked against libfreetype.
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -73,6 +74,11 @@ def main():
 
     w, h = GBA_W * SCALE, GBA_H * SCALE
     with tempfile.TemporaryDirectory() as tmp:
+        # ffmpeg filter options are separated by ':' and filters by ',', so
+        # the font is copied to a plain path inside the temporary folder
+        # (whose name has neither) rather than quoting the user's path.
+        font = os.path.join(tmp, "font.ttf")
+        shutil.copyfile(args.font, font)
         # Scale up, then add the black bar below the picture.
         filters = [
             "scale=%d:%d:flags=neighbor" % (w, h),
@@ -90,7 +96,7 @@ def main():
             filters.append(
                 "drawtext=fontfile=%s:textfile=%s:fontsize=%d:fontcolor=white"
                 ":x=(w-text_w)/2:y=%d+(%d-text_h)/2:enable='between(n,%d,%d)'"
-                % (args.font, text_file, FONT_SIZE, h, BAR_H, first, last))
+                % (font, text_file, FONT_SIZE, h, BAR_H, first, last))
         # Every second frame (15 fps), one shared palette, no dithering.
         graph = (",".join(filters) + ",fps=15,split[a][b];"
                  "[a]palettegen=stats_mode=full[p];[b][p]paletteuse=dither=none")
