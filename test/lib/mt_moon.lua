@@ -648,6 +648,13 @@ function mm.live_objects(saved)
     return objects
 end
 
+-- True for a roaming Pokemon (src/roaming_pokemon.c), as listed by
+-- mm.live_objects: local ids 200-205. Not "200 and up": the walking Pokemon
+-- (the follower) is 254 and the player 255.
+function mm.is_roamer(o)
+    return not o.is_player and o.local_id >= 200 and o.local_id <= 205
+end
+
 local function player_object_index()
     for _, obj in ipairs(mm.live_objects()) do
         if obj.is_player then return obj.index end

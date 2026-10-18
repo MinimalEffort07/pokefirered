@@ -1069,6 +1069,30 @@ static bool8 TryDoorWarp(struct MapPosition *position, u16 metatileBehavior, u8 
     return FALSE;
 }
 
+/* TRUE if any warp of the current map sits on tile (x, y), whatever its
+ * elevation. (x, y) are object-event coordinates, which are map coordinates
+ * plus MAP_OFFSET (the 7-tile border the game keeps around every map); warp
+ * events store plain map coordinates. gMapHeader.events is the live event
+ * table, so this also sees the warps Mt. Moon's generator moved.
+ *
+ * Used where an object is moved with a "held movement" (a one-step walk
+ * command the sprite system plays out), which never triggers a warp: the
+ * cave-entry step (field_fadetransition.c) and the walking Pokemon
+ * (pokemon_follower.c) must not end up standing on a door, cave mouth,
+ * arrow warp or ladder without using it. */
+bool8 IsWarpEventAt(s16 x, s16 y)
+{
+    s32 i;
+    const struct WarpEvent *warp = gMapHeader.events->warps;
+
+    for (i = 0; i < gMapHeader.events->warpCount; i++, warp++)
+    {
+        if (warp->x + MAP_OFFSET == x && warp->y + MAP_OFFSET == y)
+            return TRUE;
+    }
+    return FALSE;
+}
+
 static s8 GetWarpEventAtPosition(struct MapHeader *mapHeader, u16 x, u16 y, u8 elevation)
 {
     s32 i;

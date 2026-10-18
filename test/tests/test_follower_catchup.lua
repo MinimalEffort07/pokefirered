@@ -12,6 +12,16 @@
 -- indicates a teleport. We also assert the follower eventually catches up
 -- (final dist <= FOLLOW_DIST = 2).
 --
+-- WHERE: Pallet Town, on the open row y=3 (map coordinates): the player at
+-- (5,3), the follower 8 tiles east of them at (13,3), with nothing but open
+-- ground in between. Until issue #46 this test ran in the player's bedroom,
+-- with the follower put 8 tiles east of the player at (14,6): off the
+-- 12-tile-wide map. The follower walked back anyway, because its steps had
+-- no collision check. Since #46 every step must land on a walkable tile, a
+-- follower off the map can't make one, and after 120 frames without a step
+-- it teleports next to the player (the agreed last resort), so the test
+-- needs a start tile the follower can walk back from.
+--
 -- FIXTURE STATE (self-healing):
 -- On first run, the test boots through Oak's speech, injects Pikachu into
 -- party slot 0, sets FLAG_SYS_POKEMON_GET, navigates the party menu to
@@ -31,6 +41,7 @@ local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local sym  = dofile(project_dir .. "test/lib/symbols.lua")
+local warp = dofile(project_dir .. "test/lib/warp.lua")
 
 local STATE_PATH   = fw.out_path("pokefirered-follower-catchup.ss")
 local PARTY_BASE   = sym.addr("gPlayerParty")  -- looked up in pokefirered.elf
@@ -137,6 +148,11 @@ fw.run(function()
 
     fw.wait_frames(60)   -- let state settle after load
 
+    -- Pallet Town (map 3.0), open row y=3 (see WHERE in the header). The
+    -- follower respawns next to the player on the new map.
+    fw.assert_true(warp.warp_to_pos(3, 0, 5, 3), "warped to Pallet Town (5,3)")
+    fw.wait_frames(30)
+
     -- ------------------------------------------------------------------ --
     -- Position follower 8 tiles right of player (dist=8 > TELEPORT_DIST=5)
     -- ------------------------------------------------------------------ --
@@ -165,7 +181,7 @@ fw.run(function()
     -- ------------------------------------------------------------------ --
     -- Monitor for 300 frames: assert no single-frame jump > 1 tile       --
     -- A jump > 1 means TeleportFollowerNearPlayer was called.             --
-    -- Coords are read as unsigned u16 but Pallet bedroom tiles are small
+    -- Coords are read as unsigned u16 but Pallet Town's tiles are small
     -- positive values, so no s16 sign-extension ambiguity arises here.   --
     --
     -- Monitoring starts from the tile we just wrote, with no frames run in

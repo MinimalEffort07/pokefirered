@@ -36,5 +36,6 @@ int ProcessPlayerFieldInput(struct FieldInput *input);
 void FieldInput_HandleCancelSignpost(struct FieldInput * input);
 void FieldGetPlayerInput(struct FieldInput *input, u16 newKeys, u16 heldKeys);
 void HandleBoulderActivateVictoryRoadSwitch(u16 x, u16 y);
+bool8 IsWarpEventAt(s16 x, s16 y);
 
 #endif //GUARD_FIELD_CONTROL_AVATAR_H
