@@ -104,12 +104,26 @@ static EWRAM_DATA struct {
     bool8 spriteSpawned;    /* Sprite currently exists on screen */
     u8 partySlot;           /* Index into gPlayerParty[] */
     u8 stuckFrames;         /* Catch-up checks in a row with no tile change (see STUCK_FRAMES) */
-    u16 species;            /* Cached species (for change detection) */
+    u16 species;            /* Species at WALK time (not identity: evolution changes it) */
     u8 graphicsId;          /* OBJ_EVENT_GFX_* constant for the sprite */
     u8 objEventId;          /* Index into gObjectEvents[] */
     s16 prevX;              /* Follower X before last catch-up move (stuck detection) */
     s16 prevY;              /* Follower Y before last catch-up move (stuck detection) */
-    u32 pid;                /* Personality value (PID). partySlot goes stale after SWITCH; species+PID uniquely identifies the Pokemon regardless of slot */
+    /*
+     * Identity of the walking Pokemon: its personality value (PID) and its
+     * original trainer's ID (OTID). partySlot can't identify it, because it
+     * goes stale when the player uses SWITCH; species can't either, because
+     * evolution changes it. PID and OTID are both fixed when the Pokemon is
+     * created and never change afterwards, and the chance of two different
+     * Pokemon sharing both is about 1 in 2^64 (the game uses the same pair
+     * to tell individual Pokemon apart). See IsFollowerPokemon().
+     *
+     * Both are u32, so the compiler places them at offsets that are
+     * multiples of 4 (12 and 16 here), as the ARM CPU requires for 32-bit
+     * loads; test/lib/addresses.lua lists the full layout.
+     */
+    u32 pid;                /* Personality value of the walking Pokemon */
+    u32 otId;               /* Original trainer ID of the walking Pokemon */
 } sFollower = {0};
 
 /*
@@ -203,9 +217,14 @@ u8 GetFollowerPartySlot(void)
 /**
  * Check whether a party Pokemon is the active follower.
  *
- * Compares both species and personality value (PID) so that the check
- * remains correct after the player rearranges their party with SWITCH.
- * Slot-index comparison would go stale; identity comparison does not.
+ * Compares the Pokemon's identity (PID and OTID, see the sFollower struct)
+ * with the one stored by ActivateFollower(). Unlike a party slot index this
+ * stays right after SWITCH, and unlike species it stays right after the
+ * walking Pokemon evolves.
+ *
+ * Both values sit in the unencrypted header of the Pokemon's data, so
+ * reading them is cheap: GetMonData only decrypts the 48-byte "secure"
+ * block for fields stored inside it (species, moves, ...).
  *
  * @return TRUE if mon is the currently active follower.
  */
@@ -213,8 +232,8 @@ bool8 IsFollowerPokemon(struct Pokemon *mon)
 {
     if (!sFollower.active)
         return FALSE;
-    return GetMonData(mon, MON_DATA_SPECIES) == sFollower.species
-        && GetMonData(mon, MON_DATA_PERSONALITY) == sFollower.pid;
+    return GetMonData(mon, MON_DATA_PERSONALITY) == sFollower.pid
+        && GetMonData(mon, MON_DATA_OT_ID) == sFollower.otId;
 }
 
 /**
@@ -247,6 +266,7 @@ void ActivateFollower(u8 partySlot)
     sFollower.graphicsId = gfxId;
     sFollower.objEventId = OBJECT_EVENTS_COUNT;
     sFollower.pid = GetMonData(&gPlayerParty[partySlot], MON_DATA_PERSONALITY);
+    sFollower.otId = GetMonData(&gPlayerParty[partySlot], MON_DATA_OT_ID);
 }
 
 /**
@@ -265,6 +285,7 @@ void DeactivateFollower(void)
     sFollower.species = 0;
     sFollower.graphicsId = 0;
     sFollower.pid = 0;
+    sFollower.otId = 0;
 }
 
 /**

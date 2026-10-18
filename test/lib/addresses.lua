@@ -438,9 +438,9 @@ ADDR.gPlayerPartyCount               = 0x02024029
 -- this file replaces the number below with sFollower's address in
 -- pokefirered.elf (symbols.lua reads static symbols too); the number is only
 -- a fallback for when the ELF can't be read.
--- Struct layout (16 bytes total). The compiler puts each field at an
--- offset that is a multiple of its own size, so the u32 pid sits at 12
--- (after prevY ends at 12) with no padding needed:
+-- Struct layout (20 bytes total). The compiler puts each field at an
+-- offset that is a multiple of its own size, so the u32s sit at 12 and 16
+-- (prevY ends at 12) with no padding needed:
 --   offset 0:  bool8 active      <- FOLLOWER_OFF_ACTIVE
 --   offset 1:  bool8 spriteSpawned
 --   offset 2:  u8  partySlot
@@ -450,13 +450,15 @@ ADDR.gPlayerPartyCount               = 0x02024029
 --   offset 7:  u8  objEventId    <- FOLLOWER_OBJ_EVENT_ID_OFF
 --   offset 8:  s16 prevX         (position before last catch-up move)
 --   offset 10: s16 prevY
---   offset 12: u32 pid           <- FOLLOWER_OFF_PID (follower identity, issue #4)
+--   offset 12: u32 pid           <- FOLLOWER_OFF_PID   (follower identity, issue #4)
+--   offset 16: u32 otId          <- FOLLOWER_OFF_OT_ID (follower identity, issue #4)
 -- These offsets must be redone whenever a field is added to the struct.
 ADDR.sFollower                 = 0x0203f624
 ADDR.FOLLOWER_OFF_ACTIVE       = 0x00
 ADDR.FOLLOWER_OFF_SPECIES      = 0x04
 ADDR.FOLLOWER_OBJ_EVENT_ID_OFF = 0x07
 ADDR.FOLLOWER_OFF_PID          = 0x0C
+ADDR.FOLLOWER_OFF_OT_ID        = 0x10
 
 -- ObjectEvent previousCoords offsets (layout mirrors currentCoords at 0x10/0x12).
 -- Used to write both coord fields atomically when repositioning the follower
