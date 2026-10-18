@@ -31,6 +31,13 @@
 --   3. Slot 2 -> option [1], which must be RETURN.
 --                                      Check: follower deactivated.
 --
+-- Scenario E2: the walker evolves into a species with no walking sprite.
+--   1. WALK Pikachu (slot 0).          Check: active.
+--   2. Evolve it in RAM to Raichu (no overworld sprite, so it could never
+--      be picked with WALK itself).
+--   3. Slot 0 -> option [1], which must still be RETURN.
+--                                      Check: follower deactivated.
+--
 -- Run:
 --   bash test/run_test.sh test/tests/test_walking_pokemon_return.lua
 --
@@ -58,6 +65,7 @@ local FOLLOWER_ACTIVE  = ADDR.sFollower + ADDR.FOLLOWER_OFF_ACTIVE
 local FOLLOWER_SPECIES = ADDR.sFollower + ADDR.FOLLOWER_OFF_SPECIES  -- u16
 
 local SPECIES_PIKACHU = 25
+local SPECIES_RAICHU  = 26
 local SPECIES_MEOWTH  = 52
 local SPECIES_MACHOP  = 66
 local SPECIES_MACHOKE = 67
@@ -244,9 +252,34 @@ local function scenario_evolve_to_walker()
           fw.read8(FOLLOWER_ACTIVE) == 0)
 end
 
+-------------------------------------------------------------------------------
+-- Scenario E2: the walker evolves into a species with no walking sprite
+-------------------------------------------------------------------------------
+local function scenario_evolve_to_non_walker()
+    fw.log("--- Scenario E2: WALK Pikachu, it evolves into Raichu, RETURN ---")
+    load_fixture()
+
+    walk(0)
+    check("E2: follower active after WALK Pikachu",
+          fw.read8(FOLLOWER_ACTIVE) == 1)
+
+    -- Raichu has no overworld sprite, so WALK is never offered for it; the
+    -- Pokemon that is already walking must still be returnable.
+    local pikachu = PARTY[1]
+    write_pokemon(slot_addr(0), SPECIES_RAICHU, pikachu.pid, pikachu.otid)
+    fw.wait_frames(10)
+
+    open_actions(0)
+    pick_action(ACTION_WALK_OR_RETURN)          -- must be RETURN
+    back_out()
+    check("E2: evolved follower without a walking sprite (Raichu) can be RETURNed",
+          fw.read8(FOLLOWER_ACTIVE) == 0)
+end
+
 fw.run(function()
     fw.log("=== Walking Pokemon Return Test ===")
     scenario_switch()
     scenario_evolve_to_walker()
+    scenario_evolve_to_non_walker()
     fw.finish()
 end)
