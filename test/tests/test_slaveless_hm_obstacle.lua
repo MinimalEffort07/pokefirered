@@ -44,6 +44,11 @@
 --      indoor banner is used) at tile (11, 7), below the Strength boulder at
 --      (11, 6). BADGE04 + HM04 in bag, empty party: A → YES → the portrait
 --      can be seen on the indoor banner, and FLAG_SYS_USE_STRENGTH is set.
+--   F. Waterfall: warp onto the water at Two Island's Cape Brink, tile
+--      (12, 27) (warping onto water starts the player surfing), surf one tile
+--      north to (12, 26) below the waterfall (tiles x 11-13, y 23-25).
+--      BADGE07 + HM07 in bag, empty party: A → YES → the portrait can be seen,
+--      and the player climbs to the water above the falls at (12, 22).
 --
 -- SILHOUETTE VISIBILITY:
 --   The field-move portrait is the only 64x64 sprite on screen while the
@@ -108,6 +113,14 @@ local FLAG_BADGE04_GET = 2083
 -- FLAG_SYS_USE_STRENGTH = SYS_FLAGS + 0x5 = 0x805 = 2053: boulders can be pushed
 local FLAG_SYS_USE_STRENGTH = 2053
 local ITEM_HM04 = 342   -- Strength
+local ITEM_HM07 = 345   -- Waterfall
+-- FLAG_BADGE07_GET = SYS_FLAGS + 0x26 = 0x826 = 2086 (Volcano Badge: Waterfall)
+local FLAG_BADGE07_GET = 2086
+
+-- Two Island Cape Brink: MAP_TWO_ISLAND_CAPE_BRINK = (47 | (3 << 8)), a ROUTE
+-- (outdoor) map. Waterfall at tiles x 11-13, y 23-25, open water below
+-- (y >= 26) and above (y <= 22).
+local CAPE_BRINK_GROUP, CAPE_BRINK_NUM = 3, 47
 
 -- Fuchsia City Warden's House: MAP_FUCHSIA_CITY_WARDENS_HOUSE = (7 | (11 << 8)),
 -- map type INDOOR. Strength boulder at tile (11, 6); the player stands at
@@ -804,6 +817,36 @@ fw.run(function()
     fw.wait_frames(60)
     check("E: FLAG_SYS_USE_STRENGTH set after slaveless Strength",
         read_flag(sb1, FLAG_SYS_USE_STRENGTH))
+
+    -- ── Sub-test F: BADGE07 + HM07, surfing below a waterfall ─────────────
+    fw.log("--- Sub-test F: Cape Brink waterfall, BADGE07 + HM07, empty party ---")
+    fw.try_load_state(STATE_PATH)
+    fw.wait_frames(60)
+    sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
+    set_flag(sb1, FLAG_BADGE07_GET)
+    inject_hm(sb1, ITEM_HM07)
+    warp_player_to(CAPE_BRINK_GROUP, CAPE_BRINK_NUM, 12, 27)
+    check("F: player starts surfing on the water at tile (12,27)", is_surfing())
+    -- Surf one tile north (world y 34 → 33), which also faces the falls.
+    fw.hold_until("UP", function() local _, y = read_pos(); return y <= 33 end, 120, 2)
+    fw.wait_frames(30)
+    local fx, fy = read_pos()
+    check("F: player surfs to tile (12,26) below the waterfall", fx == 19 and fy == 33)
+    fw.press("A")          -- A1: waterfall → slaveless Waterfall YES/NO prompt
+    fw.wait_frames(360)
+    fw.screenshot(fw.out_path("mgba-slaveless-f-yesno.png"))
+    fw.press("A")          -- A2: YES → "A mysterious POKéMON appeared..."
+    fw.wait_frames(250)
+    fw.press("A")          -- A3: dismiss → banner + portrait, then the climb
+    local falls_pixels = measure_portrait("mgba-slaveless-f-silhouette.png")
+    check("F: mysterious POKéMON visible while using Waterfall",
+        falls_pixels >= MIN_VISIBLE_PORTRAIT_PIXELS)
+    fw.wait_until(function() local _, y = read_pos(); return y == 29 end, 600,
+        "player climbs above the waterfall")
+    fw.wait_frames(30)
+    fw.screenshot(fw.out_path("mgba-slaveless-f-climbed.png"))
+    local tx, ty = read_pos()
+    check("F: player climbed the waterfall to tile (12,22)", tx == 19 and ty == 29)
 
     -- Summary
     local passed = 0
