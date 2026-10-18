@@ -2989,20 +2989,26 @@ static void SetPartyMonSelectionActions(struct Pokemon *mons, u8 slotId, u8 acti
 static void SetPartyMonFieldSelectionActions(struct Pokemon *mons, u8 slotId)
 {
     u8 i, j;
+    u16 species;
 
     sPartyMenuInternal->numActions = 0;
     AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_SUMMARY);
-    // Add WALK or RETURN option for pokemon with overworld walking sprites
-    {
-        u16 species = GetMonData(&mons[slotId], MON_DATA_SPECIES);
-        if (CanSpeciesFollowPlayer(species))
-        {
-            if (IsFollowerActive() && slotId == GetFollowerPartySlot())
-                AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_RETURN_MON);
-            else if (!IsFollowerActive())
-                AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_WALK);
-        }
-    }
+    /*
+     * Add RETURN for the walking Pokemon, or WALK for a Pokemon that has an
+     * overworld walking sprite while nothing is walking.
+     *
+     * RETURN is checked first and does not depend on the species, so the
+     * walking Pokemon can always be put away: it may have evolved into a
+     * species with no walking sprite (Pikachu -> Raichu) since it was sent
+     * out, and its sprite keeps the old look until RETURN.
+     * IsFollowerPokemon() matches by identity (PID + OTID), so this works in
+     * whatever slot SWITCH has moved it to.
+     */
+    species = GetMonData(&mons[slotId], MON_DATA_SPECIES);
+    if (IsFollowerPokemon(&mons[slotId]))
+        AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_RETURN_MON);
+    else if (!IsFollowerActive() && CanSpeciesFollowPlayer(species))
+        AppendToList(sPartyMenuInternal->actions, &sPartyMenuInternal->numActions, CURSOR_OPTION_WALK);
     // Add field moves to action list
     for (i = 0; i < MAX_MON_MOVES; ++i)
     {
@@ -3533,6 +3539,13 @@ found_slot:
      *   3. ZeroMonData — clears the party slot so it reads as empty.
      *   4. CompactPartySlots — shifts remaining party mons left to fill
      *      the gap, keeping the party array contiguous.
+     *
+     * If this is the walking Pokemon (the follower), nothing is done about
+     * it here: when the party menu closes and the field reloads,
+     * SpawnFollowerSprite() sees its Pokemon is no longer in the party and
+     * puts the follower away. Calling DeactivateFollower() from this menu
+     * would destroy the wrong sprite (see "WHEN THE WALKING POKEMON LEAVES
+     * THE PARTY" in pokemon_follower.c).
      */
     MonRestorePP(mon);
     CopyMon(target, &mon->box, sizeof(mon->box));

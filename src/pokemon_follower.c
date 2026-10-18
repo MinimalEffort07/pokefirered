@@ -21,8 +21,9 @@
  *
  * LIFECYCLE:
  * - ActivateFollower(): Called from party menu "WALK" option. Stores
- *   which party slot to follow. Does NOT spawn the sprite yet (we're
- *   still in the party menu screen).
+ *   the chosen Pokemon's identity (PID + OTID, see IsFollowerPokemon) so
+ *   it is recognised in any party slot. Does NOT spawn the sprite yet
+ *   (we're still in the party menu screen).
  * - SpawnFollowerSprite(): Called by overworld.c after map transitions.
  *   Allocates an ObjectEvent slot, creates the sprite. Same pattern as
  *   multiplayer.c's SpawnRemoteSprite().
@@ -34,6 +35,30 @@
  *   next map.
  * - DeactivateFollower(): Called from party menu "RETURN" option.
  *   Despawns and clears all state.
+ *
+ * WHEN THE WALKING POKEMON LEAVES THE PARTY:
+ * The follower's Pokemon can leave the party without RETURN: the party
+ * menu's MOVE TO PC, a deposit or release in Bill's PC, the Day Care, a
+ * trade. A follower whose Pokemon is gone could never be RETURNed (RETURN
+ * is offered on the Pokemon itself), so the field code puts it away by
+ * itself, calling DeactivateFollower() when IsFollowerInParty() says the
+ * Pokemon is gone. Two places check:
+ *   - SpawnFollowerSprite(), on every map load and return to the field,
+ *     which covers everything done in a menu or another screen (PC, party
+ *     menu, trade) before the first frame is drawn;
+ *   - UpdateFollowerPokemon(), every overworld frame, which covers what
+ *     happens on the field itself (the Day Care's deposit is a map script:
+ *     no menu closes and no map loads afterwards).
+ * The per-frame check is cheap: at most 6 Pokemon, and IsFollowerPokemon
+ * reads two unencrypted fields, a few hundred CPU cycles out of the
+ * roughly 280,000 in a frame.
+ *
+ * This is done here rather than in each of those menus because the
+ * follower's sprite only exists on the field. Menus like the party menu
+ * and the PC wipe the sprite table when they open and fill it with their
+ * own sprites, so the sprite index saved in the follower's ObjectEvent
+ * then points at one of the menu's sprites; destroying "the follower's
+ * sprite" from a menu would remove that menu sprite instead.
  *
  * MULTIPLAYER:
  * The follower is purely local state. It is not included in the SIO
@@ -104,11 +129,26 @@ static EWRAM_DATA struct {
     bool8 spriteSpawned;    /* Sprite currently exists on screen */
     u8 partySlot;           /* Index into gPlayerParty[] */
     u8 stuckFrames;         /* Catch-up checks in a row with no tile change (see STUCK_FRAMES) */
-    u16 species;            /* Cached species (for change detection) */
+    u16 species;            /* Species at WALK time (not identity: evolution changes it) */
     u8 graphicsId;          /* OBJ_EVENT_GFX_* constant for the sprite */
     u8 objEventId;          /* Index into gObjectEvents[] */
     s16 prevX;              /* Follower X before last catch-up move (stuck detection) */
     s16 prevY;              /* Follower Y before last catch-up move (stuck detection) */
+    /*
+     * Identity of the walking Pokemon: its personality value (PID) and its
+     * original trainer's ID (OTID). partySlot can't identify it, because it
+     * goes stale when the player uses SWITCH; species can't either, because
+     * evolution changes it. PID and OTID are both fixed when the Pokemon is
+     * created and never change afterwards, and the chance of two different
+     * Pokemon sharing both is about 1 in 2^64 (the game uses the same pair
+     * to tell individual Pokemon apart). See IsFollowerPokemon().
+     *
+     * Both are u32, so the compiler places them at offsets that are
+     * multiples of 4 (12 and 16 here), as the ARM CPU requires for 32-bit
+     * loads; test/lib/addresses.lua lists the full layout.
+     */
+    u32 pid;                /* Personality value of the walking Pokemon */
+    u32 otId;               /* Original trainer ID of the walking Pokemon */
 } sFollower = {0};
 
 /*
@@ -187,9 +227,59 @@ u8 GetFollowerObjEventId(void)
     return sFollower.objEventId;
 }
 
+/**
+ * Return the party slot index of the active follower.
+ *
+ * Kept as public API; party_menu.c now uses IsFollowerPokemon() for the
+ * RETURN check, so this slot value is only advisory (it goes stale after
+ * the player uses SWITCH to rearrange the party).
+ */
 u8 GetFollowerPartySlot(void)
 {
     return sFollower.partySlot;
+}
+
+/**
+ * Check whether a party Pokemon is the active follower.
+ *
+ * Compares the Pokemon's identity (PID and OTID, see the sFollower struct)
+ * with the one stored by ActivateFollower(). Unlike a party slot index this
+ * stays right after SWITCH, and unlike species it stays right after the
+ * walking Pokemon evolves.
+ *
+ * Both values sit in the unencrypted header of the Pokemon's data, so
+ * reading them is cheap: GetMonData only decrypts the 48-byte "secure"
+ * block for fields stored inside it (species, moves, ...).
+ *
+ * @return TRUE if mon is the currently active follower.
+ */
+bool8 IsFollowerPokemon(struct Pokemon *mon)
+{
+    if (!sFollower.active)
+        return FALSE;
+    return GetMonData(mon, MON_DATA_PERSONALITY) == sFollower.pid
+        && GetMonData(mon, MON_DATA_OT_ID) == sFollower.otId;
+}
+
+/**
+ * Check whether the walking Pokemon is still in the player's party (in any
+ * slot). See "WHEN THE WALKING POKEMON LEAVES THE PARTY" at the top of
+ * this file.
+ *
+ * Only the first gPlayerPartyCount slots hold Pokemon; the game keeps the
+ * party packed at the front of gPlayerParty (CompactPartySlots) and the
+ * count up to date after every removal.
+ */
+static bool8 IsFollowerInParty(void)
+{
+    u8 i;
+
+    for (i = 0; i < gPlayerPartyCount; i++)
+    {
+        if (IsFollowerPokemon(&gPlayerParty[i]))
+            return TRUE;
+    }
+    return FALSE;
 }
 
 /**
@@ -199,8 +289,9 @@ u8 GetFollowerPartySlot(void)
  *          Called from the party menu "WALK" callback.
  *
  * HOW IT WORKS:
- * Caches the species and graphics ID, clears the trail buffer, and
- * snapshots the player's current position for change detection.
+ * Caches the species and graphics ID, and stores the Pokemon's identity
+ * (PID + OTID) so IsFollowerPokemon() can find it after SWITCH or
+ * evolution.
  * Does NOT spawn the sprite -- that happens when SpawnFollowerSprite()
  * is called during the return-to-field transition, because the party
  * menu screen has its own separate graphics state.
@@ -221,21 +312,29 @@ void ActivateFollower(u8 partySlot)
     sFollower.species = species;
     sFollower.graphicsId = gfxId;
     sFollower.objEventId = OBJECT_EVENTS_COUNT;
+    sFollower.pid = GetMonData(&gPlayerParty[partySlot], MON_DATA_PERSONALITY);
+    sFollower.otId = GetMonData(&gPlayerParty[partySlot], MON_DATA_OT_ID);
 }
 
 /**
  * FUNCTION: DeactivateFollower
  *
  * PURPOSE: Fully disable the follower and remove its sprite.
- *          Called from the party menu "RETURN" callback.
+ *          Called from the party menu "RETURN" callback, and by
+ *          SpawnFollowerSprite() / UpdateFollowerPokemon() when the
+ *          follower's Pokemon has left the party.
  */
 void DeactivateFollower(void)
 {
     DespawnFollowerSprite();
     sFollower.active = FALSE;
+    sFollower.spriteSpawned = FALSE;
+    sFollower.objEventId = OBJECT_EVENTS_COUNT;
     sFollower.partySlot = 0;
     sFollower.species = 0;
     sFollower.graphicsId = 0;
+    sFollower.pid = 0;
+    sFollower.otId = 0;
 }
 
 /**
@@ -408,7 +507,25 @@ void SpawnFollowerSprite(void)
     u8 objEventId;
     s16 spawnX, spawnY;
 
-    if (!sFollower.active || sFollower.spriteSpawned)
+    if (!sFollower.active)
+        return;
+
+    /*
+     * Put the follower away if its Pokemon has left the party (see the top
+     * of this file). This runs before the spriteSpawned check on purpose:
+     * on a return to the field (e.g. closing the party menu after MOVE TO
+     * PC) the overworld has already re-created the follower's sprite from
+     * its ObjectEvent, so spriteSpawned is TRUE and its sprite index is
+     * valid again, and DeactivateFollower() can destroy it. The screen is
+     * still black at this point, so it is never seen.
+     */
+    if (!IsFollowerInParty())
+    {
+        DeactivateFollower();
+        return;
+    }
+
+    if (sFollower.spriteSpawned)
         return;
 
     playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
@@ -587,6 +704,9 @@ static u8 ChooseFollowerDirection(struct ObjectEvent *followerObj, s16 playerX, 
  *          CB1_Overworld() every frame, right after UpdateMultiplayerState().
  *
  * HOW IT WORKS:
+ * First, if the follower's Pokemon is no longer in the party, the follower
+ * is put away (DeactivateFollower) and nothing else happens.
+ *
  * Uses a distance-based approach with randomness for natural movement:
  * 1. Compute Manhattan distance from follower to player.
  * 2. If distance > TELEPORT_DIST, catch-up mode: walk fast straight toward
@@ -609,7 +729,22 @@ void UpdateFollowerPokemon(void)
     s16 dx, dy, dist, absDx, absDy;
     u8 moveDir;
 
-    if (!sFollower.active || !sFollower.spriteSpawned)
+    if (!sFollower.active)
+        return;
+
+    /*
+     * Put the follower away if its Pokemon has just left the party on the
+     * field (e.g. the Day Care took it); see the top of this file. We are on
+     * the field here, so the follower's sprite index is valid and
+     * DeactivateFollower() destroys the right sprite.
+     */
+    if (!IsFollowerInParty())
+    {
+        DeactivateFollower();
+        return;
+    }
+
+    if (!sFollower.spriteSpawned)
         return;
 
     if (sFollower.objEventId >= OBJECT_EVENTS_COUNT)
