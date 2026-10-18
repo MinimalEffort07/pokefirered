@@ -258,14 +258,41 @@ void DeactivateFollower(void)
  *
  * NOTE: gObjectEvents[] (EWRAM) and gSaveBlock1Ptr->objectEvents[]
  * (save) are parallel arrays sharing the same index space, so
- * GetFollowerObjEventId() returns the correct index for both.
+ * sFollower.objEventId is the correct index for both.
+ *
+ * WHEN IT MUST LEAVE THE SAVE ALONE:
+ * sFollower lives in EWRAM, and the boot code fills EWRAM with zeroes on
+ * every power-on and soft reset -- so also before every Continue. Until
+ * the player picks WALK, every field of sFollower is therefore 0,
+ * including objEventId. Slot 0 is normally the player's own ObjectEvent,
+ * and Continue rebuilds the player from the saved copy of it. Blindly
+ * clearing "slot objEventId" would erase the player from the save, and
+ * the next Continue would load a map with no player to control.
+ *
+ * So the slot is cleared only when all three of these hold:
+ *   1. sFollower.spriteSpawned: a follower sprite exists right now.
+ *      objEventId only names a real slot while it does (SpawnFollowerSprite
+ *      sets both; DespawnFollowerSprite resets objEventId to
+ *      OBJECT_EVENTS_COUNT, meaning "no slot").
+ *   2. objEventId < OBJECT_EVENTS_COUNT: the index is inside the 16-entry
+ *      array, so the memset cannot write past its end into the save data
+ *      that follows it.
+ *   3. The saved slot's localId is LOCALID_FOLLOWER (254), the id every
+ *      follower ObjectEvent is created with: a last check that the entry
+ *      about to be erased really is the follower, never the player or an
+ *      NPC that has ended up at that index.
  */
 void ClearFollowerFromSaveBlock(void)
 {
-    u8 id = GetFollowerObjEventId();
-    if (id < OBJECT_EVENTS_COUNT)
-        memset(&gSaveBlock1Ptr->objectEvents[id], 0,
-               sizeof(gSaveBlock1Ptr->objectEvents[0]));
+    u8 id = sFollower.objEventId;
+
+    if (!sFollower.spriteSpawned || id >= OBJECT_EVENTS_COUNT)
+        return;
+    if (gSaveBlock1Ptr->objectEvents[id].localId != LOCALID_FOLLOWER)
+        return;
+
+    memset(&gSaveBlock1Ptr->objectEvents[id], 0,
+           sizeof(gSaveBlock1Ptr->objectEvents[0]));
 }
 
 /**
