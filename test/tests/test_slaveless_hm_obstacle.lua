@@ -36,7 +36,8 @@
 --   D. BADGE05 + HM03 in bag, empty party, same spot: press A → the Surf
 --      YES/NO prompt (gStringVar4 == Text_WantToSurf from the ROM) → YES →
 --      dismiss "A mysterious POKéMON appeared and used SURF!" → the player is
---      surfing (PLAYER_AVATAR_FLAG_SURFING set).
+--      surfing (PLAYER_AVATAR_FLAG_SURFING set) on the water tile (15, 26).
+--      Pressing A again on the water shows no second Surf prompt.
 --
 -- Run:    bash test/run_test.sh test/tests/test_slaveless_hm_obstacle.lua
 -- Record: bash test/record_test.sh test/tests/test_slaveless_hm_obstacle.lua
@@ -640,10 +641,22 @@ fw.run(function()
     fw.wait_frames(250)
     fw.screenshot(fw.out_path("mgba-slaveless-d-used.png"))
     fw.press("A")          -- A3: dismiss "...used SURF!" → field effect runs
-    fw.wait_until(is_surfing, 600, "player starts surfing")
+    -- FldEff_UseSurf sets the surfing flag as it starts; the jump onto the
+    -- water comes after the mon banner, so wait for the player to reach the
+    -- water tile (15, 26) = world (22, 33).
+    fw.wait_until(function() local _, y = read_pos(); return y == 33 end, 600,
+        "player reaches the water tile")
     fw.wait_frames(60)
     fw.screenshot(fw.out_path("mgba-slaveless-d-surfing.png"))
+    local sx, sy = read_pos()
     check("D: player is surfing after slaveless YES", is_surfing())
+    check("D: player moved onto the water at tile (15,26)", sx == 22 and sy == 33)
+    -- Already on the water, facing more water to the south: A must not offer
+    -- Surf again.
+    clear_message()
+    fw.press("A")
+    fw.wait_frames(120)
+    check("D: no second Surf prompt while already surfing", not message_is("Text_WantToSurf"))
 
     -- Summary
     local passed = 0
