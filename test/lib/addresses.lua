@@ -369,6 +369,58 @@ ADDR.ITEM_ELIXIR                     = 36
 ADDR.ITEM_MAX_ELIXIR                 = 37
 
 -------------------------------------------------------------------------------
+-- BATTLE DISPLAY STATE — Type Effectiveness Colors (issue #7)
+-------------------------------------------------------------------------------
+-- gPlttBufferFaded: the palette buffer the GBA reads each frame.
+-- BG palette n, entry e is at: gPlttBufferFaded + (n * 16 + e) * 2
+-- Move name windows use BG palettes 10-13 (one per move slot).
+-- Entry 13 in each palette is the text foreground color, overwritten by
+-- MoveSelectionSetEffectivenessColors() to reflect type matchup.
+ADDR.gPlttBufferFaded          = 0x02037688
+
+-- Read the text-foreground color for move slot i (0 = top-left move).
+-- BG_PLTT_ID(pal) = pal * 16; entry 13 is text foreground; 2 bytes each.
+ADDR.move_eff_color_addr = function(i)
+    local pal = 10 + i
+    return ADDR.gPlttBufferFaded + (pal * 16 + 13) * 2
+end
+
+-- Expected text-foreground RGB15 values from GetMoveEffectivenessColor:
+ADDR.EFF_COLOR_NEUTRAL   = 0x2529  -- RGB(9,9,9)   neutral gray    (1x)
+ADDR.EFF_COLOR_SUPER     = 0x0280  -- RGB(0,20,0)  dark green      (2x / 4x)
+ADDR.EFF_COLOR_NOT_VERY  = 0x035A  -- RGB(26,26,0) amber           (0.5x / 0.25x)
+ADDR.EFF_COLOR_IMMUNE    = 0x0018  -- RGB(24,0,0)  dark red        (0x)
+
+-- gAbsentBattlerFlags: u8 bitmask — bit N set means battler N has fainted
+-- with no replacement (absent from battle).
+-- Bit 1 (value 0x02) = battler 1 (B_POSITION_OPPONENT_LEFT) is absent.
+ADDR.gAbsentBattlerFlags       = 0x02023d70
+
+-- gBattleMons: array of 4 BattlePokemon structs, one per battler slot.
+-- B_POSITION_OPPONENT_LEFT = battler 1, B_POSITION_OPPONENT_RIGHT = battler 3.
+-- sizeof(struct BattlePokemon) = 0x58 (88 bytes).
+ADDR.gBattleMons               = 0x02023be4
+ADDR.BATTLEMON_SIZE            = 0x58
+ADDR.BP_TYPE1                  = 0x21   -- offsetof(BattlePokemon, type1)
+ADDR.BP_TYPE2                  = 0x22   -- offsetof(BattlePokemon, type2)
+
+-- gMultiUsePlayerCursor: u8 — battler ID of the currently highlighted target
+-- in HandleInputChooseTarget. Set to 0xFF by InitMoveSelectionsVarsAndStrings
+-- when the move selection screen first opens.
+ADDR.gMultiUsePlayerCursor     = 0x03005004
+
+-- Type IDs (from include/constants/pokemon.h):
+ADDR.TYPE_FIRE   = 10
+ADDR.TYPE_WATER  = 11
+ADDR.TYPE_GRASS  = 12
+
+-- Standard battler IDs in a double battle (AGBCC/vanilla layout):
+ADDR.BATTLER_PLAYER_LEFT   = 0
+ADDR.BATTLER_OPPONENT_LEFT = 1   -- B_POSITION_OPPONENT_LEFT
+ADDR.BATTLER_PLAYER_RIGHT  = 2
+ADDR.BATTLER_OPPONENT_RIGHT = 3  -- B_POSITION_OPPONENT_RIGHT
+
+-------------------------------------------------------------------------------
 -- PARTY STATE
 -------------------------------------------------------------------------------
 -- gPlayerPartyCount: number of Pokemon currently in the player's party (0-6).
@@ -380,26 +432,37 @@ ADDR.ITEM_MAX_ELIXIR                 = 37
 ADDR.gPlayerPartyCount               = 0x02024029
 
 -------------------------------------------------------------------------------
--- WALKING POKEMON FOLLOWER (pokemon_follower.c)
--------------------------------------------------------------------------------
--- sFollower: static EWRAM struct tracking the active follower Pokemon.
--- The number below is only a fallback copied from one build: sFollower is a
--- unique symbol name, so the live-address pass at the end of this file
--- replaces it with its address in pokefirered.elf (see symbols.lua).
--- Field offsets (12 bytes in all; the u32 forces 4-byte alignment):
---   +0  bool8 active
---   +1  bool8 spriteSpawned
---   +2  u8    partySlot
---   +3  (alignment padding)
---   +4  u16   species
---   +6  u8    graphicsId
---   +7  u8    objEventId
---   +8  u32   pid  (added by issue-4 fix; not present in pre-fix builds)
+-- FOLLOWER STATE (WALKING POKEMON, src/pokemon_follower.c)
+-- sFollower is a static EWRAM_DATA struct in src/pokemon_follower.c. The
+-- key is named after the symbol, so the live-address pass at the bottom of
+-- this file replaces the number below with sFollower's address in
+-- pokefirered.elf (symbols.lua reads static symbols too); the number is only
+-- a fallback for when the ELF can't be read.
+-- Struct layout (16 bytes total). The compiler puts each field at an
+-- offset that is a multiple of its own size, so the u32 pid sits at 12
+-- (after prevY ends at 12) with no padding needed:
+--   offset 0:  bool8 active      <- FOLLOWER_OFF_ACTIVE
+--   offset 1:  bool8 spriteSpawned
+--   offset 2:  u8  partySlot
+--   offset 3:  u8  stuckFrames   (catch-up stuck counter, issue #2)
+--   offset 4:  u16 species       <- FOLLOWER_OFF_SPECIES
+--   offset 6:  u8  graphicsId
+--   offset 7:  u8  objEventId    <- FOLLOWER_OBJ_EVENT_ID_OFF
+--   offset 8:  s16 prevX         (position before last catch-up move)
+--   offset 10: s16 prevY
+--   offset 12: u32 pid           <- FOLLOWER_OFF_PID (follower identity, issue #4)
 -- These offsets must be redone whenever a field is added to the struct.
-ADDR.sFollower               = 0x0203f624
-ADDR.FOLLOWER_OFF_ACTIVE     = 0x00
-ADDR.FOLLOWER_OFF_SPECIES    = 0x04
-ADDR.FOLLOWER_OFF_PID        = 0x08
+ADDR.sFollower                 = 0x0203f624
+ADDR.FOLLOWER_OFF_ACTIVE       = 0x00
+ADDR.FOLLOWER_OFF_SPECIES      = 0x04
+ADDR.FOLLOWER_OBJ_EVENT_ID_OFF = 0x07
+ADDR.FOLLOWER_OFF_PID          = 0x0C
+
+-- ObjectEvent previousCoords offsets (layout mirrors currentCoords at 0x10/0x12).
+-- Used to write both coord fields atomically when repositioning the follower
+-- in tests, preventing the movement system from seeing a stale prev position.
+ADDR.OE_PREV_X = 0x14
+ADDR.OE_PREV_Y = 0x16
 
 -------------------------------------------------------------------------------
 -- PREFER LIVE ADDRESSES FROM THE BUILT ROM
