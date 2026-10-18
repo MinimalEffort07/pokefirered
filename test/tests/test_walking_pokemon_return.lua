@@ -45,6 +45,15 @@
 --      Pokemon is in a PC box could never be RETURNed).
 --   3. WALK Meowth (slot 0 now).       Check: active, species Meowth.
 --
+-- Scenario G: the walker leaves the party while the player stays on the
+-- field, the way the Day Care takes it (no menu closes and no map loads
+-- afterwards, so nothing re-spawns the follower).
+--   1. WALK Pikachu (slot 0).          Check: active, sprite on screen.
+--   2. In RAM, remove Pikachu as the Day Care does: clear its slot, move
+--      the others up, set the party count to 2.
+--   3. Wait a few frames on the field. Check: follower deactivated and its
+--      sprite gone.
+--
 -- Run:
 --   bash test/run_test.sh test/tests/test_walking_pokemon_return.lua
 --
@@ -318,11 +327,49 @@ local function scenario_move_to_pc()
           and fw.read16(FOLLOWER_SPECIES) == SPECIES_MEOWTH)
 end
 
+-------------------------------------------------------------------------------
+-- Scenario G: the walker leaves the party while the player stays on the field
+-------------------------------------------------------------------------------
+
+-- Copy party slot `from` over party slot `to` (struct Pokemon is moved as
+-- plain bytes; its encryption doesn't depend on the slot).
+local function copy_slot(from, to)
+    for i = 0, POKEMON_SIZE - 1 do
+        emu:write8(slot_addr(to) + i, fw.read8(slot_addr(from) + i))
+    end
+end
+
+local function scenario_leaves_on_field()
+    fw.log("--- Scenario G: WALK Pikachu, it leaves the party on the field ---")
+    load_fixture()
+
+    walk(0)
+    fw.wait_frames(30)
+    check("G: follower active after WALK Pikachu",
+          fw.read8(FOLLOWER_ACTIVE) == 1)
+    check("G: follower sprite on the field",
+          fw.read8(FOLLOWER_SPRITE_SPAWNED) == 1)
+
+    -- What the Day Care's deposit does to the party (ZeroMonData,
+    -- CompactPartySlots, CalculatePlayerPartyCount), done in one go.
+    copy_slot(1, 0)
+    copy_slot(2, 1)
+    for i = 0, POKEMON_SIZE - 1 do emu:write8(slot_addr(2) + i, 0) end
+    emu:write8(ADDR.gPlayerPartyCount, 2)
+    fw.wait_frames(10)
+
+    check("G: follower deactivated once its Pokemon left the party",
+          fw.read8(FOLLOWER_ACTIVE) == 0)
+    check("G: follower sprite gone once its Pokemon left the party",
+          fw.read8(FOLLOWER_SPRITE_SPAWNED) == 0)
+end
+
 fw.run(function()
     fw.log("=== Walking Pokemon Return Test ===")
     scenario_switch()
     scenario_evolve_to_walker()
     scenario_evolve_to_non_walker()
     scenario_move_to_pc()
+    scenario_leaves_on_field()
     fw.finish()
 end)
