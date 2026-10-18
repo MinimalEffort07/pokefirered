@@ -40,9 +40,17 @@
  * menu's MOVE TO PC, a deposit or release in Bill's PC, the Day Care, a
  * trade. A follower whose Pokemon is gone could never be RETURNed (RETURN
  * is offered on the Pokemon itself), so the field code puts it away by
- * itself: SpawnFollowerSprite() checks IsFollowerInParty() on every map
- * load and return to the field, and calls DeactivateFollower() when the
- * Pokemon is gone.
+ * itself, calling DeactivateFollower() when IsFollowerInParty() says the
+ * Pokemon is gone. Two places check:
+ *   - SpawnFollowerSprite(), on every map load and return to the field,
+ *     which covers everything done in a menu or another screen (PC, party
+ *     menu, trade) before the first frame is drawn;
+ *   - UpdateFollowerPokemon(), every overworld frame, which covers what
+ *     happens on the field itself (the Day Care's deposit is a map script:
+ *     no menu closes and no map loads afterwards).
+ * The per-frame check is cheap: at most 6 Pokemon, and IsFollowerPokemon
+ * reads two unencrypted fields, a few hundred CPU cycles out of the
+ * roughly 280,000 in a frame.
  *
  * This is done here rather than in each of those menus because the
  * follower's sprite only exists on the field. Menus like the party menu
@@ -635,6 +643,9 @@ static u8 ChooseFollowerDirection(struct ObjectEvent *followerObj, s16 playerX, 
  *          CB1_Overworld() every frame, right after UpdateMultiplayerState().
  *
  * HOW IT WORKS:
+ * First, if the follower's Pokemon is no longer in the party, the follower
+ * is put away (DeactivateFollower) and nothing else happens.
+ *
  * Uses a distance-based approach with randomness for natural movement:
  * 1. Compute Manhattan distance from follower to player.
  * 2. If distance > TELEPORT_DIST, catch-up mode: walk fast straight toward
@@ -657,7 +668,22 @@ void UpdateFollowerPokemon(void)
     s16 dx, dy, dist, absDx, absDy;
     u8 moveDir;
 
-    if (!sFollower.active || !sFollower.spriteSpawned)
+    if (!sFollower.active)
+        return;
+
+    /*
+     * Put the follower away if its Pokemon has just left the party on the
+     * field (e.g. the Day Care took it); see the top of this file. We are on
+     * the field here, so the follower's sprite index is valid and
+     * DeactivateFollower() destroys the right sprite.
+     */
+    if (!IsFollowerInParty())
+    {
+        DeactivateFollower();
+        return;
+    }
+
+    if (!sFollower.spriteSpawned)
         return;
 
     if (sFollower.objEventId >= OBJECT_EVENTS_COUNT)
