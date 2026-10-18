@@ -14,7 +14,7 @@
 --     ladder or door would leave the map);
 --   * an object stands on it, or is walking onto or off it (current and
 --     previous coordinates);
---   * it is next to a roaming Pokemon (local id 200 and up). Walking into
+--   * it is next to a roaming Pokemon (local ids 200-205). Walking into
 --     one starts a wild battle, and they move, so the planner keeps a
 --     one-tile gap.
 --
@@ -47,8 +47,14 @@ local DIRS = {
     { key = "RIGHT", dx = 1,  dy = 0 },
 }
 
--- Local ids of the overworld roaming Pokemon (src/roaming_pokemon.c).
+-- Local ids of the overworld roaming Pokemon (src/roaming_pokemon.c):
+-- 200-205. Not "200 and up": the walking Pokemon (the follower) is 254, and
+-- it doesn't start a battle, so it needs no gap around it.
 local ROAMER_LOCAL_ID_MIN = 200
+local ROAMER_LOCAL_ID_MAX = 205
+local function is_roamer(o)
+    return o.local_id >= ROAMER_LOCAL_ID_MIN and o.local_id <= ROAMER_LOCAL_ID_MAX
+end
 
 -------------------------------------------------------------------------------
 -- No wild battles
@@ -113,7 +119,7 @@ local function object_tiles()
         if not o.is_player then
             set[mm.key(o.x, o.y)] = true
             set[mm.key(o.prev_x, o.prev_y)] = true
-            if o.local_id >= ROAMER_LOCAL_ID_MIN then
+            if is_roamer(o) then
                 for _, d in ipairs(DIRS) do set[mm.key(o.x + d.dx, o.y + d.dy)] = true end
             end
         end
@@ -166,7 +172,7 @@ function walk.describe_map(tx, ty)
     for _, w in ipairs(mm.read_warps()) do marks[mm.key(w.x, w.y)] = "W" end
     for _, o in ipairs(mm.live_objects()) do
         if not o.is_player then
-            if o.local_id >= ROAMER_LOCAL_ID_MIN then
+            if is_roamer(o) then
                 for _, d in ipairs(DIRS) do
                     local k = mm.key(o.x + d.dx, o.y + d.dy)
                     if marks[k] == nil then marks[k] = "+" end

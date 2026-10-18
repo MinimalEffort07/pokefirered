@@ -315,6 +315,13 @@ end
 -- The per-frame watch
 -------------------------------------------------------------------------------
 
+-- The watch attached to the frame callback below (watch.attach), if any.
+-- mGBA calls every "frame" callback once after each emulated frame.
+local attached = nil
+callbacks:add("frame", function()
+    if attached then attached.frame() end
+end)
+
 -- Start watching the follower. Call watch.frame() once after every frame.
 -- `name` prefixes the assertion messages. The tile the follower stands on
 -- when the watch starts is the starting tile (frame 0).
@@ -421,6 +428,16 @@ function follower.new_watch(name, snap)
                 each(watch.frame_no, t and t.x, t and t.y)
             end
         end
+    end
+
+    -- Check every frame from a frame callback until detach(), for code that
+    -- waits through other helpers (walk.to, fw.press, ...) instead of
+    -- calling watch.frame() itself.
+    function watch.attach()
+        attached = watch
+    end
+    function watch.detach()
+        if attached == watch then attached = nil end
     end
 
     -- Report the per-frame rule as one passing assertion if it never failed
