@@ -3539,6 +3539,13 @@ found_slot:
      *   3. ZeroMonData — clears the party slot so it reads as empty.
      *   4. CompactPartySlots — shifts remaining party mons left to fill
      *      the gap, keeping the party array contiguous.
+     *
+     * If this is the walking Pokemon (the follower), nothing is done about
+     * it here: when the party menu closes and the field reloads,
+     * SpawnFollowerSprite() sees its Pokemon is no longer in the party and
+     * puts the follower away. Calling DeactivateFollower() from this menu
+     * would destroy the wrong sprite (see "WHEN THE WALKING POKEMON LEAVES
+     * THE PARTY" in pokemon_follower.c).
      */
     MonRestorePP(mon);
     CopyMon(target, &mon->box, sizeof(mon->box));

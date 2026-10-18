@@ -35,6 +35,22 @@
  * - DeactivateFollower(): Called from party menu "RETURN" option.
  *   Despawns and clears all state.
  *
+ * WHEN THE WALKING POKEMON LEAVES THE PARTY:
+ * The follower's Pokemon can leave the party without RETURN: the party
+ * menu's MOVE TO PC, a deposit or release in Bill's PC, the Day Care, a
+ * trade. A follower whose Pokemon is gone could never be RETURNed (RETURN
+ * is offered on the Pokemon itself), so the field code puts it away by
+ * itself: SpawnFollowerSprite() checks IsFollowerInParty() on every map
+ * load and return to the field, and calls DeactivateFollower() when the
+ * Pokemon is gone.
+ *
+ * This is done here rather than in each of those menus because the
+ * follower's sprite only exists on the field. Menus like the party menu
+ * and the PC wipe the sprite table when they open and fill it with their
+ * own sprites, so the sprite index saved in the follower's ObjectEvent
+ * then points at one of the menu's sprites; destroying "the follower's
+ * sprite" from a menu would remove that menu sprite instead.
+ *
  * MULTIPLAYER:
  * The follower is purely local state. It is not included in the SIO
  * multiplayer protocol and does not appear on remote players' screens.
@@ -237,6 +253,27 @@ bool8 IsFollowerPokemon(struct Pokemon *mon)
 }
 
 /**
+ * Check whether the walking Pokemon is still in the player's party (in any
+ * slot). See "WHEN THE WALKING POKEMON LEAVES THE PARTY" at the top of
+ * this file.
+ *
+ * Only the first gPlayerPartyCount slots hold Pokemon; the game keeps the
+ * party packed at the front of gPlayerParty (CompactPartySlots) and the
+ * count up to date after every removal.
+ */
+static bool8 IsFollowerInParty(void)
+{
+    u8 i;
+
+    for (i = 0; i < gPlayerPartyCount; i++)
+    {
+        if (IsFollowerPokemon(&gPlayerParty[i]))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/**
  * FUNCTION: ActivateFollower
  *
  * PURPOSE: Enable the follower system for the given party slot.
@@ -401,7 +438,25 @@ void SpawnFollowerSprite(void)
     u8 objEventId;
     s16 spawnX, spawnY;
 
-    if (!sFollower.active || sFollower.spriteSpawned)
+    if (!sFollower.active)
+        return;
+
+    /*
+     * Put the follower away if its Pokemon has left the party (see the top
+     * of this file). This runs before the spriteSpawned check on purpose:
+     * on a return to the field (e.g. closing the party menu after MOVE TO
+     * PC) the overworld has already re-created the follower's sprite from
+     * its ObjectEvent, so spriteSpawned is TRUE and its sprite index is
+     * valid again, and DeactivateFollower() can destroy it. The screen is
+     * still black at this point, so it is never seen.
+     */
+    if (!IsFollowerInParty())
+    {
+        DeactivateFollower();
+        return;
+    }
+
+    if (sFollower.spriteSpawned)
         return;
 
     playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
