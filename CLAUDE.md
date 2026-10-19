@@ -53,7 +53,14 @@ Finer-grained cleans: `clean-tools`, `clean-generated` (headers generated from J
 **Gotchas:**
 - **Flag changes don't trigger rebuilds.** Objects depend only on their sources, so after changing `POKEMON_DEBUG`, `O_LEVEL`, or `DINFO`, run `make tidy` before rebuilding. `make debug` and `make release` handle this themselves: a `.pokemon_debug` marker file makes them run `make clean` when switching modes. Running `make firered` right after `make debug` reuses the debug objects, so switch back with `make release`. Changing `MODERN`, `GAME_VERSION`, or `GAME_REVISION` is safe because each combination gets its own `build/<name>/` directory.
 - **`COMPARE=1` fails on this fork.** The custom code means the ROM no longer matches retail's SHA1. A compare check only means something on an unmodified upstream tree.
-- **Tests only see `pokefirered.gba`.** `test/run_test.sh` and `test/record_test.sh` load whatever `make firered` or `make debug` built last. Modern, rev1, and Switch builds write to other files, so the tests never run against them.
+- **Tests only see `pokefirered.gba`.** `test/run_test.sh`, `test/run_suite.sh` and `test/record_test.sh` load whatever `make firered` or `make debug` built last. Modern, rev1, and Switch builds write to other files, so the tests never run against them.
+
+## Tests
+
+- **One test:** `bash test/run_test.sh test/tests/<test>.lua` exits 0 = pass, 1 = fail, 124 = timed out (`MGBA_TEST_TIMEOUT`, default 60 s). Each run writes to its own `mktemp` folder, printed as `Output:`, so runs can go in parallel.
+- **Whole suite:** `bash test/run_suite.sh` is the merge gate. It runs every top-level `test/tests/*.lua` 4 at a time with `MGBA_TEST_TIMEOUT=1500` (about 10 minutes) and exits 0 only if every test it ran passed. Its summary gives each test's result and seconds; failing and timed-out runs keep their folder (with `run_test.log`), passing runs' folders are deleted. Name test files to run a subset; `--help` lists the options.
+- **Exclusions:** `test/suite_exclude.txt` lists the tests the suite skips, one per line: the test name, then a one-line reason. Every exclusion needs a reason; the suite refuses to start on a line without one. Exclude only a test that needs a fixture made by hand or makes no assertions (a demo or probe declaring `fw.allow_no_assertions`); a failing test gets fixed.
+- The README's "Tests" section has the framework rules (a test with zero assertions fails). `test/tests/test_run_suite.lua` and `test_framework_rules.lua` test the runners themselves.
 
 ## Toolchain Requirements
 
