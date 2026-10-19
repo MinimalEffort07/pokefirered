@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Read", "Grep", "Glob", "Edit", "Write", "Skill", "Agent", "TodoWrite",
+      "Bash(python3 *automation/bin/issue.py *)",
+      "Bash(make:*)", "Bash(nproc)",
+      "Bash(bash test/run_test.sh:*)", "Bash(bash test/run_suite.sh:*)",
+      "Bash(bash test/record_test.sh:*)",
+      "Bash(python3 -m unittest:*)", "Bash(cd automation && python3 -m unittest:*)",
+      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+      "Bash(git grep:*)", "Bash(git rev-parse:*)", "Bash(git merge-base:*)",
+      "Bash(git branch --show-current)", "Bash(git fetch origin:*)",
+      "Bash(git add:*)", "Bash(git commit:*)",
+      "Bash(git push -u origin issue-*)", "Bash(git push origin issue-*)",
+      "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)",
+      "Bash(grep:*)", "Bash(find:*)", "Bash(mkdir:*)",
+      "Bash(mv /tmp/mgba-recordings/*)", "Bash(ffmpeg:*)"
+    ],
+    "deny": [
+      "WebFetch", "WebSearch",
+      "Bash(gh:*)",
+      "Bash(curl:*)", "Bash(wget:*)",
+      "Bash(git push* master*)", "Bash(git push*:master*)",
+      "Bash(git push*--force*)", "Bash(git push* -f*)", "Bash(git push*+*)",
+      "Bash(git push*--delete*)", "Bash(git push* -d*)", "Bash(git push* :*)",
+      "Bash(git push*--mirror*)", "Bash(git push*--all*)",
+      "Bash(git remote:*)", "Bash(git config:*)",
+      "Bash(*pret/pokefirered*)",
+      "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)", "Bash(rm -rf $HOME*)"
+    ]
+  }
+}

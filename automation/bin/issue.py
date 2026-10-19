@@ -8,13 +8,20 @@
   python3 automation/bin/issue.py create-ticket --title T < body.md
                                                           a ticket under your issue,
                                                           linked as a sub-issue
+  python3 automation/bin/issue.py open-pr --title T [--head BRANCH] < body.md
+                                                          your ticket's PR into master,
+                                                          from BRANCH (default: the
+                                                          branch checked out here)
 
 "Your issue" is AUTODEV_ISSUE, which the dispatcher sets for each session.
-Every rule is enforced in automation/autodev/issue_tool.py.
+Grill sessions may comment, set-body and create-ticket; ticket sessions
+may comment and open-pr (AUTODEV_ROLE). Every rule is enforced in
+automation/autodev/issue_tool.py.
 """
 
 import argparse
 import os
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -31,11 +38,15 @@ def main():
     sub.add_parser("comment")
     sub.add_parser("set-body")
     sub.add_parser("create-ticket").add_argument("--title", required=True)
+    open_pr = sub.add_parser("open-pr")
+    open_pr.add_argument("--title", required=True)
+    open_pr.add_argument("--head")
     args = parser.parse_args()
 
     config = config_module.load(os.path.join(os.path.dirname(HERE), "config.json"))
     gh = GhCli()
     try:
+        issue_tool.check_role(os.environ.get("AUTODEV_ROLE"), args.command)
         if args.command == "read":
             print(issue_tool.read(gh, config, args.number))
             return 0
@@ -45,6 +56,12 @@ def main():
             issue_tool.comment(gh, config, issue, body)
         elif args.command == "set-body":
             issue_tool.set_body(gh, config, issue, body)
+        elif args.command == "open-pr":
+            head = args.head or subprocess.run(
+                ["git", "branch", "--show-current"], capture_output=True,
+                text=True, check=True).stdout.strip()
+            created = issue_tool.open_pr(gh, config, issue, args.title, head, body)
+            print("#%d %s" % (created["number"], created["html_url"]))
         else:
             print("#%d" % issue_tool.create_ticket(gh, config, issue, args.title, body))
         return 0

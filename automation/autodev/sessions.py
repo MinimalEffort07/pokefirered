@@ -19,10 +19,13 @@ The session's stream-json output goes to a log file. Its last event is a
 
 import json
 import os
+import shlex
 from dataclasses import dataclass
 
+from autodev import worktrees
+
 # Time limits per role, in seconds (#48, Sessions).
-TIME_LIMITS = {"grill": 60 * 60}
+TIME_LIMITS = {"grill": 60 * 60, "ticket": 3 * 60 * 60}
 
 # What every session must report when it ends. The dispatcher only
 # believes "done" after checking GitHub (decide.py).
@@ -53,6 +56,19 @@ def unit_name(role, issue):
     return "autodev-%s-%d" % (role, issue)
 
 
+def exit_path(log_path):
+    """Where the unit's end reason goes: the log's name, ending .exit."""
+    return os.path.splitext(log_path)[0] + ".exit"
+
+
+def working_directory(config, role, issue):
+    """A grill session reads the clone; the others work in the ticket's
+    own worktree."""
+    if role == "grill":
+        return config.clone
+    return worktrees.path(config.clone, issue)
+
+
 def launch_command(config, role, issue, session_id, log_path, prompt):
     """The systemd-run command that starts one session."""
     err_path = os.path.splitext(log_path)[0] + ".err"
@@ -68,13 +84,21 @@ def launch_command(config, role, issue, session_id, log_path, prompt):
         "-p", "Type=exec",
         "-p", "RuntimeMaxSec=%d" % TIME_LIMITS[role],
         "-p", "EnvironmentFile=" + config.env_file,
-        "-p", "WorkingDirectory=" + config.clone,
+        "-p", "WorkingDirectory=" + working_directory(config, role, issue),
         "-p", "StandardOutput=append:" + log_path,
         "-p", "StandardError=append:" + err_path,
+        # However the unit ends, systemd then runs ExecStopPost with
+        # SERVICE_RESULT saying how: "success", "exit-code", "timeout" (it
+        # hit RuntimeMaxSec), "signal"... The leading ":" stops systemd
+        # expanding $SERVICE_RESULT itself, so the shell does it.
+        "-p", "ExecStopPost=:/bin/sh -c %s" % shlex.quote(
+            'echo "$SERVICE_RESULT" > %s' % shlex.quote(exit_path(log_path))),
         "--setenv=CLAUDE_CONFIG_DIR=" + config.claude_config_dir,
-        # The issue this session works on. automation/bin/issue.py only
-        # lets a session change this one issue (and its own new tickets).
+        # The issue this session works on and its role. automation/bin/
+        # issue.py only lets a session change this one issue (and a grill's
+        # new tickets), with the commands its role needs.
         "--setenv=AUTODEV_ISSUE=%d" % issue,
+        "--setenv=AUTODEV_ROLE=" + role,
         "--",
         config.claude, "-p", prompt,
         # Auto mode lets the safety classifier approve routine actions; with

@@ -1,9 +1,10 @@
-"""The only door a grill session has to GitHub (automation/bin/issue.py).
+"""The only door a session has to GitHub (automation/bin/issue.py).
 
 Its settings deny every plain `gh` command, so these functions decide what
 a session can see and change: it sees only text written by the owner or
-the bot (#48, "Identity and trust"), and it changes only its own issue
-and the tickets it creates under it.
+the bot (#48, "Identity and trust"), and it changes only its own issue:
+a grill session its parent and the tickets it creates under it, a ticket
+session its ticket and the PR it opens for it.
 """
 
 import unittest
@@ -14,6 +15,7 @@ from autodev.config import Config
 CONFIG = Config(owner="MinimalEffort07", repo="MinimalEffort07/pokefirered",
                 board_title="pokefirered autodev", bot="MinimalEffort07-Autodev")
 ISSUES = "repos/MinimalEffort07/pokefirered/issues"
+PULLS = "repos/MinimalEffort07/pokefirered/pulls"
 
 
 class FakeRest:
@@ -29,6 +31,9 @@ class FakeRest:
         self.writes.append((method, path, fields))
         if method == "POST" and path == ISSUES:
             return {"number": 90, "id": 9000}
+        if method == "POST" and path == PULLS:
+            return {"number": 95,
+                    "html_url": "https://github.com/MinimalEffort07/pokefirered/pull/95"}
         return {}
 
     def rest_list(self, path):
@@ -102,6 +107,63 @@ class Writing(unittest.TestCase):
             issue_tool.create_ticket(gh, CONFIG, 67, "Do it",
                                      "## Parent\n\n#48\n\n## What to build\n\nIt.")
         self.assertEqual(gh.writes, [])
+
+
+PR_BODY = ("Fixes #68\nPart of #67\n\nSummary.\n\n"
+           "Suite: 41 passed.\n\n@MinimalEffort07")
+
+
+class OpeningPRs(unittest.TestCase):
+    def test_a_ticket_session_opens_its_pr_against_master(self):
+        gh = FakeRest({})
+        created = issue_tool.open_pr(gh, CONFIG, 68, "Fix #68: note it",
+                                     "issue-68-note", PR_BODY)
+        self.assertEqual(created["number"], 95)
+        self.assertEqual(gh.writes, [
+            ("POST", PULLS, {"title": "Fix #68: note it", "head": "issue-68-note",
+                             "base": "master", "body": PR_BODY})])
+
+    def test_only_from_this_tickets_own_branch(self):
+        for head in ("master", "issue-680-note", "issue-70-other", "issue-68"):
+            with self.subTest(head=head):
+                gh = FakeRest({})
+                with self.assertRaises(issue_tool.Refused):
+                    issue_tool.open_pr(gh, CONFIG, 68, "T", head, PR_BODY)
+                self.assertEqual(gh.writes, [])
+
+    def test_the_body_must_close_the_ticket_and_mention_the_owner(self):
+        # "Fixes #68" is what closes the ticket when the PR merges (#57); the
+        # @mention is what notifies the owner that it's ready (#48).
+        for body in (PR_BODY.replace("Fixes #68", "Part of #68"),
+                     PR_BODY.replace("Fixes #68", "Fixes #680"),
+                     PR_BODY.replace("@MinimalEffort07", "the owner"),
+                     # Mentioning the bot isn't mentioning the owner.
+                     PR_BODY.replace("@MinimalEffort07", "@MinimalEffort07-Autodev")):
+            with self.subTest(body=body):
+                gh = FakeRest({})
+                with self.assertRaises(issue_tool.Refused):
+                    issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note", body)
+                self.assertEqual(gh.writes, [])
+
+
+class Roles(unittest.TestCase):
+    """Each role gets only the commands it needs (AUTODEV_ROLE)."""
+
+    def test_each_role_may_use_only_its_own_commands(self):
+        for role, command, allowed in [
+            ("grill", "create-ticket", True), ("grill", "set-body", True),
+            ("grill", "open-pr", False),
+            ("ticket", "open-pr", True), ("ticket", "comment", True),
+            ("ticket", "create-ticket", False), ("ticket", "set-body", False),
+            # Outside a session (no role) the tool only reads.
+            (None, "read", True), (None, "comment", False),
+        ]:
+            with self.subTest(role=role, command=command):
+                if allowed:
+                    issue_tool.check_role(role, command)
+                else:
+                    with self.assertRaises(issue_tool.Refused):
+                        issue_tool.check_role(role, command)
 
 
 if __name__ == "__main__":

@@ -35,11 +35,14 @@ class Registry:
                 continue
             with open(os.path.join(self.config.state_dir, name)) as f:
                 record = json.load(f)
-            running = self.is_running(sessions.unit_name(record["role"], record["issue"]))
+            role, issue = record["role"], record["issue"]
+            running = self.is_running(sessions.unit_name(role, issue))
             found.append(Session(
-                role=record["role"], issue=record["issue"],
+                role=role, issue=issue,
                 session_id=record["session_id"], running=running,
-                result=None if running else sessions.read_result(record["log"])))
+                result=None if running else sessions.read_result(record["log"]),
+                ended_by=None if running else _ended_by(record["log"]),
+                cwd=sessions.working_directory(self.config, role, issue)))
         return found
 
     # systemd's ActiveState for a unit that is still under way. A unit that
@@ -91,6 +94,16 @@ class Registry:
                     os.remove(path)
                     removed += 1
         return removed
+
+
+def _ended_by(log):
+    """How systemd said the unit ended (sessions.exit_path), or None if it
+    didn't say."""
+    try:
+        with open(sessions.exit_path(log)) as f:
+            return f.read().strip() or None
+    except FileNotFoundError:
+        return None
 
 
 def _stamp():

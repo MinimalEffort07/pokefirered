@@ -95,6 +95,10 @@ class Item:
     status: str
     has_parent: bool
     item_id: Optional[str] = None   # the card's id on the board
+    title: str = ""
+    parent: Optional[int] = None    # the issue its "## Parent" section names
+    blocked_by: tuple = ()          # the issues its "## Blocked by" lists
+    is_open: bool = True
 
 
 def find_board(gh, config):
@@ -138,12 +142,17 @@ def _is_repo_issue(node, repo):
 def _parse_item(node):
     content = node["content"]
     status = (node["status"] or {}).get("name") or DEFAULT_STATUS
+    parent = section(content["body"], "Parent")
     return Item(
         number=content["number"],
         author=(content["author"] or {}).get("login", DELETED_AUTHOR),
         status=status,
         # Tickets carry a "## Parent" section (the to-tickets format);
         # every other issue is a parent to be grilled.
-        has_parent=section(content["body"], "Parent") is not None,
+        has_parent=parent is not None,
         item_id=node["id"],
+        title=content["title"],
+        parent=next(iter(issue_numbers(parent)), None),
+        blocked_by=tuple(issue_numbers(section(content["body"], "Blocked by"))),
+        is_open=content["state"] == "OPEN",
     )
