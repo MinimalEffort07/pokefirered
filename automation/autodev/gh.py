@@ -36,3 +36,19 @@ class GhCli:
         if result.returncode != 0:
             raise GhError(result.stderr.strip() or "gh exited %d" % result.returncode)
         return json.loads(result.stdout)
+
+    def rest(self, method, path, **fields):
+        """One REST call, e.g. rest("POST", "repos/o/r/issues/1/comments",
+        body="hi"). Returns the decoded JSON, or None for an empty reply."""
+        args = ["gh", "api", "-X", method, path]
+        for name, value in fields.items():
+            flag = "-F" if isinstance(value, int) else "-f"
+            args += [flag, "%s=%s" % (name, value)]
+        try:
+            result = subprocess.run(args, capture_output=True, text=True,
+                                    timeout=TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            raise GhError("gh took longer than %d s" % TIMEOUT_SECONDS)
+        if result.returncode != 0:
+            raise GhError(result.stderr.strip() or "gh exited %d" % result.returncode)
+        return json.loads(result.stdout) if result.stdout.strip() else None
