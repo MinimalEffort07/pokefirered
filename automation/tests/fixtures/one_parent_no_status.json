@@ -4,7 +4,10 @@
       "user": {
         "projectsV2": {
           "nodes": [
-            {"number": 7, "title": "pokefirered autodev"}
+            {
+              "number": 7,
+              "title": "pokefirered autodev"
+            }
           ]
         }
       }
@@ -15,8 +18,49 @@
       "data": {
         "user": {
           "projectV2": {
+            "id": "PVT_fake7",
+            "field": {
+              "id": "PVTSSF_fake7",
+              "options": [
+                {
+                  "id": "opt-todo",
+                  "name": "Todo"
+                },
+                {
+                  "id": "opt-grilling",
+                  "name": "Grilling"
+                },
+                {
+                  "id": "opt-blocked",
+                  "name": "Blocked"
+                },
+                {
+                  "id": "opt-in-progress",
+                  "name": "In progress"
+                },
+                {
+                  "id": "opt-in-review",
+                  "name": "In review"
+                },
+                {
+                  "id": "opt-needs-human",
+                  "name": "Needs human"
+                },
+                {
+                  "id": "opt-paused",
+                  "name": "Paused"
+                },
+                {
+                  "id": "opt-done",
+                  "name": "Done"
+                }
+              ]
+            },
             "items": {
-              "pageInfo": {"hasNextPage": false, "endCursor": "Y3Vyc29yOjE="},
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": "Y3Vyc29yOjE="
+              },
               "nodes": [
                 {
                   "id": "PVTI_lADOA1",
@@ -28,8 +72,13 @@
                     "title": "Add a Poke Flute to every Mart",
                     "body": "Sell the Poke Flute in every Mart.",
                     "state": "OPEN",
-                    "author": {"login": "MinimalEffort07"},
-                    "repository": {"nameWithOwner": "MinimalEffort07/pokefirered"}
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    },
+                    "id": "I_fake61"
                   }
                 }
               ]

@@ -18,6 +18,44 @@
       "data": {
         "user": {
           "projectV2": {
+            "id": "PVT_fake7",
+            "field": {
+              "id": "PVTSSF_fake7",
+              "options": [
+                {
+                  "id": "opt-todo",
+                  "name": "Todo"
+                },
+                {
+                  "id": "opt-grilling",
+                  "name": "Grilling"
+                },
+                {
+                  "id": "opt-blocked",
+                  "name": "Blocked"
+                },
+                {
+                  "id": "opt-in-progress",
+                  "name": "In progress"
+                },
+                {
+                  "id": "opt-in-review",
+                  "name": "In review"
+                },
+                {
+                  "id": "opt-needs-human",
+                  "name": "Needs human"
+                },
+                {
+                  "id": "opt-paused",
+                  "name": "Paused"
+                },
+                {
+                  "id": "opt-done",
+                  "name": "Done"
+                }
+              ]
+            },
             "items": {
               "pageInfo": {
                 "hasNextPage": false,
@@ -59,7 +97,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "pret/pokefirered"
-                    }
+                    },
+                    "id": "I_fake5"
                   }
                 },
                 {
@@ -77,7 +116,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_fake64"
                   }
                 }
               ]

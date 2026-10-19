@@ -1,5 +1,15 @@
 {
   "owner": "MinimalEffort07",
   "repo": "MinimalEffort07/pokefirered",
-  "board_title": "pokefirered autodev"
+  "board_title": "pokefirered autodev",
+  "bot": "MinimalEffort07-Autodev",
+  "max_sessions": 2,
+  "model": "opus",
+  "claude": "~/.local/bin/claude",
+  "claude_config_dir": "~/.claude-personal",
+  "env_file": "~/.config/autodev/env",
+  "clone": "~/projects/minimaleffort/pokefirered-autodev",
+  "log_dir": "~/autodev/logs",
+  "state_dir": "~/.local/state/autodev/sessions",
+  "resume_command": "cd ~/projects/minimaleffort/pokefirered-autodev && CLAUDE_CONFIG_DIR=~/.claude-personal claude --resume {session_id}"
 }

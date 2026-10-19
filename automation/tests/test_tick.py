@@ -1,4 +1,4 @@
-"""The dispatcher's tick: read the board, log what is on it, change nothing.
+"""The first part of every tick: read the board and log what is on it.
 
 Each test replays a recorded board (tests/fixtures/*.json) through FakeGh
 and checks the exact lines the tick logs.
@@ -8,7 +8,7 @@ import io
 import unittest
 
 from autodev.config import Config
-from autodev.dispatcher import tick
+from autodev.dispatcher import log_board
 from tests.fakes import FakeGh
 
 CONFIG = Config(
@@ -21,7 +21,7 @@ CONFIG = Config(
 def run_tick(fixture):
     gh = FakeGh.from_fixture(fixture)
     log = io.StringIO()
-    code = tick(gh, CONFIG, log)
+    code, _ = log_board(gh, CONFIG, log)
     return code, log.getvalue().splitlines(), gh
 
 

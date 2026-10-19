@@ -7,17 +7,29 @@ Status. Only issues from autodev's own repo are kept.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 
 # A card with no Status yet (the owner only just added it) waits for the
 # dispatcher exactly like one in Todo, so it is reported as Todo.
 DEFAULT_STATUS = "Todo"
 
-# Tickets are recognised by a "## Parent" heading in their body (the
-# to-tickets format); every other issue is a parent to be grilled. The
-# heading may carry the parent's number on the same line ("## Parent #48"),
-# but "## Parenting" is a different heading.
-_PARENT_HEADING = re.compile(r"^##\s+Parent\b", re.MULTILINE)
+
+
+def section(body, heading):
+    """The text under a "## <heading>" line, up to the next "## " heading,
+    or None if the body has no such heading. The heading may carry text on
+    the same line ("## Parent #48"), but "## Parenting" is a different one.
+    """
+    match = re.search(r"^##\s+%s\b(.*?)(?=^##\s|\Z)" % re.escape(heading),
+                      body or "", re.MULTILINE | re.DOTALL)
+    return match.group(1) if match else None
+
+
+def issue_numbers(text):
+    """Every "#123" reference in the text, as numbers."""
+    return [int(n) for n in re.findall(r"#(\d+)\b", text or "")]
+
 
 # GitHub reports no author for an issue whose account was deleted, and
 # shows such issues as written by "ghost".
@@ -35,6 +47,10 @@ BOARD_ITEMS = """
 query BoardItems($owner: String!, $number: Int!, $cursor: String) {
   user(login: $owner) {
     projectV2(number: $number) {
+      id
+      field(name: "Status") {
+        ... on ProjectV2SingleSelectField { id options { id name } }
+      }
       items(first: 100, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         nodes {
@@ -65,6 +81,11 @@ class Board:
     title: str
     items: list         # Item for each issue from autodev's repo
     skipped: int        # other cards: drafts, pull requests, other repos' issues
+    # GraphQL ids needed to change a card's Status: the board's own id, its
+    # Status field's id, and each Status option's id by name.
+    id: str = ""
+    status_field_id: str = ""
+    status_options: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -73,6 +94,7 @@ class Item:
     author: str
     status: str
     has_parent: bool
+    item_id: Optional[str] = None   # the card's id on the board
 
 
 def find_board(gh, config):
@@ -93,14 +115,18 @@ def read_board(gh, config, number):
     while True:
         data = gh.graphql(BOARD_ITEMS, owner=config.owner, number=number,
                           cursor=cursor)
-        page = data["data"]["user"]["projectV2"]["items"]
+        project = data["data"]["user"]["projectV2"]
+        page = project["items"]
         nodes.extend(page["nodes"])
         if not page["pageInfo"]["hasNextPage"]:
             break
         cursor = page["pageInfo"]["endCursor"]
     items = [_parse_item(node) for node in nodes
              if _is_repo_issue(node, config.repo)]
-    return Board(number, config.board_title, items, len(nodes) - len(items))
+    status = project["field"]
+    return Board(number, config.board_title, items, len(nodes) - len(items),
+                 id=project["id"], status_field_id=status["id"],
+                 status_options={o["name"]: o["id"] for o in status["options"]})
 
 
 def _is_repo_issue(node, repo):
@@ -116,5 +142,8 @@ def _parse_item(node):
         number=content["number"],
         author=(content["author"] or {}).get("login", DELETED_AUTHOR),
         status=status,
-        has_parent=bool(_PARENT_HEADING.search(content["body"])),
+        # Tickets carry a "## Parent" section (the to-tickets format);
+        # every other issue is a parent to be grilled.
+        has_parent=section(content["body"], "Parent") is not None,
+        item_id=node["id"],
     )

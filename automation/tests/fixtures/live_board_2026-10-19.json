@@ -18,6 +18,44 @@
       "data": {
         "user": {
           "projectV2": {
+            "id": "PVT_kwHOBWPd2c4Bnqwp",
+            "field": {
+              "id": "PVTSSF_lAHOBWPd2c4BnqwpzhmOQyY",
+              "options": [
+                {
+                  "id": "f75ad846",
+                  "name": "Todo"
+                },
+                {
+                  "id": "5e61f565",
+                  "name": "Grilling"
+                },
+                {
+                  "id": "298bf1d2",
+                  "name": "Blocked"
+                },
+                {
+                  "id": "4b451cd8",
+                  "name": "In progress"
+                },
+                {
+                  "id": "4d4c932e",
+                  "name": "In review"
+                },
+                {
+                  "id": "a1c54719",
+                  "name": "Needs human"
+                },
+                {
+                  "id": "f1565ff2",
+                  "name": "Paused"
+                },
+                {
+                  "id": "98236657",
+                  "name": "Done"
+                }
+              ]
+            },
             "items": {
               "pageInfo": {
                 "hasNextPage": false,
@@ -41,7 +79,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ1xAQ"
                   }
                 },
                 {
@@ -61,7 +100,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ3_hw"
                   }
                 },
                 {
@@ -81,7 +121,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4BFw"
                   }
                 },
                 {
@@ -101,7 +142,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4Cjg"
                   }
                 },
                 {
@@ -121,7 +163,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4D6w"
                   }
                 },
                 {
@@ -141,7 +184,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4FIQ"
                   }
                 },
                 {
@@ -161,7 +205,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4GmQ"
                   }
                 },
                 {
@@ -181,7 +226,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4H3w"
                   }
                 },
                 {
@@ -201,7 +247,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4JNw"
                   }
                 },
                 {
@@ -221,7 +268,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4Kfw"
                   }
                 },
                 {
@@ -241,7 +289,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4LsA"
                   }
                 },
                 {
@@ -261,7 +310,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4NHw"
                   }
                 },
                 {
@@ -281,7 +331,8 @@
                     },
                     "repository": {
                       "nameWithOwner": "MinimalEffort07/pokefirered"
-                    }
+                    },
+                    "id": "I_kwDORrtcd88AAAABYJ4OsA"
                   }
                 }
               ]
