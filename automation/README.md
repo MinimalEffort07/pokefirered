@@ -176,3 +176,5 @@ What they cover:
 - **Failures:** if one of a tick's actions fails, the tick logs it and skips the rest of that issue's actions, but carries on with the others.
 
 **Live check:** the grill path (#55) was checked live on 2026-10-19, on issue #67: autodev grilled it and broke it into tickets with nobody watching.
+
+**Live check:** fix-ups (#59) were checked on #80.
