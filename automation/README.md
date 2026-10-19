@@ -16,7 +16,7 @@ Autodev runs this repo's GitHub Issue Workflow (CLAUDE.md steps 1–13) on its o
    - It is read-only on the code and has 60 minutes.
 3. **On the first tick after it ends**, the dispatcher checks GitHub: is the design comment there, and is there at least one ticket?
    - **Yes:** each ticket goes on the board, as `Blocked` if an issue under its `## Blocked by` is still open, otherwise `Todo`. The parent moves to `In progress`.
-   - **No**, or the session reported a failure, or it ended without a result (it crashed or hit its time limit): the parent goes to `Needs human`. The bot comments with the reason, @mentions you, and gives the command that resumes the session.
+   - **No**, or the session reported a failure, or it hit its time limit: the parent goes to `Needs human`. The bot comments with the reason, @mentions you, and gives the command that resumes the session. A crash or the usage limit re-queues it instead (see "Pausing, usage limits and crashes").
 
 ## What happens to a ticket
 
@@ -33,7 +33,7 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
    It has 3 hours.
 4. **On the first tick after it ends**, the dispatcher looks on GitHub for the bot's open PR from an `issue-<T>-*` branch of this repo. A PR from a fork doesn't count.
    - **Found:** the card moves to `In review`, and the PR waits for you.
-   - **Not found**, or the session reported a failure, or it ended without a result: the card goes to `Needs human`, with the reason and the resume command. When systemd stopped the session at its time limit, the reason says so ("hit its 3-hour time limit").
+   - **Not found**, or the session reported a failure, or it hit its time limit: the card goes to `Needs human`, with the reason and the resume command ("hit its 3-hour time limit" when systemd stopped it). A crash or the usage limit re-queues it instead, unless its PR is already open, which counts as done.
 
 ## When you comment `/merge`
 
@@ -48,7 +48,7 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
 3. **On the first tick after it ends:**
    - **Merged** (even if the session failed or timed out afterwards): the ticket is closed (the PR's closing line usually did that already), its worktree and local branch are removed, and the card moves to `Done`.
    - **Conflict reply posted:** the card goes back to `In review` to wait for your `/merge`.
-   - **Neither,** or the session reported a failure, or it ended without a result: `Needs human`, with the reason and the resume command.
+   - **Neither,** or the session reported a failure, or it hit its time limit: `Needs human`, with the reason and the resume command. A crash or the usage limit sends it back to `In review` instead, unless its conflict reply is already posted, which counts as done.
 4. **Closed tickets are tidied up whoever closed them.** A ticket you close yourself, or whose PR you merge yourself, also loses its worktree, and its card moves to `Done`. The tickets it blocked move on to `Todo`.
 5. **Once every ticket of one of your parents is closed,** the bot closes the parent, comments on it @mentioning you, and moves it to `Done`. A parent's tickets are the board issues whose `## Parent` names it.
 
@@ -62,13 +62,14 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
     - A ticket whose PR is already open goes back to `In review`; it isn't implemented again.
   - **Stopping a session for good:** pause its card (or its parent), then `systemctl --user stop` its unit. A stop on its own counts as a crash, so the work would run once more.
 - **The usage limit:** a session that stops on the Claude usage-limit message ("You've hit your … limit · resets 3pm" and similar) pauses everything.
-  - No session of any role starts until the reset time plus 5 minutes. The board is still kept up to date, and each tick logs `usage limit: no session starts until …`.
-  - The bot comments "no session starts until <time>" on the issue, @mentioning you.
+  - No session of any role starts until the reset time plus 5 minutes, worked out from when the session stopped. The board is still kept up to date, and each tick logs `usage limit: no session starts until …`.
+  - The bot comments "paused until <time>" on the issue, @mentioning you. Only an error result or stderr is read for the message, never the session's own words.
   - The interrupted work goes back to `Todo`, or a merge back to `In review` with your `/merge` still unhandled. It starts again once the pause is over, as a fresh session that carries on from its branch.
   - **Unreadable time:** if the message's time can't be read, the pause lasts an hour.
   - **Where it's kept:** the pause is in `~/.local/state/autodev/sessions/paused-until`, so it survives reboots. Delete that file to lift it early.
 - **Crashes:** a session that ends with no report, no usage-limit message and not at its time limit has crashed. That includes one killed or stopped, and one whose unit vanished in a reboot.
-  - **The first time:** the work is re-queued (`Todo`, or `In review` for a merge), and the bot notes it on the issue.
+  - **The first time:** the work is re-queued (`Todo`, or `In review` for a merge), and the bot notes it on the issue. A re-queued grill is grilled again, even though the tickets it had already created are on the board (the board adds sub-issues as they are made). Those tickets wait while their parent is `Grilling`.
+  - **Work already done counts:** a ticket session whose PR is open, or a merge session whose conflict reply is posted, is done however it ended.
   - **The second time** for the same role and issue: `Needs human`, with the reason and the resume command.
   - **Time limit:** a session that hit its time limit goes to `Needs human` straight away.
 

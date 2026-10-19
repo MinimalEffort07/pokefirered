@@ -132,7 +132,8 @@ def read_state(github, config, snapshot, registry, log):
         closed=frozenset(closed), prs=prs,
         worktrees=frozenset(worktrees.tickets_with_worktrees(config.clone)),
         resume_command=config.resume_command, now=now,
-        paused_until=registry.paused_until(), crashes=registry.crashes())
+        paused_until=registry.paused_until(), crashes=registry.crashes(),
+        requeued=frozenset(registry.requeued()))
 
 
 # What GitHub shows once a session of each role has ended.
@@ -165,7 +166,8 @@ def _carry_out(action, github, registry, config):
     elif isinstance(action, PlaceOnBoard):
         github.place_on_board(action.issue, action.status)
     elif isinstance(action, Finish):
-        registry.finish(action.role, action.issue, crashed=action.crashed)
+        registry.finish(action.role, action.issue, crashed=action.crashed,
+                        requeued=action.requeued)
     elif isinstance(action, PauseLaunches):
         registry.pause(action.until)
     else:

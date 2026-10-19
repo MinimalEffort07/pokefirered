@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shlex
+import time
 import zoneinfo
 from dataclasses import dataclass
 
@@ -152,14 +153,15 @@ def read_result(log_path):
 # forms known: "You've hit your limit · resets 3pm (Australia/Sydney)",
 # "5-hour limit reached ∙ resets 10:30am", and older CLIs' "Claude AI usage
 # limit reached|1760000000" (the reset as seconds since 1970).
-LIMIT = re.compile(r"you've hit your\b[^\n]{0,40}\blimit|usage limit"
+LIMIT = re.compile(r"you've hit your\b[^\n]{0,40}\blimit|usage limit reached"
                    r"|limit reached\s*[|\u2219\u00b7]|limit\s*[\u2219\u00b7]\s*resets",
                    re.IGNORECASE)
 LIMIT_EPOCH = re.compile(r"limit reached\|(\d{9,11})", re.IGNORECASE)
-# "resets [Oct 23, ]9[:30][am|pm][ (Zone/Name)]"
+# "resets [Oct 23[, 2026], ][at ]9[:30][am|pm][ (Zone/Name)]"
 LIMIT_RESETS = re.compile(
-    r"resets?\s+(?:at\s+)?(?:([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?"
-    r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*\(([^)]+)\))?", re.IGNORECASE)
+    r"resets?\s+(?:at\s+)?(?:([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?,?\s+"
+    r"(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*\(([^)]+)\))?",
+    re.IGNORECASE)
 # With a limit message but no time that can be read, try again in an hour.
 LIMIT_FALLBACK = 60 * 60
 
@@ -183,25 +185,34 @@ def usage_limit(text, now, zone=None):
 
 
 def _reset_time(parts, now, zone):
-    month, day, hour, minute, ampm, named = parts
-    name = named or zone
-    current = (datetime.datetime.fromtimestamp(now, zoneinfo.ZoneInfo(name)) if name
-               else datetime.datetime.fromtimestamp(now).astimezone())
-    hour = int(hour)
+    month, day, year, hour, minute, ampm, named = parts
+    hour, minute = int(hour), int(minute or 0)
     if ampm:
+        if not 1 <= hour <= 12:
+            raise ValueError("no such hour: %d%s" % (hour, ampm))
         hour = hour % 12 + (12 if ampm.lower() == "pm" else 0)
+    name = named or zone
+    if name:
+        tz = zoneinfo.ZoneInfo(name)
+        current = datetime.datetime.fromtimestamp(now, tz)
+    else:
+        # The machine's own zone, as wall-clock times: time.mktime below
+        # applies daylight saving for the day the reset falls on, which a
+        # fixed UTC offset taken from today would get wrong.
+        tz = None
+        current = datetime.datetime(*time.localtime(now)[:6])
     if month:
         number = datetime.datetime.strptime(month[:3].title(), "%b").month
-        reset = current.replace(month=number, day=int(day), hour=hour,
-                                minute=int(minute or 0), second=0, microsecond=0)
-        if reset < current - datetime.timedelta(days=1):
+        reset = current.replace(year=int(year or current.year), month=number,
+                                day=int(day), hour=hour, minute=minute,
+                                second=0, microsecond=0)
+        if not year and reset < current - datetime.timedelta(days=1):
             reset = reset.replace(year=reset.year + 1)     # "Jan 2" seen in December
     else:
-        reset = current.replace(hour=hour, minute=int(minute or 0),
-                                second=0, microsecond=0)
+        reset = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if reset <= current:
             reset += datetime.timedelta(days=1)         # a time already past: tomorrow
-    return reset.timestamp()
+    return reset.timestamp() if tz else time.mktime(reset.timetuple())
 
 
 def limit_line(text):
@@ -215,8 +226,8 @@ def limit_line(text):
 
 def limit_text(log_path):
     """Where a usage-limit message would be: the text of the session's
-    result events, and its stderr. Not what the session itself wrote, which
-    may well discuss usage limits."""
+    error results, and its stderr. Not its other results, which carry the
+    session's own closing words, and those may well discuss usage limits."""
     texts = []
     try:
         with open(log_path) as f:
@@ -225,7 +236,8 @@ def limit_text(log_path):
                     event = json.loads(line)
                 except ValueError:
                     continue
-                if event.get("type") == "result" and isinstance(event.get("result"), str):
+                if (event.get("type") == "result" and event.get("is_error")
+                        and isinstance(event.get("result"), str)):
                     texts.append(event["result"])
     except FileNotFoundError:
         pass

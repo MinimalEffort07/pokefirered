@@ -9,6 +9,7 @@ permissions, and the session id used to resume it.
 import json
 import os
 import tempfile
+import time
 import unittest
 
 from autodev import registry, sessions
@@ -241,6 +242,53 @@ class Remembering(unittest.TestCase):
         self.registry.pause(1_800_000_000.0)    # a second limit, resetting sooner
         self.assertEqual(self.registry.paused_until(), 1_800_003_600.0)
 
+    def test_requeued_work_is_remembered_until_it_runs_again(self):
+        # So a re-queued grill is grilled again, not taken for a resumed one.
+        self.registry.start("grill", 67, "PROMPT")
+        self.registry.finish("grill", 67, requeued=True)
+        self.assertEqual(self.registry.requeued(), {("grill", 67)})
+        self.registry.start("grill", 67, "PROMPT")
+        self.registry.finish("grill", 67)
+        self.assertEqual(self.registry.requeued(), set())
+
+    def test_crash_records_outlive_the_30_day_clean_up(self):
+        # Crashes count for all time (D20).
+        for crashed in (True, False):
+            self.registry.start("ticket", 68, "PROMPT")
+            self.registry.finish("ticket", 68, crashed=crashed)
+        done = os.path.join(self.config.state_dir, "done")
+        for name in os.listdir(done):
+            os.utime(os.path.join(done, name), (0, 0))
+        self.registry.prune()
+        self.assertEqual(self.registry.crashes(), {("ticket", 68): 1})
+        self.assertEqual(len(os.listdir(done)), 1)
+
+    def test_an_unreadable_pause_file_is_no_pause(self):
+        os.makedirs(self.config.state_dir)
+        with open(os.path.join(self.config.state_dir, "paused-until"), "w") as f:
+            f.write("garbage")
+        self.assertEqual(self.registry.paused_until(), 0.0)
+
+    def test_the_reset_time_is_read_as_of_when_the_session_ended(self):
+        # It stopped at 14:58 on "resets 3pm"; the tick reads it at 15:01.
+        # Read as of the tick, 3pm would be tomorrow: a 24-hour pause.
+        import datetime
+        def utc(hm):
+            return datetime.datetime(2026, 10, 19, *hm,
+                                     tzinfo=datetime.timezone.utc).timestamp()
+        self.registry.start("ticket", 68, "PROMPT")
+        [record] = os.listdir(self.config.state_dir)
+        with open(os.path.join(self.config.state_dir, record)) as f:
+            log = json.load(f)["log"]
+        with open(log, "w") as f:
+            f.write(json.dumps({"type": "result", "is_error": True, "result":
+                                "You've hit your limit \u00b7 resets 3pm (UTC)"}) + "\n")
+        with open(sessions.exit_path(log), "w") as f:
+            f.write("exit-code\n")
+        os.utime(sessions.exit_path(log), (utc((14, 58)),) * 2)
+        [found] = self.registry.load(now=utc((15, 1)))
+        self.assertEqual(found.limit_reset, utc((15, 0)))
+
     def test_a_session_that_stopped_on_the_usage_limit_says_when_it_resets(self):
         self.registry.start("ticket", 68, "PROMPT")
         [record] = os.listdir(self.config.state_dir)
@@ -328,14 +376,42 @@ class UsageLimits(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(sessions.usage_limit(text, now, zone), expected)
 
+    def test_a_year_in_the_date_is_not_read_as_the_hour(self):
+        now = self.at("2026-10-19 14:10")
+        self.assertEqual(sessions.usage_limit(
+            "You've hit your limit \u00b7 resets Oct 23, 2026 at 9am (UTC)", now),
+            self.at("2026-10-23 09:00"))
+
+    def test_without_a_zone_the_machines_daylight_saving_is_respected(self):
+        # Sydney's clocks go back an hour at 3am on 5 April 2026, so 3pm the
+        # next day is 11 hours after 8pm, not 10.
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = self.SYDNEY
+        time.tzset()
+        try:
+            now = self.at("2026-04-04 20:00", self.SYDNEY)
+            self.assertEqual(sessions.usage_limit(
+                "You've hit your limit \u00b7 resets 3pm", now),
+                self.at("2026-04-05 15:00", self.SYDNEY))
+        finally:
+            if old is None:
+                del os.environ["TZ"]
+            else:
+                os.environ["TZ"] = old
+            time.tzset()
+
     def test_a_limit_without_a_readable_time_pauses_for_an_hour(self):
         now = 1_800_000_000.0
-        self.assertEqual(sessions.usage_limit("You've hit your usage limit.", now),
-                         now + 3600)
+        for text in ("You've hit your usage limit.",
+                     "You've hit your limit \u00b7 resets 13pm"):
+            with self.subTest(text=text):
+                self.assertEqual(sessions.usage_limit(text, now), now + 3600)
 
     def test_other_failures_are_not_usage_limits(self):
         for text in ("Error: the 45-minute time limit was hit",
-                     "API Error: 500 Internal Server Error", ""):
+                     "API Error: 500 Internal Server Error", "",
+                     # A session talking about the feature isn't hitting it.
+                     "Added a note on usage limits; the counter resets 3 times."):
             with self.subTest(text=text):
                 self.assertIsNone(sessions.usage_limit(text, 1_800_000_000.0))
 
@@ -345,6 +421,9 @@ class UsageLimits(unittest.TestCase):
             with open(log, "w") as f:
                 f.write(json.dumps({"type": "assistant", "message": {"content": [
                     {"type": "text", "text": "This ticket is about usage limits."}]}}) + "\n")
+                # A turn's own closing words (not an error) don't count.
+                f.write(json.dumps({"type": "result", "is_error": False,
+                                    "result": "I hit your usage limit section."}) + "\n")
                 f.write(json.dumps({"type": "result", "is_error": True,
                                     "result": "You've hit your limit \u00b7 resets 3pm"}) + "\n")
             with open(os.path.join(root, "ticket-68.err"), "w") as f:

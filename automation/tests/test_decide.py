@@ -456,6 +456,21 @@ class Pausing(unittest.TestCase):
             Launch("ticket", 68), SetStatus(68, "In progress"),
         ])
 
+    def test_a_requeued_grill_is_grilled_again_though_some_tickets_exist(self):
+        # The grill crashed or hit the usage limit after creating #68; the
+        # board adds sub-issues as they're created. Its tickets wait for it.
+        self.assertEqual(decide(State(
+            owner=OWNER, bot=BOT, items=[item(67), ticket(68, parent=67)],
+            requeued=frozenset([("grill", 67)]))), [
+            Launch("grill", 67), SetStatus(67, "Grilling"),
+        ])
+
+    def test_tickets_wait_while_their_parent_is_being_grilled(self):
+        # The board adds each ticket as the grill creates it, before the
+        # grill has finished checking the breakdown.
+        self.assertEqual(decide(state([item(67, "Grilling"),
+                                       ticket(68, parent=67)])), [])
+
     def test_D8_a_resumed_ticket_with_a_pr_goes_back_to_review(self):
         # Its PR is already open (paused while in review, or re-queued after
         # opening it), so implementing it again would be wrong.
@@ -514,15 +529,26 @@ class UsageLimits(unittest.TestCase):
             [ticket(68, "In progress"), ticket(81)],
             sessions=[limited("ticket", 68, 40)],
             outcomes={68: TicketOutcome(pr=None)}), [
+            # The status changes before the comment, so a retry of this
+            # group never @mentions the owner twice.
             PauseLaunches(NOW + 45 * 60),
+            SetStatus(68, "Todo"),
             Comment(68, "@MinimalEffort07 autodev hit the Claude usage limit "
                         "(the ticket session said: \u201cYou've hit your limit "
-                        "\u00b7 resets 3pm\u201d), so no session starts until "
+                        "\u00b7 resets 3pm\u201d), so it is paused until "
                         "NOW+45min. #68 goes back to Todo and starts again then."
                         "\n\n<!-- autodev -->"),
-            SetStatus(68, "Todo"),
-            Finish("ticket", 68),
+            Finish("ticket", 68, requeued=True),
         ])
+
+    def test_a_paused_card_hit_by_the_limit_is_told_it_stays_paused(self):
+        actions = self.run_tick([ticket(68, "Paused")],
+                                sessions=[limited("ticket", 68, 40)],
+                                outcomes={68: TicketOutcome(pr=None)})
+        self.assertEqual([type(a).__name__ for a in actions],
+                         ["PauseLaunches", "Comment", "Finish"])
+        self.assertIn("#68 stays Paused; it starts again once you move it back "
+                      "to Todo and the pause is over.", actions[1].body)
 
     def test_a_merge_that_hit_the_limit_goes_back_to_review(self):
         # Its /merge is still the owner's newest unhandled comment, so the
@@ -568,12 +594,22 @@ class Crashes(unittest.TestCase):
                               (None, "its unit vanished, e.g. in a reboot")):
             with self.subTest(ended_by=ended_by):
                 self.assertEqual(self.run_tick(crashed("ticket", 68, ended_by)), [
-                    Comment(68, "The ticket session ended without reporting a "
-                                "result (%s), so autodev is running it once more."
-                                "\n\n<!-- autodev -->" % how),
                     SetStatus(68, "Todo"),
-                    Finish("ticket", 68, crashed=True),
+                    Comment(68, "The ticket session ended without reporting a "
+                                "result (%s), so autodev will run it once more."
+                                "\n\n<!-- autodev -->" % how),
+                    Finish("ticket", 68, crashed=True, requeued=True),
                 ])
+
+    def test_a_crash_after_the_work_shows_on_github_counts_as_done(self):
+        # The ticket session opened its PR, or the merge session posted its
+        # conflict reply, then crashed before reporting: no retry used up.
+        self.assertEqual(self.run_tick(crashed("ticket", 68),
+                                       outcome=TicketOutcome(pr=73)),
+                         [SetStatus(68, "In review"), Finish("ticket", 68)])
+        self.assertEqual(self.run_tick(crashed("merge", 68),
+                                       outcome=MergeOutcome(merged=False, replied=True)),
+                         [SetStatus(68, "In review"), Finish("merge", 68)])
 
     def test_a_crashed_merge_goes_back_to_review(self):
         actions = self.run_tick(crashed("merge", 68),

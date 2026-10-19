@@ -44,7 +44,9 @@ class Registry:
             limit_reset, limit_note = None, ""
             if not running and result is None:
                 text = sessions.limit_text(record["log"])
-                limit_reset = sessions.usage_limit(text, now)
+                # "resets 3pm" means the 3pm after the session stopped, not
+                # after this tick: by now it may be 3:01pm, or tomorrow.
+                limit_reset = sessions.usage_limit(text, _ended_at(record["log"], now))
                 if limit_reset is not None:
                     limit_note = sessions.limit_line(text)
             found.append(Session(
@@ -89,31 +91,52 @@ class Registry:
             os.remove(self._record_path(role, issue))
             raise
 
-    def finish(self, role, issue, crashed=False):
+    def finish(self, role, issue, crashed=False, requeued=False):
+        """Move the session's record into done/, marked if it crashed (a
+        second crash parks the work) or its work was re-queued."""
         done = os.path.join(self.config.state_dir, "done")
         os.makedirs(done, exist_ok=True)
         path = self._record_path(role, issue)
         with open(path) as f:
             record = json.load(f)
-        if crashed:
-            record["crashed"] = True
-        # The session id keeps two sessions finished in the same second apart.
-        with open(os.path.join(done, "%s-%d-%s-%s.json" % (
-                role, issue, _stamp(), record["session_id"][:8])), "w") as f:
+        record.update(finished=time.time(), crashed=crashed, requeued=requeued)
+        # Rewrite it in place first, atomically, so the move into done/
+        # below stays a single step: never handled twice, never lost.
+        with open(path + ".tmp", "w") as f:
             json.dump(record, f, indent=2)
-        os.remove(path)
+        os.replace(path + ".tmp", path)
+        # The session id keeps two sessions finished in the same second apart.
+        os.replace(path, os.path.join(done, "%s-%d-%s-%s.json" % (
+            role, issue, _stamp(), record["session_id"][:8])))
+
+    def _done_records(self):
+        """Every finished session's record, oldest first."""
+        done = os.path.join(self.config.state_dir, "done")
+        if not os.path.isdir(done):
+            return []
+        records = []
+        for name in os.listdir(done):
+            with open(os.path.join(done, name)) as f:
+                records.append(json.load(f))
+        # Records from before #58 have no "finished" time; they go first.
+        return sorted(records, key=lambda r: r.get("finished", 0))
 
     def crashes(self):
         """How many finished sessions of each (role, issue) crashed."""
         counts = {}
-        done = os.path.join(self.config.state_dir, "done")
-        for name in sorted(os.listdir(done)) if os.path.isdir(done) else []:
-            with open(os.path.join(done, name)) as f:
-                record = json.load(f)
+        for record in self._done_records():
             if record.get("crashed"):
                 key = (record["role"], record["issue"])
                 counts[key] = counts.get(key, 0) + 1
         return counts
+
+    def requeued(self):
+        """The (role, issue) pairs whose last session's work was re-queued
+        and hasn't run again since."""
+        last = {}
+        for record in self._done_records():
+            last[(record["role"], record["issue"])] = record.get("requeued", False)
+        return {key for key, requeued in last.items() if requeued}
 
     def _pause_path(self):
         return os.path.join(self.config.state_dir, "paused-until")
@@ -124,8 +147,8 @@ class Registry:
         try:
             with open(self._pause_path()) as f:
                 return float(f.read().strip() or 0)
-        except FileNotFoundError:
-            return 0.0
+        except (FileNotFoundError, ValueError):
+            return 0.0      # no pause, or a file nobody can read: no pause
 
     def pause(self, until):
         """Start no session before `until`. A pause only ever gets longer."""
@@ -144,10 +167,34 @@ class Registry:
                 continue
             for name in os.listdir(folder):
                 path = os.path.join(folder, name)
-                if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                if (os.path.isfile(path) and os.path.getmtime(path) < cutoff
+                        and not _crashed(path)):
                     os.remove(path)
                     removed += 1
         return removed
+
+
+def _crashed(path):
+    """A done/ record of a crashed session: kept for good, because crashes
+    count for all time (D20)."""
+    if not path.endswith(".json") or os.path.basename(os.path.dirname(path)) != "done":
+        return False
+    try:
+        with open(path) as f:
+            return bool(json.load(f).get("crashed"))
+    except ValueError:
+        return False        # not a record autodev wrote
+
+
+def _ended_at(log, now):
+    """When the session stopped: when systemd wrote its end reason, else
+    when its log last changed, else `now`."""
+    for path in (sessions.exit_path(log), log):
+        try:
+            return os.path.getmtime(path)
+        except FileNotFoundError:
+            continue
+    return now
 
 
 def _ended_by(log):

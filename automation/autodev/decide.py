@@ -120,6 +120,9 @@ class State:
     paused_until: float = 0.0   # no session starts before this (a usage limit)
     # How many earlier sessions of each (role, issue) crashed
     crashes: dict = field(default_factory=dict)
+    # (role, issue) whose last session was re-queued (a crash or the usage
+    # limit) and hasn't run again yet
+    requeued: frozenset = frozenset()
     # How a time is written in a comment (the machine's local time).
     show_time: Callable = lambda t: time.strftime("%H:%M %Z on %a %d %b",
                                                   time.localtime(t))
@@ -194,6 +197,7 @@ class Finish:
     role: str
     issue: int
     crashed: bool = False
+    requeued: bool = False  # its work goes round again: see State.requeued
 
 
 # Every comment the bot writes ends with this hidden marker, so a later
@@ -213,9 +217,12 @@ def plan(state):
                                        _finished(state, session)))
     free = state.max_sessions - sum(1 for s in state.sessions if s.running)
     has_session = {s.issue for s in state.sessions}
-    # A paused parent stops all of its tickets from starting; a paused
-    # ticket stops itself, since nothing starts from Paused.
-    paused = {i.number for i in state.items if i.status == PAUSED}
+    # A paused parent stops all of its tickets from starting (a paused
+    # ticket stops itself, since nothing starts from Paused). So does one
+    # still being grilled: the board adds each ticket as the grill creates
+    # it, before the grill has finished.
+    held = {i.number for i in state.items if i.status in (PAUSED, GRILLING)
+            or (i.status == TODO and ("grill", i.number) in state.requeued)}
     ready = []      # (priority, group) for each group that launches a session
     for item in sorted(state.items, key=lambda i: i.number):
         if item.number in has_session:
@@ -238,13 +245,13 @@ def plan(state):
         launch = next((a for a in new if isinstance(a, Launch)), None)
         if launch is None:
             groups.append(new)
-        elif item.parent not in paused:
+        elif item.parent not in held:
             ready.append((_priority(launch.role, item), new))
     # While a usage limit lasts nothing starts, including the moment it is
     # found; the board is still kept up to date.
-    pause = max([state.paused_until] + [a.until for g in groups for a in g
-                                        if isinstance(a, PauseLaunches)])
-    if state.now < pause:
+    limit_ends = max([state.paused_until] + [a.until for g in groups for a in g
+                                             if isinstance(a, PauseLaunches)])
+    if state.now < limit_ends:
         ready = []
     # The rest stay in Todo for a later tick.
     groups += [new for _, new in sorted(ready, key=lambda r: r[0])[:max(free, 0)]]
@@ -273,9 +280,11 @@ def _new_parent(state, item):
     # and trust"); anything else is parked without its text being read.
     if item.author != state.owner:
         return _untrusted(state, item)
-    if any(i.has_parent and i.parent == item.number for i in state.items):
-        # It has tickets, so it was grilled already: the owner moved it from
-        # Paused back to Todo, which means "carry on" (D8).
+    if (("grill", item.number) not in state.requeued
+            and any(i.has_parent and i.parent == item.number for i in state.items)):
+        # It has tickets and its grill wasn't cut short, so it was grilled
+        # already: the owner moved it from Paused back to Todo, which means
+        # "carry on" (D8).
         return [SetStatus(item.number, IN_PROGRESS)]
     # Launch first: if the Status update then fails, the session record
     # still stops a second launch on the next tick.
@@ -411,12 +420,21 @@ def _finished(state, session):
         # time before it could say so.
         return _merged(state, issue) + [Finish(session.role, issue)]
     result = session.result
+    if result is None and session.role in ("ticket", "merge"):
+        # It reported nothing, but its work may be on GitHub anyway: the
+        # ticket session opened its PR, or the merge session posted its
+        # conflict reply, before it crashed or ran out of usage.
+        problem, actions = _DONE_CHECKS[session.role](state, session, outcome)
+        if problem is None:
+            limit = ([PauseLaunches(session.limit_reset + LIMIT_MARGIN)]
+                     if session.limit_reset is not None else [])
+            return limit + actions + [Finish(session.role, issue)]
     if result is None and session.limit_reset is not None:
         return _usage_limited(state, session)
     if result is None and session.ended_by != "timeout":
         return _crashed(state, session)
     if result is None:
-        problem = _ended_without_result(session)
+        problem = _timed_out(session)
     elif result.get("outcome") != "done":
         problem = "the %s session failed: %s" % (session.role,
                                                  result.get("reason", ""))
@@ -438,19 +456,29 @@ REQUEUE = {"grill": TODO, "ticket": TODO, "merge": IN_REVIEW}
 LIMIT_MARGIN = 5 * 60
 
 
+def _requeue(state, session, says, crashed=False):
+    """Send the session's work round again: back to where it waits, then a
+    comment (status first, so a retry of this group never posts the
+    comment twice). `says` is the comment for a card that is running and
+    for one the owner paused, which stays Paused."""
+    issue, role = session.issue, session.role
+    paused = any(i.number == issue and i.status == PAUSED for i in state.items)
+    return [SetStatus(issue, REQUEUE[role]),
+            Comment(issue, _bot_comment(says[paused])),
+            Finish(role, issue, crashed=crashed, requeued=True)]
+
+
 def _usage_limited(state, session):
-    issue = session.issue
     until = session.limit_reset + LIMIT_MARGIN
-    back = REQUEUE[session.role]
-    return [PauseLaunches(until),
-            Comment(issue, _bot_comment(
-                "@%s autodev hit the Claude usage limit (the %s session said: "
-                "\u201c%s\u201d), so no session starts until %s. #%d goes back to "
-                "%s and starts again then." % (
-                    state.owner, session.role, session.limit_note,
-                    state.show_time(until), issue, back))),
-            SetStatus(issue, back),
-            Finish(session.role, issue)]
+    hit = ("@%s autodev hit the Claude usage limit (the %s session said: "
+           "\u201c%s\u201d), so it is paused until %s." % (
+               state.owner, session.role, session.limit_note, state.show_time(until)))
+    issue = session.issue
+    return [PauseLaunches(until)] + _requeue(state, session, (
+        "%s #%d goes back to %s and starts again then." % (
+            hit, issue, REQUEUE[session.role]),
+        "%s #%d stays Paused; it starts again once you move it back to Todo "
+        "and the pause is over." % (hit, issue)))
 
 
 def _crashed(state, session):
@@ -462,20 +490,20 @@ def _crashed(state, session):
     how = ("its unit vanished, e.g. in a reboot" if session.ended_by is None
            else "systemd says \u201c%s\u201d" % session.ended_by)
     if state.crashes.get((role, issue), 0) == 0:
-        return [Comment(issue, _bot_comment(
-                    "The %s session ended without reporting a result (%s), so "
-                    "autodev is running it once more." % (role, how))),
-                SetStatus(issue, REQUEUE[role]),
-                Finish(role, issue, crashed=True)]
+        ended = "The %s session ended without reporting a result (%s)" % (role, how)
+        return _requeue(state, session, (
+            "%s, so autodev will run it once more." % ended,
+            "%s. #%d stays Paused; it runs once more when you move it back to "
+            "Todo." % (ended, issue)), crashed=True)
     return [SetStatus(issue, NEEDS_HUMAN),
             Comment(issue, _parked(state, session, "the %s session crashed a "
                                    "second time (%s)" % (role, how))),
             Finish(role, issue, crashed=True)]
 
 
-def _ended_without_result(session):
-    """Why a session that reported nothing needs a human: it hit its time
-    limit (crashes and usage limits are handled before this)."""
+def _timed_out(session):
+    """Why a session that reported nothing at its time limit needs a human
+    (crashes and usage limits are handled before this)."""
     return "the %s session hit its %s time limit" % (
         session.role, _duration(TIME_LIMITS[session.role]))
 
