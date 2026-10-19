@@ -1,9 +1,10 @@
 """How a Claude session is started, and how its result is read back.
 
 The dispatcher starts each session as its own systemd unit. These tests
-pin down the parts of that command that encode a decision from #48: the
+pin down the parts of that command that encode a decision: from #48, the
 bot's identity, the owner's Claude login, the time limit, the role's
-permissions, and the session id used to resume it.
+permissions, and the session id used to resume it; and since, each
+role's effort level.
 """
 
 import json
