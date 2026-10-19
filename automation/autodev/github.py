@@ -38,6 +38,7 @@ class GitHub:
         self.config = config
         self.board = board
         self.items = {item.number: item for item in board.items}
+        self._open_pulls = None     # read once per tick, when first needed
 
     def _issue(self, number):
         return self.gh.rest("GET", "repos/%s/issues/%d" % (self.config.repo, number))
@@ -119,7 +120,7 @@ class GitHub:
         Anyone can open a PR from a fork with any branch name, so only a
         branch in this repo, pushed and opened by the bot, counts."""
         prefix = branch_prefix(number)
-        if not hasattr(self, "_open_pulls"):    # one read per tick
+        if self._open_pulls is None:
             self._open_pulls = self.gh.rest_list(
                 "repos/%s/pulls?state=open" % self.config.repo)
         for pr in self._open_pulls:
@@ -142,7 +143,7 @@ class GitHub:
         if pr is None:
             return None
         return PullRequest(number=pr["number"], head=pr["head"]["ref"],
-                           merged=False, comments=self._timeline(pr["number"]))
+                           comments=self._timeline(pr["number"]))
 
     def _timeline(self, pr):
         """Everything said on a PR, oldest first: comments in its

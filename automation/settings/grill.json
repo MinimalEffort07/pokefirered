@@ -16,7 +16,7 @@
       "Bash(git restore:*)", "Bash(git reset:*)", "Bash(git clean:*)", "Bash(git stash:*)",
       "Bash(git merge:*)", "Bash(git rebase:*)", "Bash(git branch:*)", "Bash(git remote:*)",
       "Bash(git config:*)",
-      "Bash(*pret/pokefirered*)", "Bash(git* upstream*)",
+      "Bash(*pret/pokefirered*)", "Bash(git* upstream*)", "Bash(*AUTODEV_*)",
       "Bash(rm:*)", "Bash(mv:*)", "Bash(sed -i:*)"
     ]
   }

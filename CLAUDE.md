@@ -291,10 +291,10 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
   - `merge-pr` merges your PR with a merge commit of the commit checked out here. It refuses if that commit isn't pushed, or if it doesn't hold all of master.
 - First bring the branch up to date: `git pull --ff-only`, then `git fetch origin` and `git merge origin/master`.
 - **No conflict:** on that exact tree, build (`make -j$(nproc) firered`), run `cd automation && python3 -m unittest`, and run `bash test/run_suite.sh` in the background, waiting on its log as in the ticket role.
-  - If everything passes: `git push`, then `merge-pr`. If `merge-pr` says master has moved on, merge it in again and repeat.
+  - If everything passes: `git push origin <the PR's branch>`, then `merge-pr`. If `merge-pr` says master has moved on, merge it in again and repeat. If GitHub says the PR can't be merged yet (it briefly can't right after a push), wait a minute and try once more.
   - If anything fails: push nothing, and report `failed` with the output.
-- **A conflict:** resolve it on the branch, keeping both sides' intent and the ticket's acceptance criteria. Then build and test as above, commit and push.
-  - Then `pr-comment` exactly how you resolved each conflict: the file, what each side had, and what you kept. @mention @MinimalEffort07 as plain text, not in code.
+- **A conflict:** resolve it on the branch, keeping both sides' intent and the ticket's acceptance criteria. Then build and test as above, commit, and `git push origin <the PR's branch>`.
+  - Then `pr-comment` exactly how you resolved each conflict: the file, what each side had, and what you kept. @mention @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it).
   - Then report `done`. Don't merge: the owner's fresh `/merge` approves your resolution and starts a new merge session.
 - Never squash, rebase or force-push. The PR's Fixes #<T> line closes the ticket when it merges. The dispatcher then marks the ticket `Done` and removes the worktree.
 

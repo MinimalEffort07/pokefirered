@@ -256,6 +256,9 @@ class RolePermissions(unittest.TestCase):
             "Bash(git* upstream*)",                    # or its remote
             "Bash(git remote:*)",
             "WebFetch", "WebSearch",                   # no untrusted web text
+            # issue.py trusts AUTODEV_ISSUE and AUTODEV_ROLE: no overriding
+            # them for one command
+            "Bash(*AUTODEV_*)",
         ]:
             self.assertIn(rule, deny)
 
@@ -290,6 +293,8 @@ class RolePermissions(unittest.TestCase):
                 "Bash(python3 ./automation/bin/issue.py*)",
                 "Bash(*python3 bin/issue.py*)",
                 "Bash(*-worktrees/*issue.py*)",
+                # issue.py trusts the AUTODEV_* variables the dispatcher sets
+                "Bash(*AUTODEV_*)",
                 # rm -rf only inside its own worktree
                 "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)",
                 "Bash(rm -rf $HOME*)",

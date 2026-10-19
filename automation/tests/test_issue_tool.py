@@ -149,7 +149,9 @@ class OpeningPRs(unittest.TestCase):
                      # names, so the body may close its own ticket only.
                      PR_BODY + "\n\nAlso fixes #70.",
                      PR_BODY + "\n\n| Closes #67 | quoted |",
-                     PR_BODY + "\n\nResolves MinimalEffort07/pokefirered#48"):
+                     PR_BODY + "\n\nResolves MinimalEffort07/pokefirered#48",
+                     PR_BODY + "\n\nfixed: https://github.com/MinimalEffort07/"
+                               "pokefirered/issues/70"):
             with self.subTest(body=body):
                 gh = FakeRest({})
                 with self.assertRaises(issue_tool.Refused):
@@ -160,29 +162,59 @@ class OpeningPRs(unittest.TestCase):
 COMPARE = "repos/MinimalEffort07/pokefirered/compare/abc123...master"
 
 
+def pull(number=73, ref="issue-68-note", author="MinimalEffort07-Autodev",
+         repo="MinimalEffort07/pokefirered", state="open"):
+    return {"number": number, "state": state, "user": {"login": author},
+            "head": {"ref": ref, "repo": {"full_name": repo}}}
+
+
 class MergingPRs(unittest.TestCase):
     def test_a_merge_session_merges_the_commit_it_tested_with_a_merge_commit(self):
         # Its branch already holds all of master, so the merged tree is the
         # tree it built and tested.
-        gh = FakeRest({COMPARE: {"ahead_by": 0}})
-        issue_tool.merge_pr(gh, CONFIG, 73, "abc123")
+        gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0}})
+        issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123")
         self.assertEqual(gh.writes, [
             ("PUT", PULLS + "/73/merge", {"merge_method": "merge", "sha": "abc123"})])
 
     def test_it_refuses_when_master_has_moved_on_since_it_was_merged_in(self):
-        gh = FakeRest({COMPARE: {"ahead_by": 2}})
+        gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 2}})
         with self.assertRaises(issue_tool.Refused) as refused:
-            issue_tool.merge_pr(gh, CONFIG, 73, "abc123")
+            issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123")
         self.assertIn("master has 2 commits", str(refused.exception))
         self.assertEqual(gh.writes, [])
 
+    def test_only_the_tickets_own_pr_can_be_merged_or_answered(self):
+        # AUTODEV_PR comes from the session's environment, which a command
+        # could override, so the PR itself is checked.
+        for other in (pull(ref="issue-70-other"), pull(author="stranger"),
+                      pull(repo="stranger/pokefirered"), pull(state="closed")):
+            with self.subTest(other=other):
+                gh = FakeRest({PULLS + "/73": other, COMPARE: {"ahead_by": 0}})
+                with self.assertRaises(issue_tool.Refused):
+                    issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123")
+                with self.assertRaises(issue_tool.Refused):
+                    issue_tool.pr_comment(gh, CONFIG, 68, 73, 501, "Hi @MinimalEffort07")
+                self.assertEqual(gh.writes, [])
+
     def test_a_reply_on_the_pr_says_which_comment_it_handled(self):
-        gh = FakeRest({})
-        issue_tool.pr_comment(gh, CONFIG, 73, 501, "Resolved the conflict by ...")
+        gh = FakeRest({PULLS + "/73": pull()})
+        issue_tool.pr_comment(gh, CONFIG, 68, 73, 501,
+                              "@MinimalEffort07 resolved the conflict by ...")
         self.assertEqual(gh.writes, [
             ("POST", ISSUES + "/73/comments", {"body": (
-                "Resolved the conflict by ...\n\n"
+                "@MinimalEffort07 resolved the conflict by ...\n\n"
                 "<!-- autodev handled-through: 501 -->")})])
+
+    def test_a_reply_must_mention_the_owner(self):
+        # The owner has to hear about a resolved conflict (#48,
+        # "Notifications"); the dispatcher sends the card back to them.
+        gh = FakeRest({PULLS + "/73": pull()})
+        for body in ("Resolved the conflict.", "Resolved. `@MinimalEffort07`"):
+            with self.subTest(body=body):
+                with self.assertRaises(issue_tool.Refused):
+                    issue_tool.pr_comment(gh, CONFIG, 68, 73, 501, body)
+        self.assertEqual(gh.writes, [])
 
 
 class Roles(unittest.TestCase):

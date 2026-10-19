@@ -84,10 +84,9 @@ class PrComment:
 
 @dataclass(frozen=True)
 class PullRequest:
-    """A ticket's PR: the bot's, from the ticket's own branch."""
+    """A ticket's open PR: the bot's, from the ticket's own branch."""
     number: int
     head: str               # its branch
-    merged: bool
     comments: tuple = ()    # PrComment, oldest first
 
 
@@ -286,6 +285,10 @@ def _waiting_ticket(state, item):
 HANDLED_THROUGH = re.compile(r"<!-- autodev handled-through: (\d+) -->")
 
 
+def handled_marker(comment_id):
+    return "<!-- autodev handled-through: %d -->" % comment_id
+
+
 def _newest_unhandled(state, pr):
     """The owner's newest comment on the PR that came after everything a
     bot reply says it handled, or None. Nobody else's comments count."""
@@ -307,13 +310,17 @@ def _parent_in_progress(state, item):
     the parent (#48, "Flow" step 7). Its tickets are the board's issues
     whose "## Parent" names it: the grill puts every ticket on the board."""
     tickets = [i for i in state.items if i.has_parent and i.parent == item.number]
-    if not tickets or any(t.is_open for t in tickets):
+    if (item.author != state.owner or not tickets
+            or any(t.is_open for t in tickets)):
         return []
-    return [Comment(item.number, _bot_comment(
+    # Closed before the comment: if closing fails, the next tick tries
+    # again without having @mentioned the owner twice.
+    return [CloseIssue(item.number),
+            Comment(item.number, _bot_comment(
                 "@%s every ticket of this issue is closed (%s), so autodev is "
                 "done with it." % (state.owner, ", ".join(
                     "#%d" % t.number for t in sorted(tickets, key=lambda t: t.number))))),
-            CloseIssue(item.number), SetStatus(item.number, DONE)]
+            SetStatus(item.number, DONE)]
 
 
 def _closed_ticket(state, item):
@@ -332,7 +339,7 @@ def _in_review(state, item):
     """A ticket whose PR waits for the owner: their "/merge" starts a merge
     session, as long as nothing they said after it is still unhandled."""
     pr = state.prs.get(item.number)
-    if pr is None or pr.merged:
+    if pr is None:
         return []
     newest = _newest_unhandled(state, pr)
     if newest is None or newest.body.strip() != "/merge":
@@ -348,6 +355,10 @@ def _finished(state, session):
     outcome = state.outcomes.get(issue)
     if outcome is None:
         return []   # the tick couldn't read this from GitHub; next tick retries
+    if session.role == "merge" and outcome.merged:
+        # Merged is merged, even if the session then failed or ran out of
+        # time before it could say so.
+        return _merged(state, issue) + [Finish(session.role, issue)]
     result = session.result
     if result is None:
         problem = _ended_without_result(session)
@@ -399,18 +410,21 @@ def _ticket_done(state, session, outcome):
     return None, [SetStatus(session.issue, IN_REVIEW)]
 
 
+def _merged(state, issue):
+    """The ticket's PR is merged: the ticket is done."""
+    # "Fixes #T" normally closed the ticket as the PR merged.
+    item = next((i for i in state.items if i.number == issue), None)
+    close = [CloseIssue(issue)] if item is None or item.is_open else []
+    return close + [RemoveWorktree(issue), SetStatus(issue, DONE)]
+
+
 def _merge_done(state, session, outcome):
-    """(problem, actions): what a merge that says it's done leads to."""
-    issue = session.issue
-    if outcome.merged:
-        # "Fixes #T" normally closed the ticket as the PR merged.
-        item = next((i for i in state.items if i.number == issue), None)
-        close = [CloseIssue(issue)] if item is None or item.is_open else []
-        return None, close + [RemoveWorktree(issue), SetStatus(issue, DONE)]
+    """(problem, actions): what a merge that says it's done, but whose PR
+    isn't merged (_finished checks that first), leads to."""
     if outcome.replied:
         # It resolved a conflict on the branch: the owner's next /merge
         # approves that resolution too.
-        return None, [SetStatus(issue, IN_REVIEW)]
+        return None, [SetStatus(session.issue, IN_REVIEW)]
     return ("the merge session said it was done, but GitHub shows PR #%d "
             "neither merged nor answered about a conflict" % session.pr), []
 

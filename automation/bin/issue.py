@@ -58,9 +58,10 @@ def main():
         if args.command == "read":
             print(issue_tool.read(gh, config, args.number))
             return 0
-        issue = int(os.environ["AUTODEV_ISSUE"])
+        issue = _env("AUTODEV_ISSUE")
         if args.command == "merge-pr":
-            issue_tool.merge_pr(gh, config, int(os.environ["AUTODEV_PR"]), _git("rev-parse", "HEAD"))
+            issue_tool.merge_pr(gh, config, issue, _env("AUTODEV_PR"),
+                                _git("rev-parse", "HEAD"))
             print("merged")
             return 0
         body = sys.stdin.read()
@@ -69,8 +70,8 @@ def main():
         elif args.command == "set-body":
             issue_tool.set_body(gh, config, issue, body)
         elif args.command == "pr-comment":
-            issue_tool.pr_comment(gh, config, int(os.environ["AUTODEV_PR"]),
-                                  int(os.environ["AUTODEV_HANDLED_THROUGH"]), body)
+            issue_tool.pr_comment(gh, config, issue, _env("AUTODEV_PR"),
+                                  _env("AUTODEV_HANDLED_THROUGH"), body)
         elif args.command == "open-pr":
             created = issue_tool.open_pr(gh, config, issue, args.title,
                                          _git("branch", "--show-current"), body)
@@ -78,12 +79,23 @@ def main():
         else:
             print("#%d" % issue_tool.create_ticket(gh, config, issue, args.title, body))
         return 0
-    except KeyError as e:
+    except Unset as e:
         print("error: %s is not set (only autodev sessions may write)" % e,
               file=sys.stderr)
     except (issue_tool.Refused, GhError) as e:
         print("error: %s" % e, file=sys.stderr)
     return 1
+
+
+class Unset(Exception):
+    """An environment variable the dispatcher sets for sessions is missing."""
+
+
+def _env(name):
+    try:
+        return int(os.environ[name])
+    except KeyError:
+        raise Unset(name)
 
 
 def _git(*args):

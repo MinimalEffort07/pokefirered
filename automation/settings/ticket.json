@@ -26,7 +26,7 @@
       "Bash(git push*--delete*)", "Bash(git push* -d*)", "Bash(git push* :*)",
       "Bash(git push*--mirror*)", "Bash(git push*--all*)",
       "Bash(git remote:*)", "Bash(git config:*)",
-      "Bash(*pret/pokefirered*)", "Bash(git* upstream*)",
+      "Bash(*pret/pokefirered*)", "Bash(git* upstream*)", "Bash(*AUTODEV_*)",
       "Bash(python3 automation/bin/issue.py*)", "Bash(python3 ./automation/bin/issue.py*)",
       "Bash(*python3 bin/issue.py*)", "Bash(*-worktrees/*issue.py*)",
       "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)", "Bash(rm -rf $HOME*)"

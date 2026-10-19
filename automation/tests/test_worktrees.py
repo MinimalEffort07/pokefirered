@@ -133,10 +133,10 @@ class Removing(Repo, unittest.TestCase):
         worktrees.remove(self.clone, 70)
 
     def test_listing_says_which_tickets_have_one(self):
-        self.assertEqual(worktrees.tickets(self.clone), set())
+        self.assertEqual(worktrees.tickets_with_worktrees(self.clone), set())
         worktrees.make(self.clone, 68, "issue-68-note")
         worktrees.make(self.clone, 70, "issue-70-other")
-        self.assertEqual(worktrees.tickets(self.clone), {68, 70})
+        self.assertEqual(worktrees.tickets_with_worktrees(self.clone), {68, 70})
 
 
 class BranchNames(unittest.TestCase):

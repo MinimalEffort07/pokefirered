@@ -5,8 +5,9 @@ it starts grill sessions for new parent issues, ticket sessions for
 tickets with nothing left blocking them, and merge sessions for PRs the
 owner has approved with /merge. It keeps tickets' Blocked/Todo status in
 step with their blockers, checks finished sessions' work on GitHub, and
-tidies up after closed tickets and finished parents. systemd sends everything it prints to the
-journal (`journalctl --user -u autodev-dispatcher`).
+tidies up after closed tickets and finished parents. systemd sends
+everything it prints to the journal (`journalctl --user -u
+autodev-dispatcher`).
 """
 
 import os
@@ -79,16 +80,10 @@ def read_state(github, config, snapshot, registry, log):
     known = registry.load()
     outcomes = {}
     for s in known:
-        if s.running or s.role not in ("grill", "ticket", "merge"):
+        if s.running or s.role not in _OUTCOMES:
             continue
         try:
-            if s.role == "grill":
-                outcomes[s.issue] = github.grill_outcome(
-                    s.issue, (s.result or {}).get("links", []))
-            elif s.role == "ticket":
-                outcomes[s.issue] = github.ticket_outcome(s.issue)
-            else:
-                outcomes[s.issue] = github.merge_outcome(s.pr, s.handled_through)
+            outcomes[s.issue] = _OUTCOMES[s.role](github, s)
         except GhError as e:
             # Leave this session for the next tick; the others go on.
             print("error: reading #%d's %s outcome: %s" % (s.issue, s.role, e),
@@ -126,8 +121,17 @@ def read_state(github, config, snapshot, registry, log):
         owner=config.owner, bot=config.bot, items=snapshot.items,
         sessions=known, outcomes=outcomes, max_sessions=config.max_sessions,
         closed=frozenset(closed), prs=prs,
-        worktrees=frozenset(worktrees.tickets(config.clone)),
+        worktrees=frozenset(worktrees.tickets_with_worktrees(config.clone)),
         resume_command=config.resume_command)
+
+
+# What GitHub shows once a session of each role has ended.
+_OUTCOMES = {
+    "grill": lambda github, s: github.grill_outcome(
+        s.issue, (s.result or {}).get("links", [])),
+    "ticket": lambda github, s: github.ticket_outcome(s.issue),
+    "merge": lambda github, s: github.merge_outcome(s.pr, s.handled_through),
+}
 
 
 def _carry_out(action, github, registry, config):

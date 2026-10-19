@@ -127,7 +127,7 @@ class TicketPRTimeline(unittest.TestCase):
                 remark(4, "stranger", "Inline nit", "2026-10-19T06:01:00Z")],
         }
         found = GitHub(FakeRest(gets), CONFIG, BOARD).ticket_pr(68)
-        self.assertEqual((found.number, found.head, found.merged), (73, "issue-68-note", False))
+        self.assertEqual((found.number, found.head), (73, "issue-68-note"))
         self.assertEqual(found.comments, (
             PrComment(4, "stranger", "Inline nit", "2026-10-19T06:01:00Z"),
             PrComment(2, "MinimalEffort07", "Reword the note.", "2026-10-19T06:03:00Z"),

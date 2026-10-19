@@ -46,8 +46,8 @@ def path(clone, number):
     return os.path.join(clone + "-worktrees", "issue-%d" % number)
 
 
-def tickets(clone):
-    """The ticket numbers that have a worktree."""
+def tickets_with_worktrees(clone):
+    """The numbers of the tickets that have a worktree."""
     try:
         names = os.listdir(clone + "-worktrees")
     except FileNotFoundError:
@@ -67,11 +67,12 @@ def make(clone, number, branch):
     made part of it before failing."""
     where = path(clone, number)
 
-    def git(*args, check=True):
-        return _git(clone, *args, check=check)
+    def git(*args):
+        return _git(clone, *args)
 
     def has(ref):
-        return git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0
+        return _git(clone, "rev-parse", "--verify", "--quiet", ref,
+                    check=False).returncode == 0
 
     if not os.path.isdir(where):
         # git still lists a worktree whose folder was deleted, and won't

@@ -325,7 +325,7 @@ def handled(id, through, minute):
 def in_review(comments, number=68, pr=73):
     """Ticket `number` waiting in review, its PR saying `comments`."""
     return state([ticket(number, "In review")], prs={number: PullRequest(
-        number=pr, head="issue-%d-note" % number, merged=False,
+        number=pr, head="issue-%d-note" % number,
         comments=tuple(comments))})
 
 
@@ -412,11 +412,18 @@ class Parents(unittest.TestCase):
             item(67, status="In progress"),
             ticket(68, "Done", parent=67, is_open=False),
             ticket(72, "Done", parent=67, is_open=False)])), [
+            # Closed first: if that fails, the next tick tries again without
+            # having @mentioned the owner twice.
+            CloseIssue(67),
             Comment(67, "@MinimalEffort07 every ticket of this issue is closed "
                         "(#68, #72), so autodev is done with it.\n\n<!-- autodev -->"),
-            CloseIssue(67),
             SetStatus(67, "Done"),
         ])
+
+    def test_only_the_owners_parents_are_closed(self):
+        self.assertEqual(decide(state([
+            item(67, status="In progress", author="someone-else"),
+            ticket(68, "Done", parent=67, is_open=False)])), [])
 
     def test_a_parent_with_an_open_ticket_or_none_on_the_board_stays(self):
         for tickets in ([ticket(68, "Done", parent=67, is_open=False),
@@ -450,6 +457,15 @@ class FinishedMerges(unittest.TestCase):
             Finish("merge", 68)])
         self.assertEqual(self.run_finished(done, merged=True, ticket_open=False), [
             RemoveWorktree(68), SetStatus(68, "Done"), Finish("merge", 68)])
+
+    def test_a_merged_pr_counts_even_if_the_session_then_failed(self):
+        # It merged, then timed out or crashed before reporting. GitHub
+        # showing the PR merged is what matters (#48, Sessions).
+        for result, ended_by in ((None, "timeout"), ({"outcome": "failed"}, "success")):
+            with self.subTest(result=result):
+                self.assertEqual(self.run_finished(result, merged=True, ended_by=ended_by), [
+                    CloseIssue(68), RemoveWorktree(68), SetStatus(68, "Done"),
+                    Finish("merge", 68)])
 
     def test_a_conflict_resolved_on_the_branch_waits_for_a_fresh_merge(self):
         # The session resolved it, re-tested, pushed and explained how in a
