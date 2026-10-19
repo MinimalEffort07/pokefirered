@@ -10,16 +10,17 @@ trust") in code, not just in instructions:
   - A session only changes its own issue (AUTODEV_ISSUE, set by the
     dispatcher), with the commands its role needs (AUTODEV_ROLE): a grill
     session its parent and the tickets it creates under it, a ticket
-    session its ticket and the PR it opens for it, a merge session its
-    ticket's PR. Only a merge session merges, and only with a merge commit
-    of the commit it tested. No session can add labels, close issues, or
-    touch the board.
+    session its ticket and the PR it opens for it, a merge or fix-up
+    session its ticket's PR. Only a merge session merges, and only with a
+    merge commit of the commit it tested. No session can add labels, close
+    issues, or touch the board.
 """
 
 import re
 
 from autodev.board import issue_numbers, section
-from autodev.decide import MARKER, handled_marker
+from autodev.decide import MARKER, handled_marker, merge_cancelled, unhandled
+from autodev.github import pr_timeline
 from autodev.worktrees import branch_prefix
 
 
@@ -32,6 +33,7 @@ COMMANDS = {
     "grill": {"read", "comment", "set-body", "create-ticket"},
     "ticket": {"read", "comment", "open-pr"},
     "merge": {"read", "pr-comment", "merge-pr"},
+    "fixup": {"read", "pr-comment"},
 }
 
 
@@ -50,7 +52,9 @@ def _issues(config):
 
 def read(gh, config, number):
     """The issue (or PR) and its comments, as text, with anything by an
-    untrusted author withheld."""
+    untrusted author withheld. A PR also shows its reviews and inline
+    comments, and marks the owner's comments no bot reply has handled yet
+    (#48, "PR comment bookkeeping"): a fix-up session's work."""
     data = gh.rest("GET", "%s/%d" % (_issues(config), number))
     author = data["user"]["login"]
     lines = ["#%d %s [%s]" % (number, data["title"], data["state"]),
@@ -60,17 +64,34 @@ def read(gh, config, number):
     else:
         lines.append("[body withheld: written by @%s, whom autodev doesn't "
                      "trust]" % author)
+    if "pull_request" in data:
+        return "\n".join(lines + _said_on_pr(gh, config, number))
     comments = gh.rest_list("%s/%d/comments" % (_issues(config), number))
     shown = [c for c in comments if _trusted(config, c["user"]["login"])]
-    withheld = len(comments) - len(shown)
-    lines += ["", "--- %d comment%s from @%s or @%s%s ---" % (
-        len(shown), "" if len(shown) == 1 else "s", config.owner, config.bot,
-        "; %d comment%s by other authors withheld" % (
-            withheld, "" if withheld == 1 else "s") if withheld else "")]
+    lines += _count(config, len(shown), len(comments) - len(shown))
     for c in shown:
         lines += ["", "@%s at %s:" % (c["user"]["login"], c["created_at"]),
                   c["body"] or ""]
     return "\n".join(lines)
+
+
+def _said_on_pr(gh, config, pr):
+    said = pr_timeline(gh, config.repo, pr)
+    left = {c.id for c in unhandled(config.owner, config.bot, said)}
+    shown = [c for c in said if _trusted(config, c.author)]
+    lines = _count(config, len(shown), len(said) - len(shown))
+    for c in shown:
+        lines += ["", "@%s at %s, %s %d%s%s:" % (
+            c.author, c.at, c.kind, c.id, " on " + c.where if c.where else "",
+            " [unhandled]" if c.id in left else ""), c.body]
+    return lines
+
+
+def _count(config, shown, withheld):
+    return ["", "--- %d comment%s from @%s or @%s%s ---" % (
+        shown, "" if shown == 1 else "s", config.owner, config.bot,
+        "; %d comment%s by other authors withheld" % (
+            withheld, "" if withheld == 1 else "s") if withheld else "")]
 
 
 def comment(gh, config, issue, body):
@@ -150,20 +171,30 @@ def open_pr(gh, config, ticket, title, head, body):
 
 
 def pr_comment(gh, config, ticket, pr, handled_through, body):
-    """Reply on `ticket`'s PR, @mentioning the owner. The reply ends with a
-    marker naming the newest of the owner's comments the session dealt
-    with, so the dispatcher treats only later ones as new (#48, "PR comment
-    bookkeeping"). The marker also marks the reply as autodev's."""
+    """Reply on `ticket`'s PR, @mentioning the owner: a merge session's
+    account of a resolved conflict, or a fix-up's of what it changed. The
+    reply ends with a marker naming the newest of the owner's comments the
+    session dealt with, so the dispatcher treats only later ones as new
+    (#48, "PR comment bookkeeping"). The marker also marks the reply as
+    autodev's."""
     _check_mention(config, body, "reply")
     _check_own_pr(gh, config, ticket, pr)
     gh.rest("POST", "%s/%d/comments" % (_issues(config), pr),
             body=body.rstrip() + "\n\n" + handled_marker(handled_through))
 
 
-def merge_pr(gh, config, ticket, pr, head):
+def merge_pr(gh, config, ticket, pr, head, handled_through):
     """Merge `ticket`'s PR with a merge commit (never squash or rebase),
-    pinned to `head`, the commit the session built and tested."""
+    pinned to `head`, the commit the session built and tested, on the
+    owner's /merge `handled_through`."""
     _check_own_pr(gh, config, ticket, pr)
+    # Feedback after the /merge cancels it (D14), even feedback posted while
+    # this session was already running; so does deleting the /merge.
+    cancelled = merge_cancelled(config.owner, pr_timeline(gh, config.repo, pr),
+                                handled_through)
+    if cancelled:
+        raise Refused("%s, which cancels it: don't merge. Report \"failed\"; "
+                      "autodev sends the PR back to review" % cancelled)
     # The merge commit's tree is `head`'s only if the branch already holds
     # all of master. If master has moved on, GitHub would mix in commits
     # nobody tested.

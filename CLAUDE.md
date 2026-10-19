@@ -279,9 +279,16 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - Push only your own branch: `git push -u origin issue-<T>-<slug>`. Never push to master, force-push or merge.
 - If you can't finish, push the unfinished branch before reporting `failed`.
 
-**Fix-up role** (a PR with unhandled feedback; added by #59):
-- Address every unhandled comment from the owner in one pass: TDD, build, suite, and a fresh recording if the change is visible in-game.
-- Push, then reply on the PR with the handled-through marker.
+**Fix-up role** (the owner left feedback on a PR; added by #59):
+- The dispatcher runs you in the ticket's worktree, on the PR's branch. First `git pull --ff-only`: the owner may have pushed to it.
+- **GitHub access:** only through autodev's own copy of `automation/bin/issue.py`; your prompt gives its full path. Plain `gh` is denied.
+  - `read <PR>` shows the PR's comments, reviews and inline comments (each inline one with its file and line), with an id on each, and marks the owner's unhandled ones `[unhandled]`. `read <T>` shows the ticket.
+  - `pr-comment` replies on your PR, with the body on stdin. It adds the handled-through marker naming the comment your prompt names.
+- Address every unhandled comment from the owner up to and including the one your prompt names, in one pass. Leave newer ones alone: they get a follow-up session.
+- For each change: TDD, a clean build, `cd automation && python3 -m unittest` if `automation/` changed, the README if it describes what changed, and a fresh recording if the change is visible in-game. Then run `bash test/run_suite.sh` in the background and wait on its log, as in the ticket role.
+- A comment that only asks a question needs no change: answer it in the reply.
+- Push only your own branch (`git push origin <the PR's branch>`), then `pr-comment` what you did about each comment, @mentioning @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it). Report `done` once the reply is posted.
+- Never merge master in (the merge session does that), merge, squash, rebase or force-push.
 - If you can't finish, push what you have before reporting `failed`.
 
 **Merge role** (the owner commented `/merge`; added by #57):
@@ -293,6 +300,7 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - First bring the branch up to date: `git pull --ff-only`, then `git fetch origin` and `git merge origin/master`.
 - **No conflict:** on that exact tree, build (`make -j$(nproc) firered`), run `cd automation && python3 -m unittest`, and run `bash test/run_suite.sh` in the background, waiting on its log as in the ticket role.
   - If everything passes: `git push origin <the PR's branch>`, then `merge-pr`. If `merge-pr` says master has moved on, merge it in again and repeat. If GitHub says the PR can't be merged yet (it briefly can't right after a push), wait a minute and try once more.
+  - If `merge-pr` says the `/merge` no longer stands (the owner has said more since, or deleted it), don't merge: report `failed` with that reason. The dispatcher sends the PR back to review, where a fix-up handles any feedback.
   - If anything fails: push nothing, and report `failed` with the output.
 - **A conflict:** resolve it on the branch, keeping both sides' intent and the ticket's acceptance criteria. Then build and test as above, commit, and `git push origin <the PR's branch>`.
   - Then `pr-comment` exactly how you resolved each conflict: the file, what each side had, and what you kept. @mention @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it).

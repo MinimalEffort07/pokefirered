@@ -2,8 +2,9 @@
 
 A tick reads the board, works out what to do (decide.py), and does it:
 it starts grill sessions for new parent issues, ticket sessions for
-tickets with nothing left blocking them, and merge sessions for PRs the
-owner has approved with /merge. It keeps tickets' Blocked/Todo status in
+tickets with nothing left blocking them, merge sessions for PRs the owner
+has approved with /merge, and fix-up sessions for PRs the owner has left
+feedback on. It keeps tickets' Blocked/Todo status in
 step with their blockers, checks finished sessions' work on GitHub, and
 tidies up after closed tickets and finished parents. systemd sends
 everything it prints to the journal (`journalctl --user -u
@@ -86,10 +87,10 @@ def read_state(github, config, snapshot, registry, log):
     known = registry.load(now=now)
     outcomes = {}
     for s in known:
-        if s.running or s.role not in _OUTCOMES:
+        if s.running or s.role not in OUTCOMES:
             continue
         try:
-            outcomes[s.issue] = _OUTCOMES[s.role](github, s)
+            outcomes[s.issue] = OUTCOMES[s.role](github, s)
         except GhError as e:
             # Leave this session for the next tick; the others go on.
             print("error: reading #%d's %s outcome: %s" % (s.issue, s.role, e),
@@ -137,11 +138,12 @@ def read_state(github, config, snapshot, registry, log):
 
 
 # What GitHub shows once a session of each role has ended.
-_OUTCOMES = {
+OUTCOMES = {
     "grill": lambda github, s: github.grill_outcome(
         s.issue, (s.result or {}).get("links", [])),
     "ticket": lambda github, s: github.ticket_outcome(s.issue),
     "merge": lambda github, s: github.merge_outcome(s.pr, s.handled_through),
+    "fixup": lambda github, s: github.fixup_outcome(s.pr, s.handled_through),
 }
 
 
@@ -176,8 +178,8 @@ def _carry_out(action, github, registry, config):
 
 def prompt(config, role, issue, pr=None, comment=None):
     """The role's prompt with its {issue}, {repo}, {owner}, {bot} and
-    {clone} placeholders filled in, and a merge session's {pr} and
-    {comment}. Plain replacement, so any other braces in the Markdown are
+    {clone} placeholders filled in, and a merge or fix-up session's {pr}
+    and {comment}. Plain replacement, so any other braces in the Markdown are
     left alone."""
     with open(os.path.join(PROMPTS, role + ".md")) as f:
         text = f.read()

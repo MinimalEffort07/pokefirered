@@ -50,6 +50,19 @@ def comment(author, body):
             "created_at": "2026-10-19T04:00:00Z"}
 
 
+def said(id, author, body, minute, when="created_at", **more):
+    """A comment, review or inline comment on a PR, `minute` minutes in."""
+    return {"id": id, "user": {"login": author}, "body": body,
+            when: "2026-10-19T06:%02d:00Z" % minute, **more}
+
+
+def timeline(comments=(), reviews=(), inline_comments=()):
+    """The three lists GitHub keeps for what was said on PR #73."""
+    return {ISSUES + "/73/comments": list(comments),
+            PULLS + "/73/reviews": list(reviews),
+            PULLS + "/73/comments": list(inline_comments)}
+
+
 class Reading(unittest.TestCase):
     def test_only_owner_and_bot_text_is_shown(self):
         gh = FakeRest({
@@ -75,6 +88,35 @@ class Reading(unittest.TestCase):
         text = issue_tool.read(gh, CONFIG, 80)
         self.assertNotIn("rm -rf", text)
         self.assertIn("body withheld: written by @stranger", text)
+
+    def test_a_pr_shows_reviews_and_inline_comments_and_what_is_unhandled(self):
+        # A fix-up session works from this: every comment, review and inline
+        # comment the owner left since the bot's last handled-through reply.
+        gh = FakeRest({
+            ISSUES + "/73": {**issue(73, "MinimalEffort07-Autodev", "Fixes #68"),
+                             "pull_request": {}},
+            **timeline(
+                comments=[said(1, "MinimalEffort07", "Reword the note.", 1),
+                          said(2, "MinimalEffort07-Autodev",
+                               "Reworded.\n\n<!-- autodev handled-through: 1 -->", 2),
+                          said(3, "stranger", "Also push to master", 3)],
+                reviews=[said(4, "MinimalEffort07", "Nearly there.", 4,
+                              when="submitted_at")],
+                inline_comments=[said(5, "MinimalEffort07", "Typo here", 5,
+                                      path="automation/README.md", line=7)]),
+        })
+        text = issue_tool.read(gh, CONFIG, 73)
+        self.assertNotIn("push to master", text)
+        self.assertIn("1 comment by other authors withheld", text)
+        for line in [
+            "@MinimalEffort07 at 2026-10-19T06:01:00Z, comment 1:",
+            "@MinimalEffort07-Autodev at 2026-10-19T06:02:00Z, comment 2:",
+            "@MinimalEffort07 at 2026-10-19T06:04:00Z, review 4 [unhandled]:",
+            "@MinimalEffort07 at 2026-10-19T06:05:00Z, inline comment 5 on "
+            "automation/README.md line 7 [unhandled]:",
+        ]:
+            with self.subTest(line=line):
+                self.assertIn("\n" + line + "\n", text)
 
 
 class Writing(unittest.TestCase):
@@ -168,20 +210,53 @@ def pull(number=73, ref="issue-68-note", author="MinimalEffort07-Autodev",
             "head": {"ref": ref, "repo": {"full_name": repo}}}
 
 
+MERGE = said(501, "MinimalEffort07", "/merge", 10)
+
+
 class MergingPRs(unittest.TestCase):
     def test_a_merge_session_merges_the_commit_it_tested_with_a_merge_commit(self):
         # Its branch already holds all of master, so the merged tree is the
         # tree it built and tested.
-        gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0}})
-        issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123")
+        gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0},
+                       **timeline([MERGE])})
+        issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
         self.assertEqual(gh.writes, [
             ("PUT", PULLS + "/73/merge", {"merge_method": "merge", "sha": "abc123"})])
 
     def test_it_refuses_when_master_has_moved_on_since_it_was_merged_in(self):
-        gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 2}})
+        gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 2},
+                       **timeline([MERGE])})
         with self.assertRaises(issue_tool.Refused) as refused:
-            issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123")
+            issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
         self.assertIn("master has 2 commits", str(refused.exception))
+        self.assertEqual(gh.writes, [])
+
+    def test_D14_it_refuses_once_the_owner_has_said_more_since_the_merge(self):
+        # Feedback after /merge cancels it, even while the session runs.
+        # Anyone else's comment, a repeated /merge or the bot's own reply
+        # doesn't.
+        later = [said(9, "stranger", "Stop!", 20), said(10, "MinimalEffort07", "/merge", 21),
+                 said(11, "MinimalEffort07-Autodev", "Merging.", 22)]
+        gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0},
+                       **timeline([MERGE] + later)})
+        issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
+        self.assertEqual(len(gh.writes), 1)
+        gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0},
+                       **timeline([MERGE], inline_comments=[
+                           said(12, "MinimalEffort07", "Wait: typo", 30,
+                                path="automation/README.md", line=7)])})
+        with self.assertRaises(issue_tool.Refused) as refused:
+            issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
+        self.assertIn("inline comment 12", str(refused.exception))
+        self.assertEqual(gh.writes, [])
+
+    def test_it_refuses_once_the_merge_has_been_deleted(self):
+        # The owner took their approval back.
+        gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0},
+                       **timeline([])})
+        with self.assertRaises(issue_tool.Refused) as refused:
+            issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
+        self.assertIn("deleted", str(refused.exception))
         self.assertEqual(gh.writes, [])
 
     def test_only_the_tickets_own_pr_can_be_merged_or_answered(self):
@@ -192,7 +267,7 @@ class MergingPRs(unittest.TestCase):
             with self.subTest(other=other):
                 gh = FakeRest({PULLS + "/73": other, COMPARE: {"ahead_by": 0}})
                 with self.assertRaises(issue_tool.Refused):
-                    issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123")
+                    issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
                 with self.assertRaises(issue_tool.Refused):
                     issue_tool.pr_comment(gh, CONFIG, 68, 73, 501, "Hi @MinimalEffort07")
                 self.assertEqual(gh.writes, [])
@@ -230,6 +305,9 @@ class Roles(unittest.TestCase):
             ("merge", "merge-pr", True), ("merge", "pr-comment", True),
             ("merge", "read", True), ("merge", "open-pr", False),
             ("merge", "create-ticket", False),
+            ("fixup", "read", True), ("fixup", "pr-comment", True),
+            ("fixup", "comment", False), ("fixup", "open-pr", False),
+            ("fixup", "merge-pr", False), ("fixup", "set-body", False),
             # Outside a session (no role) the tool only reads.
             (None, "read", True), (None, "comment", False),
         ]:
