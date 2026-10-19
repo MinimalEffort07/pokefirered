@@ -12,6 +12,7 @@ import unittest
 
 from autodev.board import Board, Item
 from autodev.config import Config
+from autodev.decide import MergeOutcome, PrComment
 from autodev.github import GitHub
 from autodev.registry import Registry
 from autodev.sessions import SessionConfig
@@ -99,6 +100,67 @@ class TicketPRs(unittest.TestCase):
 
     def test_no_matching_pr_means_none(self):
         self.assertIsNone(self.outcome([pr(93, "issue-680-other")]).pr)
+
+
+PR73 = "repos/MinimalEffort07/pokefirered/pulls/73"
+
+
+def remark(id, author, body, at, when="created_at"):
+    return {"id": id, "user": {"login": author}, "body": body, when: at}
+
+
+class TicketPRTimeline(unittest.TestCase):
+    """What the owner, the bot and others said on a ticket's PR (D9-D13)."""
+
+    def test_comments_reviews_and_inline_comments_come_in_time_order(self):
+        gets = {
+            PULLS: [pr(73, "issue-68-note")],
+            ISSUES + "/73/comments": [
+                remark(1, "MinimalEffort07", "/merge", "2026-10-19T06:05:00Z")],
+            PR73 + "/reviews": [
+                remark(2, "MinimalEffort07", "Reword the note.",
+                       "2026-10-19T06:03:00Z", when="submitted_at"),
+                # An approval with nothing written says nothing to act on.
+                remark(3, "MinimalEffort07", "", "2026-10-19T06:04:00Z",
+                       when="submitted_at")],
+            PR73 + "/comments": [
+                remark(4, "stranger", "Inline nit", "2026-10-19T06:01:00Z")],
+        }
+        found = GitHub(FakeRest(gets), CONFIG, BOARD).ticket_pr(68)
+        self.assertEqual((found.number, found.head), (73, "issue-68-note"))
+        self.assertEqual(found.comments, (
+            PrComment(4, "stranger", "Inline nit", "2026-10-19T06:01:00Z"),
+            PrComment(2, "MinimalEffort07", "Reword the note.", "2026-10-19T06:03:00Z"),
+            PrComment(1, "MinimalEffort07", "/merge", "2026-10-19T06:05:00Z"),
+        ))
+
+    def test_a_ticket_with_no_pr_of_the_bots_has_none(self):
+        github = GitHub(FakeRest({PULLS: [pr(93, "issue-680-other")]}), CONFIG, BOARD)
+        self.assertIsNone(github.ticket_pr(68))
+
+
+class MergeOutcomes(unittest.TestCase):
+    """D21 and the conflict path: what a finished merge session left."""
+
+    def outcome(self, merged, comments):
+        gets = {PR73: {"number": 73, "merged": merged},
+                ISSUES + "/73/comments": comments}
+        return GitHub(FakeRest(gets), CONFIG, BOARD).merge_outcome(73, 501)
+
+    def test_merged_is_read_from_the_pr(self):
+        self.assertEqual(self.outcome(True, []), MergeOutcome(merged=True, replied=False))
+
+    def test_only_the_bots_reply_naming_that_merge_counts_as_its_answer(self):
+        marker = "Resolved.\n\n<!-- autodev handled-through: %d -->"
+        for comments, replied in [
+            ([remark(9, "MinimalEffort07-Autodev", marker % 501, "t")], True),
+            # An answer to an earlier /merge isn't an answer to this one.
+            ([remark(9, "MinimalEffort07-Autodev", marker % 400, "t")], False),
+            # The owner pasting the marker doesn't make it autodev's reply.
+            ([remark(9, "MinimalEffort07", marker % 501, "t")], False),
+        ]:
+            with self.subTest(comments=comments):
+                self.assertEqual(self.outcome(False, comments).replied, replied)
 
 
 class Pruning(unittest.TestCase):

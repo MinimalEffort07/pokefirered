@@ -20,7 +20,10 @@ def git(*args, cwd):
                           text=True).stdout.strip()
 
 
-class Worktree(unittest.TestCase):
+class Repo:
+    """A throwaway origin (bare), autodev's clone of it, and the owner's
+    agbcc, made fresh for each test."""
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -35,13 +38,15 @@ class Worktree(unittest.TestCase):
         git("init", "-q", "-b", "master", cwd=seed)
         git("add", ".", cwd=seed)
         git("commit", "-q", "-m", "first", cwd=seed)
-        origin = os.path.join(root, "origin.git")
+        origin = self.origin = os.path.join(root, "origin.git")
         git("clone", "-q", "--bare", seed, origin, cwd=root)
         self.clone = os.path.join(root, "clone")
         git("clone", "-q", origin, self.clone, cwd=root)
         os.symlink(self.agbcc, os.path.join(self.clone, "tools", "agbcc"))
         self.master = git("rev-parse", "origin/master", cwd=self.clone)
 
+
+class Worktree(Repo, unittest.TestCase):
     def test_a_ticket_gets_its_branch_from_master_with_agbcc_linked(self):
         path = worktrees.make(self.clone, 68, "issue-68-note")
         # Beside the clone, not inside it: Claude reads every CLAUDE.md in
@@ -95,6 +100,43 @@ class Worktree(unittest.TestCase):
         path = worktrees.make(self.clone, 68, "issue-68-note")
         self.assertEqual(git("branch", "--show-current", cwd=path), "issue-68-note")
         self.assertEqual(git("rev-parse", "HEAD", cwd=path), work)
+
+    def test_a_branch_only_on_github_is_checked_out_from_there(self):
+        # A merge session for a ticket whose worktree is gone, and whose
+        # branch this clone never had.
+        elsewhere = os.path.join(os.path.dirname(self.clone), "elsewhere")
+        git("clone", "-q", self.origin, elsewhere, cwd=os.path.dirname(self.clone))
+        git("checkout", "-q", "-b", "issue-68-note", cwd=elsewhere)
+        git("commit", "-q", "--allow-empty", "-m", "the ticket's work", cwd=elsewhere)
+        git("push", "-q", "origin", "issue-68-note", cwd=elsewhere)
+        work = git("rev-parse", "HEAD", cwd=elsewhere)
+        path = worktrees.make(self.clone, 68, "issue-68-note")
+        self.assertEqual(git("branch", "--show-current", cwd=path), "issue-68-note")
+        self.assertEqual(git("rev-parse", "HEAD", cwd=path), work)
+
+
+class Removing(Repo, unittest.TestCase):
+    """D21/D22: a closed ticket's worktree goes, with its local branch."""
+
+    def test_the_folder_and_its_branch_go(self):
+        path = worktrees.make(self.clone, 68, "issue-68-note")
+        worktrees.remove(self.clone, 68)
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(git("branch", "--list", "issue-68-note", cwd=self.clone), "")
+        # The real agbcc it linked to is untouched.
+        self.assertTrue(os.path.isdir(self.agbcc))
+
+    def test_removing_twice_or_one_never_made_is_fine(self):
+        worktrees.make(self.clone, 68, "issue-68-note")
+        worktrees.remove(self.clone, 68)
+        worktrees.remove(self.clone, 68)
+        worktrees.remove(self.clone, 70)
+
+    def test_listing_says_which_tickets_have_one(self):
+        self.assertEqual(worktrees.tickets_with_worktrees(self.clone), set())
+        worktrees.make(self.clone, 68, "issue-68-note")
+        worktrees.make(self.clone, 70, "issue-70-other")
+        self.assertEqual(worktrees.tickets_with_worktrees(self.clone), {68, 70})
 
 
 class BranchNames(unittest.TestCase):

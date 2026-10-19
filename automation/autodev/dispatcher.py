@@ -1,18 +1,21 @@
 """The autodev dispatcher: one run per timer tick.
 
 A tick reads the board, works out what to do (decide.py), and does it:
-it starts grill sessions for new parent issues and ticket sessions for
-tickets with nothing left blocking them, keeps tickets' Blocked/Todo
-status in step with their blockers, and checks finished sessions' work on
-GitHub. systemd sends everything it prints to the
-journal (`journalctl --user -u autodev-dispatcher`).
+it starts grill sessions for new parent issues, ticket sessions for
+tickets with nothing left blocking them, and merge sessions for PRs the
+owner has approved with /merge. It keeps tickets' Blocked/Todo status in
+step with their blockers, checks finished sessions' work on GitHub, and
+tidies up after closed tickets and finished parents. systemd sends
+everything it prints to the journal (`journalctl --user -u
+autodev-dispatcher`).
 """
 
 import os
 
 from autodev import board, worktrees
-from autodev.decide import (Comment, Finish, Launch, LinkSubIssue,
-                            MakeWorktree, PlaceOnBoard, SetStatus, State,
+from autodev.decide import (IN_REVIEW, CloseIssue, Comment, Finish, Launch,
+                            LinkSubIssue, MakeWorktree, PlaceOnBoard,
+                            RemoveWorktree, SetStatus, State,
                             is_waiting_ticket, plan)
 from autodev.github import GitHub
 from autodev.gh import GhError
@@ -70,20 +73,17 @@ def tick(gh, config, log, registry=None):
 
 def read_state(github, config, snapshot, registry, log):
     """Everything decide() needs beyond the board: the sessions, what
-    GitHub shows for the ones that ended, and which of the waiting
-    tickets' blockers are closed. Returns (exit code, State)."""
+    GitHub shows for the ones that ended, which of the waiting tickets'
+    blockers are closed, the PRs waiting in review and what was said on
+    them, and which tickets have a worktree. Returns (exit code, State)."""
     code = 0
     known = registry.load()
     outcomes = {}
     for s in known:
-        if s.running or s.role not in ("grill", "ticket"):
+        if s.running or s.role not in _OUTCOMES:
             continue
         try:
-            if s.role == "grill":
-                outcomes[s.issue] = github.grill_outcome(
-                    s.issue, (s.result or {}).get("links", []))
-            else:
-                outcomes[s.issue] = github.ticket_outcome(s.issue)
+            outcomes[s.issue] = _OUTCOMES[s.role](github, s)
         except GhError as e:
             # Leave this session for the next tick; the others go on.
             print("error: reading #%d's %s outcome: %s" % (s.issue, s.role, e),
@@ -106,10 +106,32 @@ def read_state(github, config, snapshot, registry, log):
                 continue
         if not is_open:
             closed.add(number)
+    prs = {}
+    for item in snapshot.items:
+        if item.has_parent and item.is_open and item.status == IN_REVIEW:
+            try:
+                pr = github.ticket_pr(item.number)
+            except GhError as e:
+                print("error: reading #%d's PR: %s" % (item.number, e), file=log)
+                code = 1
+                continue
+            if pr is not None:
+                prs[item.number] = pr
     return code, State(
         owner=config.owner, bot=config.bot, items=snapshot.items,
         sessions=known, outcomes=outcomes, max_sessions=config.max_sessions,
-        closed=frozenset(closed), resume_command=config.resume_command)
+        closed=frozenset(closed), prs=prs,
+        worktrees=frozenset(worktrees.tickets_with_worktrees(config.clone)),
+        resume_command=config.resume_command)
+
+
+# What GitHub shows once a session of each role has ended.
+_OUTCOMES = {
+    "grill": lambda github, s: github.grill_outcome(
+        s.issue, (s.result or {}).get("links", [])),
+    "ticket": lambda github, s: github.ticket_outcome(s.issue),
+    "merge": lambda github, s: github.merge_outcome(s.pr, s.handled_through),
+}
 
 
 def _carry_out(action, github, registry, config):
@@ -119,8 +141,15 @@ def _carry_out(action, github, registry, config):
         github.comment(action.issue, action.body)
     elif isinstance(action, MakeWorktree):
         worktrees.make(config.clone, action.issue, action.branch)
+    elif isinstance(action, RemoveWorktree):
+        worktrees.remove(config.clone, action.issue)
+    elif isinstance(action, CloseIssue):
+        github.close_issue(action.issue)
     elif isinstance(action, Launch):
-        registry.start(action.role, action.issue, prompt(config, action.role, action.issue))
+        registry.start(action.role, action.issue,
+                       prompt(config, action.role, action.issue, pr=action.pr,
+                              comment=action.handled_through),
+                       pr=action.pr, handled_through=action.handled_through)
     elif isinstance(action, LinkSubIssue):
         github.link_sub_issue(action.parent, action.child)
     elif isinstance(action, PlaceOnBoard):
@@ -131,15 +160,16 @@ def _carry_out(action, github, registry, config):
         raise ValueError("unknown action %r" % (action,))
 
 
-def prompt(config, role, issue):
+def prompt(config, role, issue, pr=None, comment=None):
     """The role's prompt with its {issue}, {repo}, {owner}, {bot} and
-    {clone} placeholders filled in. Plain replacement, so any other braces
-    in the Markdown are left alone."""
+    {clone} placeholders filled in, and a merge session's {pr} and
+    {comment}. Plain replacement, so any other braces in the Markdown are
+    left alone."""
     with open(os.path.join(PROMPTS, role + ".md")) as f:
         text = f.read()
     for name, value in (("issue", issue), ("repo", config.repo),
                         ("owner", config.owner), ("bot", config.bot),
-                        ("clone", config.clone)):
+                        ("clone", config.clone), ("pr", pr), ("comment", comment)):
         text = text.replace("{%s}" % name, str(value))
     return text
 

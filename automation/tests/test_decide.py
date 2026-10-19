@@ -9,8 +9,9 @@ import unittest
 
 from autodev.board import Item
 from autodev.decide import (
-    Comment, Finish, GrillOutcome, Launch, LinkSubIssue, MakeWorktree,
-    PlaceOnBoard, Session, SetStatus, State, Ticket, TicketOutcome, decide,
+    CloseIssue, Comment, Finish, GrillOutcome, Launch, LinkSubIssue,
+    MakeWorktree, MergeOutcome, PlaceOnBoard, PrComment, PullRequest,
+    RemoveWorktree, Session, SetStatus, State, Ticket, TicketOutcome, decide,
     plan,
 )
 
@@ -30,10 +31,12 @@ def ticket(number, status="Todo", parent=67, blocked_by=(), author=BOT,
                 is_open=is_open)
 
 
-def state(items=(), sessions=(), outcomes=None, max_sessions=2, closed=()):
+def state(items=(), sessions=(), outcomes=None, max_sessions=2, closed=(),
+          prs=None, worktrees=()):
     return State(owner=OWNER, bot=BOT, items=list(items),
                  sessions=list(sessions), outcomes=outcomes or {},
-                 max_sessions=max_sessions, closed=frozenset(closed))
+                 max_sessions=max_sessions, closed=frozenset(closed),
+                 prs=prs or {}, worktrees=frozenset(worktrees))
 
 
 class Plans(unittest.TestCase):
@@ -148,9 +151,10 @@ class Tickets(unittest.TestCase):
     def test_a_closed_issue_still_in_todo_is_never_launched(self):
         # Closing an issue is how the owner skips it (#48, "Board"); its
         # card may still say Todo or Blocked.
-        self.assertEqual(decide(state([
+        actions = decide(state([
             item(61, is_open=False), ticket(68, is_open=False),
-            ticket(70, "Blocked", is_open=False)])), [])
+            ticket(70, "Blocked", is_open=False)]))
+        self.assertEqual([a for a in actions if isinstance(a, Launch)], [])
 
     def test_D6_free_slots_go_to_the_top_items_by_priority(self):
         # Tickets before grills, and among tickets the oldest parent first:
@@ -305,6 +309,183 @@ class FinishedTickets(unittest.TestCase):
         failed = finished_ticket({"outcome": "failed", "reason": "build broke"})
         self.assertEqual(self.run_finished(failed, pr=None), self.parked(
             "the ticket session failed: build broke"))
+
+
+def said(id, author, body, minute):
+    """A comment, review or inline comment on a PR, `minute` minutes in."""
+    return PrComment(id=id, author=author, body=body,
+                     at="2026-10-19T06:%02d:00Z" % minute)
+
+
+def handled(id, through, minute):
+    return said(id, BOT, "Done.\n\n<!-- autodev handled-through: %d -->"
+                % through, minute)
+
+
+def in_review(comments, number=68, pr=73):
+    """Ticket `number` waiting in review, its PR saying `comments`."""
+    return state([ticket(number, "In review")], prs={number: PullRequest(
+        number=pr, head="issue-%d-note" % number,
+        comments=tuple(comments))})
+
+
+class Merging(unittest.TestCase):
+    def test_D9_the_owners_newest_unhandled_comment_merge_launches_a_merge(self):
+        # The session gets the PR and the comment it answers, so its reply
+        # can say which comment it handled. It reuses the ticket's worktree.
+        self.assertEqual(decide(in_review([said(501, OWNER, " /merge\n", 1)])), [
+            MakeWorktree(68, "issue-68-note"),
+            Launch("merge", 68, pr=73, handled_through=501),
+            SetStatus(68, "In progress"),
+        ])
+
+    def test_D10_merge_from_anyone_but_the_owner_is_ignored(self):
+        for author in ("someone-else", BOT):
+            with self.subTest(author=author):
+                self.assertEqual(decide(in_review([said(501, author, "/merge", 1)])), [])
+
+    def test_D12_comments_older_than_the_last_handled_marker_are_done_with(self):
+        # The last merge session hit a conflict, fixed it and replied; the
+        # owner hasn't posted a fresh /merge since.
+        self.assertEqual(decide(in_review([
+            said(501, OWNER, "/merge", 1), handled(502, 501, 30)])), [])
+
+    def test_a_comment_posted_while_the_reply_was_being_written_is_still_new(self):
+        # The marker names the comment the session handled, not the time it
+        # replied: a /merge posted while it worked starts the next session.
+        self.assertEqual(decide(in_review([
+            said(501, OWNER, "/merge", 1), said(503, OWNER, "/merge", 20),
+            handled(502, 501, 30)]))[1],
+            Launch("merge", 68, pr=73, handled_through=503))
+
+    def test_feedback_after_merge_cancels_it(self):
+        # D14: the owner changed their mind. The fix-up itself is #59.
+        self.assertEqual(decide(in_review([
+            said(501, OWNER, "/merge", 1),
+            said(9001, OWNER, "Wait: reword the note first.", 2)])), [])
+
+    def test_D6_a_merge_goes_before_any_ticket(self):
+        # One slot free. #81's parent (#60) is older than #68's, but a merge
+        # finishes work that is already done, so it goes first.
+        waiting = in_review([said(501, OWNER, "/merge", 1)])
+        waiting = State(**{**waiting.__dict__,
+                           "items": waiting.items + [ticket(81, parent=60)],
+                           "sessions": [Session("grill", 99, "sid-99", running=True)]})
+        self.assertEqual([a for a in decide(waiting) if isinstance(a, Launch)],
+                         [Launch("merge", 68, pr=73, handled_through=501)])
+
+    def test_D13_nothing_starts_while_a_session_for_the_ticket_runs(self):
+        busy = in_review([said(501, OWNER, "/merge", 1)])
+        busy = State(**{**busy.__dict__, "sessions": [
+            Session("ticket", 68, "sid-68", running=True)]})
+        self.assertEqual(decide(busy), [])
+
+
+class ClosedTickets(unittest.TestCase):
+    def test_D22_a_ticket_closed_without_a_pr_is_done_and_unblocks_others(self):
+        # The owner closed #70 by hand (or merged its PR themselves). #71
+        # waited on it alone.
+        self.assertEqual(decide(state(
+            [ticket(70, "In review", is_open=False),
+             ticket(71, "Blocked", blocked_by=[70])],
+            closed=[70], worktrees=[70])), [
+            RemoveWorktree(70), SetStatus(70, "Done"),
+            SetStatus(71, "Todo"),
+        ])
+
+    def test_the_boards_own_automation_may_have_marked_it_done_already(self):
+        # The board's "Item closed" workflow sets Done; the worktree is
+        # still autodev's to remove, and only once.
+        self.assertEqual(decide(state([ticket(70, "Done", is_open=False)],
+                                      worktrees=[70])), [RemoveWorktree(70)])
+        self.assertEqual(decide(state([ticket(70, "Done", is_open=False)])), [])
+
+    def test_a_worktree_in_use_by_a_session_is_left_alone(self):
+        running = [Session("merge", 70, "sid-70", running=True)]
+        self.assertEqual(decide(state([ticket(70, "In progress", is_open=False)],
+                                      sessions=running, worktrees=[70])), [])
+
+
+class Parents(unittest.TestCase):
+    def test_D23_a_parent_whose_tickets_are_all_closed_is_done(self):
+        self.assertEqual(decide(state([
+            item(67, status="In progress"),
+            ticket(68, "Done", parent=67, is_open=False),
+            ticket(72, "Done", parent=67, is_open=False)])), [
+            # Closed first: if that fails, the next tick tries again without
+            # having @mentioned the owner twice.
+            CloseIssue(67),
+            Comment(67, "@MinimalEffort07 every ticket of this issue is closed "
+                        "(#68, #72), so autodev is done with it.\n\n<!-- autodev -->"),
+            SetStatus(67, "Done"),
+        ])
+
+    def test_only_the_owners_parents_are_closed(self):
+        self.assertEqual(decide(state([
+            item(67, status="In progress", author="someone-else"),
+            ticket(68, "Done", parent=67, is_open=False)])), [])
+
+    def test_a_parent_with_an_open_ticket_or_none_on_the_board_stays(self):
+        for tickets in ([ticket(68, "Done", parent=67, is_open=False),
+                         ticket(72, "In review", parent=67)],
+                        [ticket(68, "Done", parent=48, is_open=False)]):
+            with self.subTest(tickets=tickets):
+                self.assertEqual(decide(state(
+                    [item(67, status="In progress")] + tickets)), [])
+
+
+class FinishedMerges(unittest.TestCase):
+    def run_finished(self, result, merged=False, replied=False, ticket_open=True,
+                     ended_by="success"):
+        return decide(State(
+            owner=OWNER, bot=BOT,
+            items=[ticket(68, "In progress", is_open=ticket_open)],
+            sessions=[Session("merge", 68, "sid-m68", running=False,
+                              result=result, ended_by=ended_by,
+                              cwd="/clone-worktrees/issue-68", pr=73,
+                              handled_through=501)],
+            outcomes={68: MergeOutcome(merged=merged, replied=replied)},
+            worktrees=frozenset([68]),
+            resume_command="cd {cwd} && claude --resume {session_id}"))
+
+    def test_D21_a_merged_pr_closes_the_ticket_and_removes_its_worktree(self):
+        # "Fixes #68" normally closes the ticket as the PR merges; if GitHub
+        # hasn't (yet), the dispatcher does.
+        done = {"outcome": "done", "links": [73]}
+        self.assertEqual(self.run_finished(done, merged=True), [
+            CloseIssue(68), RemoveWorktree(68), SetStatus(68, "Done"),
+            Finish("merge", 68)])
+        self.assertEqual(self.run_finished(done, merged=True, ticket_open=False), [
+            RemoveWorktree(68), SetStatus(68, "Done"), Finish("merge", 68)])
+
+    def test_a_merged_pr_counts_even_if_the_session_then_failed(self):
+        # It merged, then timed out or crashed before reporting. GitHub
+        # showing the PR merged is what matters (#48, Sessions).
+        for result, ended_by in ((None, "timeout"), ({"outcome": "failed"}, "success")):
+            with self.subTest(result=result):
+                self.assertEqual(self.run_finished(result, merged=True, ended_by=ended_by), [
+                    CloseIssue(68), RemoveWorktree(68), SetStatus(68, "Done"),
+                    Finish("merge", 68)])
+
+    def test_a_conflict_resolved_on_the_branch_waits_for_a_fresh_merge(self):
+        # The session resolved it, re-tested, pushed and explained how in a
+        # reply; the owner's approval has to cover that resolution.
+        self.assertEqual(self.run_finished({"outcome": "done"}, replied=True), [
+            SetStatus(68, "In review"), Finish("merge", 68)])
+
+    def test_a_done_claim_github_does_not_back_up_needs_a_human(self):
+        self.assertEqual(self.run_finished({"outcome": "done"})[:2], [
+            SetStatus(68, "Needs human"), Comment(68, (
+                "@MinimalEffort07 autodev parked this issue: the merge session "
+                "said it was done, but GitHub shows PR #73 neither merged nor "
+                "answered about a conflict\n\n"
+                "To pick up where the merge session stopped: "
+                "`cd /clone-worktrees/issue-68 && claude --resume sid-m68`"
+                "\n\n<!-- autodev -->"))])
+
+    def test_a_merge_stopped_at_its_time_limit_needs_a_human(self):
+        self.assertIn("the merge session hit its 45-minute time limit",
+                      self.run_finished(None, ended_by="timeout")[1].body)
 
 
 if __name__ == "__main__":

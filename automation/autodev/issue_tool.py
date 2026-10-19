@@ -10,14 +10,16 @@ trust") in code, not just in instructions:
   - A session only changes its own issue (AUTODEV_ISSUE, set by the
     dispatcher), with the commands its role needs (AUTODEV_ROLE): a grill
     session its parent and the tickets it creates under it, a ticket
-    session its ticket and the PR it opens for it. It can't add labels,
-    close issues, merge, or touch the board.
+    session its ticket and the PR it opens for it, a merge session its
+    ticket's PR. Only a merge session merges, and only with a merge commit
+    of the commit it tested. No session can add labels, close issues, or
+    touch the board.
 """
 
 import re
 
 from autodev.board import issue_numbers, section
-from autodev.decide import MARKER
+from autodev.decide import MARKER, handled_marker
 from autodev.worktrees import branch_prefix
 
 
@@ -29,6 +31,7 @@ class Refused(Exception):
 COMMANDS = {
     "grill": {"read", "comment", "set-body", "create-ticket"},
     "ticket": {"read", "comment", "open-pr"},
+    "merge": {"read", "pr-comment", "merge-pr"},
 }
 
 
@@ -92,20 +95,83 @@ def create_ticket(gh, config, parent, title, body):
     return created["number"]
 
 
+# GitHub's closing keywords: "close #12", "Fixes owner/repo#12",
+# "Resolved: https://github.com/owner/repo/issues/12"...
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+"
+                     r"(?:(?:[\w.-]+/[\w.-]+)?#|https://github\.com/[\w.-]+/"
+                     r"[\w.-]+/issues/)(\d+)", re.IGNORECASE)
+
+
+def _prose(body):
+    """The body without fenced blocks and `code spans`: GitHub neither
+    notifies a mention nor closes an issue written inside code."""
+    return re.sub(r"```.*?```|`[^`]*`", "", body, flags=re.DOTALL)
+
+
+def _check_mention(config, body, what):
+    # The @mention is how the owner hears about it (#48, "Notifications").
+    if not re.search(r"@%s(?![\w-])" % re.escape(config.owner), _prose(body)):
+        raise Refused("the %s must @mention @%s (not in code)" % (what, config.owner))
+
+
+def _check_own_pr(gh, config, ticket, pr):
+    """Refuse unless `pr` is the bot's open PR from `ticket`'s own branch.
+    The PR number comes from the session's environment, which one of its
+    commands could override, so the PR itself is checked."""
+    data = gh.rest("GET", "repos/%s/pulls/%d" % (config.repo, pr))
+    head = data["head"]
+    if not (data["state"] == "open" and data["user"]["login"] == config.bot
+            and head["ref"].startswith(branch_prefix(ticket))
+            and (head["repo"] or {}).get("full_name") == config.repo):
+        raise Refused("PR #%d isn't #%d's open PR from its own %s* branch"
+                      % (pr, ticket, branch_prefix(ticket)))
+
+
 def open_pr(gh, config, ticket, title, head, body):
     """Open the PR for `ticket` from its own branch into master. Returns
     GitHub's record of the new PR."""
     if not head.startswith(branch_prefix(ticket)):
         raise Refused("a PR for #%d must come from its own %s* branch, not %s"
                       % (ticket, branch_prefix(ticket), head))
-    # "Fixes #T" closes the ticket when the PR merges (#57). The @mention
-    # is how the owner hears that the PR is ready (#48, "Notifications").
-    # GitHub ignores both inside code, so fenced blocks and `spans` don't
-    # count.
-    prose = re.sub(r"```.*?```|`[^`]*`", "", body, flags=re.DOTALL)
-    if not re.search(r"\bFixes #%d\b" % ticket, prose):
+    # "Fixes #T" closes the ticket when the PR merges (#57); the @mention
+    # tells the owner the PR is ready. Neither counts inside code.
+    if not re.search(r"\bFixes #%d\b" % ticket, _prose(body)):
         raise Refused("the PR body must say \"Fixes #%d\" (not in code)" % ticket)
-    if not re.search(r"@%s(?![\w-])" % re.escape(config.owner), prose):
-        raise Refused("the PR body must @mention @%s (not in code)" % config.owner)
+    _check_mention(config, body, "PR body")
+    # Merging closes every issue a closing keyword names. Checked in the
+    # whole body, code included, to be safe.
+    others = sorted({int(n) for n in CLOSING.findall(body)} - {ticket})
+    if others:
+        raise Refused("the PR body may close only #%d, but a closing keyword "
+                      "also names %s; reword it (e.g. \"see #N\")" % (
+                          ticket, ", ".join("#%d" % n for n in others)))
     return gh.rest("POST", "repos/%s/pulls" % config.repo, title=title,
                    head=head, base="master", body=body)
+
+
+def pr_comment(gh, config, ticket, pr, handled_through, body):
+    """Reply on `ticket`'s PR, @mentioning the owner. The reply ends with a
+    marker naming the newest of the owner's comments the session dealt
+    with, so the dispatcher treats only later ones as new (#48, "PR comment
+    bookkeeping"). The marker also marks the reply as autodev's."""
+    _check_mention(config, body, "reply")
+    _check_own_pr(gh, config, ticket, pr)
+    gh.rest("POST", "%s/%d/comments" % (_issues(config), pr),
+            body=body.rstrip() + "\n\n" + handled_marker(handled_through))
+
+
+def merge_pr(gh, config, ticket, pr, head):
+    """Merge `ticket`'s PR with a merge commit (never squash or rebase),
+    pinned to `head`, the commit the session built and tested."""
+    _check_own_pr(gh, config, ticket, pr)
+    # The merge commit's tree is `head`'s only if the branch already holds
+    # all of master. If master has moved on, GitHub would mix in commits
+    # nobody tested.
+    behind = gh.rest("GET", "repos/%s/compare/%s...master" % (config.repo, head))["ahead_by"]
+    if behind:
+        raise Refused("master has %d commit%s your branch doesn't: merge master "
+                      "in again, re-test, push, and try again" % (
+                          behind, "" if behind == 1 else "s"))
+    # With `sha`, GitHub refuses if the PR's head is no longer `head`.
+    return gh.rest("PUT", "repos/%s/pulls/%d/merge" % (config.repo, pr),
+                   merge_method="merge", sha=head)

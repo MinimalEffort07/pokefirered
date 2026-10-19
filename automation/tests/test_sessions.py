@@ -104,6 +104,36 @@ class LaunchCommand(unittest.TestCase):
             "--model", "opus",
         ])
 
+    def test_a_merge_session_knows_its_pr_and_the_comment_it_answers(self):
+        cmd = sessions.launch_command(
+            CONFIG, "merge", 68, "sid-m68",
+            "/home/min/autodev/logs/merge-68.jsonl", "PROMPT",
+            pr=73, handled_through=501)
+        self.assertEqual(cmd[:cmd.index("--")], [
+            "systemd-run", "--user", "--quiet", "--collect",
+            "--expand-environment=no",
+            "--unit", "autodev-merge-68",
+            "-p", "Type=exec",
+            "-p", "RuntimeMaxSec=2700",                 # 45 minutes
+            "-p", "EnvironmentFile=/home/min/.config/autodev/env",
+            # The ticket's worktree, which holds its branch.
+            "-p", "WorkingDirectory=/home/min/projects/minimaleffort/pokefirered-autodev"
+                  "-worktrees/issue-68",
+            "-p", "StandardOutput=append:/home/min/autodev/logs/merge-68.jsonl",
+            "-p", "StandardError=append:/home/min/autodev/logs/merge-68.err",
+            "-p", "ExecStopPost=:/bin/sh -c 'echo \"$SERVICE_RESULT\" > "
+                  "/home/min/autodev/logs/merge-68.exit'",
+            "--setenv=CLAUDE_CONFIG_DIR=/home/min/.claude-personal",
+            "--setenv=AUTODEV_ISSUE=68",
+            "--setenv=AUTODEV_ROLE=merge",
+            # issue.py's pr-comment and merge-pr act on this PR only, and
+            # the reply names the /merge it answers.
+            "--setenv=AUTODEV_PR=73",
+            "--setenv=AUTODEV_HANDLED_THROUGH=501",
+        ])
+        self.assertIn("/home/min/projects/minimaleffort/pokefirered-autodev"
+                      "/automation/settings/merge.json", cmd)
+
     def test_the_result_schema_asks_for_an_outcome_and_a_reason(self):
         schema = json.loads(sessions.RESULT_SCHEMA)
         self.assertEqual(schema["properties"]["outcome"]["enum"],
@@ -159,6 +189,30 @@ class EndedSessions(unittest.TestCase):
                 ended_by="timeout", cwd="/clone-worktrees/issue-68")])
 
 
+    def test_a_merge_sessions_pr_and_comment_are_kept_until_it_ends(self):
+        # The dispatcher checks the merge session's work against them: is
+        # that PR merged, or did the bot answer that /merge?
+        with tempfile.TemporaryDirectory() as root:
+            config = sessions.SessionConfig(
+                claude="claude", claude_config_dir="", env_file="", clone="/clone",
+                log_dir=os.path.join(root, "logs"),
+                state_dir=os.path.join(root, "state"), model="opus")
+            launched = []
+
+            class Unit:
+                stdout = "inactive\n"
+
+            def run(cmd, **kwargs):
+                launched.append(cmd)
+                return Unit()
+            reg = registry.Registry(config, run=run)
+            reg.start("merge", 68, "PROMPT", pr=73, handled_through=501)
+            self.assertIn("--setenv=AUTODEV_PR=73", launched[0])
+            [found] = reg.load()
+            self.assertEqual((found.role, found.issue, found.pr, found.handled_through),
+                             ("merge", 68, 73, 501))
+
+
 class ReadingResults(unittest.TestCase):
     def test_the_structured_result_is_read_from_the_log(self):
         # Recorded from a real `claude -p --json-schema` run.
@@ -179,6 +233,27 @@ class ReadingResults(unittest.TestCase):
             self.assertIsNone(sessions.read_result(tmp))
         finally:
             os.remove(tmp)
+
+    def test_the_last_report_counts_even_if_the_session_woke_again_after(self):
+        # Seen live on #73's merge: after reporting, a background job's
+        # notification woke the session once more, and that turn ended with
+        # a result event carrying no report. An earlier "failed" sent while
+        # a command was still running is overridden by the later "done".
+        events = [
+            {"type": "result", "subtype": "success", "is_error": False,
+             "structured_output": {"outcome": "failed", "reason": "too early"}},
+            {"type": "result", "subtype": "success", "is_error": False,
+             "structured_output": {"outcome": "done", "reason": "merged"}},
+            {"type": "result", "subtype": "success", "is_error": False,
+             "structured_output": None},
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write("\n".join(json.dumps(e) for e in events) + "\n")
+        try:
+            self.assertEqual(sessions.read_result(f.name),
+                             {"outcome": "done", "reason": "merged"})
+        finally:
+            os.remove(f.name)
 
     def test_a_missing_log_has_no_result(self):
         self.assertIsNone(sessions.read_result("/nonexistent/grill-61.jsonl"))
@@ -202,6 +277,9 @@ class RolePermissions(unittest.TestCase):
             "Bash(git* upstream*)",                    # or its remote
             "Bash(git remote:*)",
             "WebFetch", "WebSearch",                   # no untrusted web text
+            # issue.py trusts AUTODEV_ISSUE and AUTODEV_ROLE: no overriding
+            # them for one command
+            "Bash(*AUTODEV_*)",
         ]:
             self.assertIn(rule, deny)
 
@@ -236,12 +314,23 @@ class RolePermissions(unittest.TestCase):
                 "Bash(python3 ./automation/bin/issue.py*)",
                 "Bash(*python3 bin/issue.py*)",
                 "Bash(*-worktrees/*issue.py*)",
+                # issue.py trusts the AUTODEV_* variables the dispatcher sets
+                "Bash(*AUTODEV_*)",
                 # rm -rf only inside its own worktree
                 "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)",
                 "Bash(rm -rf $HOME*)",
             ]:
                 with self.subTest(role=role, rule=rule):
                     self.assertIn(rule, deny)
+
+    def test_D25_the_merge_role_has_the_ticket_roles_limits_and_no_rebase(self):
+        # It merges only through issue.py's merge-pr: a merge commit of the
+        # commit it tested. gh stays denied, so no `gh pr merge --squash`.
+        merge = set(self.rules("merge")["deny"])
+        self.assertLessEqual(set(self.rules("ticket")["deny"]), merge)
+        self.assertIn("Bash(git rebase:*)", merge)
+        self.assertIn("Bash(python3 *automation/bin/issue.py *)",
+                      self.rules("merge")["allow"])
 
     def test_ticket_and_fixup_roles_reach_github_only_through_issue_py(self):
         # They run the clone's copy by its full path (prompts/ticket.md):

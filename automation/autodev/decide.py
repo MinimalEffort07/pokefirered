@@ -7,6 +7,7 @@ gathers the State, and an adapter carries the actions out. That split
 lets every decision be tested with a hand-built State (tests/test_decide.py).
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -20,6 +21,7 @@ BLOCKED = "Blocked"
 IN_PROGRESS = "In progress"
 IN_REVIEW = "In review"
 NEEDS_HUMAN = "Needs human"
+DONE = "Done"
 
 
 # ── What the dispatcher knows ─────────────────────────────────────────────
@@ -36,6 +38,8 @@ class Session:
     # "timeout" (its time limit), "signal"... None while it runs.
     ended_by: Optional[str] = None
     cwd: str = ""           # the folder it ran in; `claude --resume` needs it
+    pr: Optional[int] = None                # a merge session's PR
+    handled_through: Optional[int] = None   # the comment a merge answers
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,31 @@ class TicketOutcome:
 
 
 @dataclass(frozen=True)
+class MergeOutcome:
+    """What GitHub shows for a ticket's PR after its merge session ended."""
+    merged: bool
+    replied: bool   # the bot's reply naming the /merge it handled is there
+
+
+@dataclass(frozen=True)
+class PrComment:
+    """Something the owner, the bot or anyone else said on a PR: a comment
+    in its conversation, a review, or an inline review comment."""
+    id: int
+    author: str
+    body: str
+    at: str                 # when, as GitHub's ISO time ("2026-10-19T06:01:00Z")
+
+
+@dataclass(frozen=True)
+class PullRequest:
+    """A ticket's open PR: the bot's, from the ticket's own branch."""
+    number: int
+    head: str               # its branch
+    comments: tuple = ()    # PrComment, oldest first
+
+
+@dataclass(frozen=True)
 class State:
     owner: str              # the human; only their parent issues are run
     items: list             # board.Item for every issue on the board
@@ -73,6 +102,10 @@ class State:
     # Issues known to be closed. A ticket's blocker counts as open unless
     # it is in here, so one GitHub couldn't report keeps the ticket waiting.
     closed: frozenset = frozenset()
+    # PullRequest per ticket waiting in review
+    prs: dict = field(default_factory=dict)
+    # Tickets that have a worktree
+    worktrees: frozenset = frozenset()
     # How the owner resumes a parked session; {session_id} and {cwd} are
     # filled in.
     resume_command: str = "claude --resume {session_id}"
@@ -88,8 +121,12 @@ class SetStatus:
 
 @dataclass(frozen=True)
 class Launch:
-    role: str               # "grill" or "ticket"
+    role: str               # "grill", "ticket" or "merge"
     issue: int
+    pr: Optional[int] = None        # a merge: the ticket's PR
+    # A merge: the owner's comment it answers. Its reply on the PR says so
+    # with a handled-through marker, and later comments are new work.
+    handled_through: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +134,17 @@ class MakeWorktree:
     """Give a ticket its worktree and branch, unless it already has them."""
     issue: int
     branch: str
+
+
+@dataclass(frozen=True)
+class CloseIssue:
+    issue: int
+
+
+@dataclass(frozen=True)
+class RemoveWorktree:
+    """Delete a ticket's worktree and its local branch, if they exist."""
+    issue: int
 
 
 @dataclass(frozen=True)
@@ -137,17 +185,25 @@ def plan(state):
     so one broken issue can't stall the whole board."""
     groups = []
     for session in state.sessions:
-        if not session.running and session.role in ("grill", "ticket"):
+        if not session.running and session.role in _DONE_CHECKS:
             groups.append(_finished(state, session))
     free = state.max_sessions - sum(1 for s in state.sessions if s.running)
     has_session = {s.issue for s in state.sessions}
     ready = []      # (priority, group) for each group that launches a session
     for item in sorted(state.items, key=lambda i: i.number):
+        if item.number in has_session:
+            continue
         # A closed issue is resolved, whatever its card still says.
-        if item.number in has_session or not item.is_open:
+        if not item.is_open:
+            if item.has_parent:
+                groups.append(_closed_ticket(state, item))
             continue
         if is_waiting_ticket(item):
             new = _waiting_ticket(state, item)
+        elif item.has_parent and item.status == IN_REVIEW:
+            new = _in_review(state, item)
+        elif not item.has_parent and item.status == IN_PROGRESS:
+            new = _parent_in_progress(state, item)
         elif item.status == TODO:
             new = _new_parent(state, item)
         else:
@@ -224,11 +280,85 @@ def _waiting_ticket(state, item):
             Launch("ticket", item.number), SetStatus(item.number, IN_PROGRESS)]
 
 
+# Every reply autodev posts on a PR ends with this, naming the newest of
+# the owner's comments it has dealt with (#48, "PR comment bookkeeping").
+HANDLED_THROUGH = re.compile(r"<!-- autodev handled-through: (\d+) -->")
+
+
+def handled_marker(comment_id):
+    return "<!-- autodev handled-through: %d -->" % comment_id
+
+
+def _newest_unhandled(state, pr):
+    """The owner's newest comment on the PR that came after everything a
+    bot reply says it handled, or None. Nobody else's comments count."""
+    handled_at = ""
+    for c in pr.comments:
+        match = HANDLED_THROUGH.search(c.body) if c.author == state.bot else None
+        if match:
+            # The comment it names, or the reply itself if that's gone.
+            named = next((x for x in pr.comments
+                          if x.id == int(match.group(1))), c)
+            handled_at = max(handled_at, named.at)
+    unhandled = [c for c in pr.comments
+                 if c.author == state.owner and c.at > handled_at]
+    return unhandled[-1] if unhandled else None
+
+
+def _parent_in_progress(state, item):
+    """Once every one of a parent's tickets is closed, autodev is done with
+    the parent (#48, "Flow" step 7). Its tickets are the board's issues
+    whose "## Parent" names it: the grill puts every ticket on the board."""
+    tickets = [i for i in state.items if i.has_parent and i.parent == item.number]
+    if (item.author != state.owner or not tickets
+            or any(t.is_open for t in tickets)):
+        return []
+    # Closed before the comment: if closing fails, the next tick tries
+    # again without having @mentioned the owner twice.
+    return [CloseIssue(item.number),
+            Comment(item.number, _bot_comment(
+                "@%s every ticket of this issue is closed (%s), so autodev is "
+                "done with it." % (state.owner, ", ".join(
+                    "#%d" % t.number for t in sorted(tickets, key=lambda t: t.number))))),
+            SetStatus(item.number, DONE)]
+
+
+def _closed_ticket(state, item):
+    """However it was closed (its PR merged, or the owner closed it), a
+    closed ticket is done: its worktree goes and its card says Done. The
+    board's own "Item closed" workflow may have set Done already."""
+    actions = []
+    if item.number in state.worktrees:
+        actions.append(RemoveWorktree(item.number))
+    if item.status != DONE:
+        actions.append(SetStatus(item.number, DONE))
+    return actions
+
+
+def _in_review(state, item):
+    """A ticket whose PR waits for the owner: their "/merge" starts a merge
+    session, as long as nothing they said after it is still unhandled."""
+    pr = state.prs.get(item.number)
+    if pr is None:
+        return []
+    newest = _newest_unhandled(state, pr)
+    if newest is None or newest.body.strip() != "/merge":
+        return []   # feedback waits for the fix-up role (#59)
+    return [MakeWorktree(item.number, pr.head),
+            Launch("merge", item.number, pr=pr.number,
+                   handled_through=newest.id),
+            SetStatus(item.number, IN_PROGRESS)]
+
+
 def _finished(state, session):
     issue = session.issue
     outcome = state.outcomes.get(issue)
     if outcome is None:
         return []   # the tick couldn't read this from GitHub; next tick retries
+    if session.role == "merge" and outcome.merged:
+        # Merged is merged, even if the session then failed or ran out of
+        # time before it could say so.
+        return _merged(state, issue) + [Finish(session.role, issue)]
     result = session.result
     if result is None:
         problem = _ended_without_result(session)
@@ -237,8 +367,7 @@ def _finished(state, session):
                                                  result.get("reason", ""))
     else:
         # A session's own "done" is only believed once GitHub shows the work.
-        problem, actions = (_grill_done if session.role == "grill"
-                            else _ticket_done)(session, outcome)
+        problem, actions = _DONE_CHECKS[session.role](state, session, outcome)
         if problem is None:
             return actions + [Finish(session.role, issue)]
     return [SetStatus(issue, NEEDS_HUMAN),
@@ -261,7 +390,7 @@ def _duration(seconds):
     return "%d-minute" % (seconds // 60)
 
 
-def _grill_done(session, outcome):
+def _grill_done(state, session, outcome):
     """(problem, actions): what a grill that says it's done leads to."""
     if not outcome.design_comment:
         return ("the grill session said it was done, but GitHub shows no "
@@ -273,12 +402,36 @@ def _grill_done(session, outcome):
                   + [SetStatus(session.issue, IN_PROGRESS)])
 
 
-def _ticket_done(session, outcome):
+def _ticket_done(state, session, outcome):
     """(problem, actions): what a ticket that says it's done leads to."""
     if outcome.pr is None:
         return ("the ticket session said it was done, but GitHub shows no "
                 "open PR from an `%s*` branch" % branch_prefix(session.issue)), []
     return None, [SetStatus(session.issue, IN_REVIEW)]
+
+
+def _merged(state, issue):
+    """The ticket's PR is merged: the ticket is done."""
+    # "Fixes #T" normally closed the ticket as the PR merged.
+    item = next((i for i in state.items if i.number == issue), None)
+    close = [CloseIssue(issue)] if item is None or item.is_open else []
+    return close + [RemoveWorktree(issue), SetStatus(issue, DONE)]
+
+
+def _merge_done(state, session, outcome):
+    """(problem, actions): what a merge that says it's done, but whose PR
+    isn't merged (_finished checks that first), leads to."""
+    if outcome.replied:
+        # It resolved a conflict on the branch: the owner's next /merge
+        # approves that resolution too.
+        return None, [SetStatus(session.issue, IN_REVIEW)]
+    return ("the merge session said it was done, but GitHub shows PR #%d "
+            "neither merged nor answered about a conflict" % session.pr), []
+
+
+# How each role's "done" is checked against what GitHub shows.
+_DONE_CHECKS = {"grill": _grill_done, "ticket": _ticket_done,
+                "merge": _merge_done}
 
 
 def _place_tickets(parent, tickets):
