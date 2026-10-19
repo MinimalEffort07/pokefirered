@@ -43,7 +43,9 @@
 --   N5 battle while patches are live (the follower out). USE, end the
 --      Repel and raise the encounter rate (as test_shiny_chaining's Test E),
 --      then step onto tall grass that isn't a patch until a wild battle
---      starts. RUN (gBattleOutcome 4); then again from a fresh USE, FIGHT
+--      starts (a random one: FROM_PATCH_ENCOUNTER is 0, and the step that
+--      started it landed on its tile). RUN (gBattleOutcome 4); then again
+--      from a fresh USE, FIGHT
 --      to a win (gBattleOutcome 1). After each: not frozen (within 600
 --      frames of the battle being decided), and the player's sprite and
 --      every other active object's sprite are in use and linked.
@@ -66,19 +68,14 @@ local mm = dofile(project_dir .. "test/lib/mt_moon.lua")
 local follower = dofile(project_dir .. "test/lib/follower.lua")
 follower.bind(fw)
 
--- Route 1 (include/constants/map_groups.h) and a tall-grass tile on it with
--- grass all around, so the radar has plenty of tiles within its 6-tile
--- radius to shake and the player has grass to step onto.
-local ROUTE1 = { 3, 19 }
+-- A tall-grass tile on Route 1 with grass all around, so the radar has
+-- plenty of tiles within its 6-tile radius to shake and the player has
+-- grass to step onto.
 local GRASS_X, GRASS_Y = 12, 24
 
 -- gBattleTypeFlags bit set for a trainer battle: BATTLE_TYPE_TRAINER,
 -- (1 << 3) in include/constants/battle.h.
 local BATTLE_TYPE_TRAINER = 0x08
-
--- The shared results table (test/lib/framework.lua), to report each
--- scenario's own pass and fail counts.
-local results = _G.__pokefirered_test_results
 
 -- Start a scenario: a recharged radar, the player on Route 1's grass at
 -- (GRASS_X, GRASS_Y) (with the follower, if it is out), no roaming
@@ -91,9 +88,9 @@ local function start(name)
     pr.set_repel(5000)
     local warped
     if follower.object_index() ~= nil then
-        warped = follower.warp(ROUTE1[1], ROUTE1[2], GRASS_X, GRASS_Y)
+        warped = follower.warp(ADDR.MAP_GROUP_KANTO, ADDR.MAP_NUM_ROUTE1, GRASS_X, GRASS_Y)
     else
-        warped = warp.warp_to_pos(ROUTE1[1], ROUTE1[2], GRASS_X, GRASS_Y)
+        warped = warp.warp_to_pos(ADDR.MAP_GROUP_KANTO, ADDR.MAP_NUM_ROUTE1, GRASS_X, GRASS_Y)
     end
     if not fw.assert_true(warped, name .. ": warped onto Route 1's grass") then return false end
     fw.assert_true(fw.wait_until(pr.player_ready, 300, "control after the warp"),
@@ -111,21 +108,27 @@ end
 
 -- Run scenario `fn` and log its own counts.
 local function scenario(name, fn)
-    local pass0, fail0 = results.pass, results.fail
+    local pass0, fail0 = fw.counts()
     fn(name)
     fw.speed_up()
-    fw.log(string.format("[%s] %d passed, %d failed", name,
-        results.pass - pass0, results.fail - fail0))
+    local pass1, fail1 = fw.counts()
+    fw.log(string.format("[%s] %d passed, %d failed", name, pass1 - pass0, fail1 - fail0))
 end
 
 -- After the radar was used (`elapsed` frames ago): the player is not frozen
--- and steps onto tall grass that isn't a patch, and four patches are
--- shaking. `between(when)` (optional) runs extra checks after USE and after
--- the step.
+-- and steps onto tall grass that isn't a patch, and four patches are still
+-- shaking after that step. `between(when)` (optional) runs extra checks
+-- after USE and after the step, so it splits the "not frozen" check into
+-- its two halves; without it the check runs whole (pr.assert_not_frozen).
 local function check_after_use(name, elapsed, between)
-    pr.assert_back_on_field(name, 120, elapsed)
-    if between then between("after USE") end
-    local ok, x, y = pr.assert_step(name, { grass = true })
+    local ok, x, y
+    if between then
+        pr.assert_back_on_field(name, 120, elapsed)
+        between("after USE")
+        ok, x, y = pr.assert_step(name, { grass = true })
+    else
+        ok, x, y = pr.assert_not_frozen(name, 120, { grass = true }, elapsed)
+    end
     if ok then
         local px, py = mm.player_tile()
         fw.assert_true(px == x and py == y and not pr.is_patch_tile(px, py), string.format(
@@ -182,10 +185,11 @@ local function select_cant_use(name, charges)
     end
     fw.assert_true(locked_throughout, name .. ": sLockFieldControls is 1 while the message shows")
     if not fw.assert_true(since ~= nil, name .. ": A closed the message") then return end
-    pr.assert_back_on_field(name, 120, since)
+    -- The radar untouched, read before the "not frozen" step (a step only
+    -- counts the recharge down).
     fw.assert_eq(pr.get_charges(), charges, name .. ": the charges are unchanged")
     fw.assert_eq(pr.get_flags() & pr.FLAG_PATCHES_ACTIVE, 0, name .. ": PATCHES_ACTIVE is 0")
-    pr.assert_step(name)
+    pr.assert_not_frozen(name, 120, nil, since)
 end
 
 -- The walkable tile off the tall grass closest to the player (by walking
@@ -243,7 +247,7 @@ end
 
 -- START > POKEMON > PIKACHU > WALK. PIKACHU's menu lists SUMMARY first and
 -- WALK second (SetPartyMonFieldSelectionActions, src/party_menu.c); the
--- menu's task keeps its cursor in data[0].
+-- menu's task keeps its cursor in data[0] (at pr.TASK_DATA).
 local WALK_ROW = 1
 local function walk_follower(name)
     if not pr.choose_start_menu(pr.STARTMENU_POKEMON, name) then return false end
@@ -263,7 +267,7 @@ local function walk_follower(name)
     end
     if not fw.assert_true(menu ~= nil, name .. ": PIKACHU's menu opened") then return false end
     for _ = 1, 5 do
-        if fw.read16(menu + 8) == WALK_ROW then break end
+        if fw.read16(menu + pr.TASK_DATA) == WALK_ROW then break end
         fw.press("DOWN")
         fw.wait_frames(6)
     end
@@ -291,7 +295,7 @@ local function battle_while_patches_live(name, action, expected_outcome)
     pr.assert_live_patches(name .. ", before the battle")
 
     pr.set_repel(0)
-    local battle = false
+    local battle_step = nil
     for _ = 1, 6 do
         pr.raise_encounter_rate()
         local step = pr.try_step(true)
@@ -299,23 +303,27 @@ local function battle_while_patches_live(name, action, expected_outcome)
         fw.log(string.format("[%s] step %s onto (%d,%d)%s", name, step.key, step.x, step.y,
             step.moved and "" or ", didn't move"))
         if pr.wait_for_battle(400) then
-            battle = true
+            battle_step = step
             break
         end
     end
     -- The Repel again, so the "not frozen" step after the battle can't
     -- start another one.
     pr.set_repel(5000)
-    if not fw.assert_true(battle, name .. ": a wild battle started on a step onto tall grass that isn't a patch") then
-        return
-    end
+    if not fw.assert_true(battle_step ~= nil, name .. ": a wild battle started") then return end
+    fw.assert_true(battle_step.moved ~= nil and not pr.is_patch_tile(battle_step.x, battle_step.y),
+        string.format("%s: the battle started on a completed step onto (%d,%d), tall grass that isn't a patch",
+            name, battle_step.x, battle_step.y))
+    fw.assert_eq(pr.get_flags() & pr.FLAG_FROM_PATCH_ENCOUNTER, 0,
+        name .. ": a random battle, not a patch's (FROM_PATCH_ENCOUNTER is 0)")
     fw.assert_eq(fw.read32(ADDR.gBattleTypeFlags) & BATTLE_TYPE_TRAINER, 0, name .. ": a wild battle, not a trainer's")
 
     local outcome, after = pr.play_battle(action)
     fw.assert_eq(outcome, expected_outcome, string.format("%s: %s ended the battle (gBattleOutcome)", name, action))
-    pr.assert_back_on_field(name, 600, after)
+    -- Not frozen first: it waits for the field, whose map load gives every
+    -- object its sprite back.
+    pr.assert_not_frozen(name, 600, nil, after)
     pr.assert_object_sprites(name)
-    pr.assert_step(name)
 end
 
 -- N5: battles while patches are live, with the follower out (after N2).

@@ -34,8 +34,9 @@
 --     pr.oak_message_up(): Prof. Oak's "This isn't the time to use that!";
 --   * pr.is_live_patch(id), pr.is_patch_tile(x, y), pr.assert_live_patches():
 --     what a patch is;
---   * pr.assert_not_frozen(label, within, opts): the player has control
---     (its two halves are pr.assert_back_on_field and pr.assert_step);
+--   * pr.assert_not_frozen(label, within, opts, elapsed): the player has
+--     control (its two halves are pr.assert_back_on_field and
+--     pr.assert_step, for a test that checks more in between);
 --   * pr.assert_object_sprites(): every object still has its own sprite;
 --   * pr.raise_encounter_rate(), pr.wait_for_battle(), pr.play_battle(action):
 --     a wild battle, ended by RUN or by FIGHT;
@@ -223,6 +224,7 @@ local MOVE_THUNDERBOLT = mm.read_defines("include/constants/moves.h").MOVE_THUND
 local ITEM_POKE_BALL = mm.read_defines("include/constants/items.h").ITEM_POKE_BALL
 local GLOBAL = mm.read_defines("include/constants/global.h")
 local REGISTERED_ITEMS_MAX = mm.read_defines("include/global.h").REGISTERED_ITEMS_MAX
+local LOCALID_FOLLOWER = mm.read_defines("include/constants/event_objects.h").LOCALID_FOLLOWER
 local BATTLE = mm.read_defines("include/constants/battle.h")
 pr.B_OUTCOME_WON = BATTLE.B_OUTCOME_WON
 pr.B_OUTCOME_RAN = BATTLE.B_OUTCOME_RAN
@@ -436,11 +438,15 @@ end
 -------------------------------------------------------------------------------
 
 -- struct Task (include/task.h), 0x28 bytes: TaskFunc func at 0x00, bool8
--- isActive at 0x04, s16 data[16] at 0x08. gTasks has 16.
+-- isActive at 0x04, s16 data[16] at 0x08. gTasks has 16. Menus keep their
+-- state in data[], so tests read pr.TASK_DATA + 2 * i for data[i].
 local TASK_SIZE, NUM_TASKS, TASK_DATA = 0x28, 16, 0x08
+pr.TASK_DATA = TASK_DATA
 
 -- The address of an active task running function `name`, or nil. Menus
--- are tasks, so this says which menu is waiting for input.
+-- are tasks, so this says which menu is waiting for input. A stored
+-- function pointer has bit 0 set (the Thumb-mode flag, see symbols.lua),
+-- which `& ~1` clears before comparing it with the symbol's address.
 function pr.task_running(name)
     local tasks = sym.addr("gTasks")
     local func = sym.addr(name)
@@ -584,10 +590,13 @@ function pr.register_in_bag(label)
         label .. ": back on the field with control after registering")
 end
 
--- The SELECT menu (src/quick_select_menu.c). sQS: u16 cursorPos at 4, u16
--- itemsAbove at 6 (where its cursor opens). Each sListItems entry is 8
--- bytes, a label pointer and an s32 id: 100 + n for registeredItems[n].
-local QS_CURSOR_POS, QS_ITEMS_ABOVE, QS_ID_ITEM_BASE, QS_STATE_INPUT = 4, 6, 100, 1
+-- The SELECT menu (src/quick_select_menu.c). sQS: u8 numEntries at 3 (the
+-- entries in this opening's list), u16 cursorPos at 4 and u16 itemsAbove
+-- at 6 (where its cursor opens). Each sListItems entry is a struct
+-- ListMenuItem (include/list_menu.h), 8 bytes: a label pointer and a u32
+-- index, 100 + n for registeredItems[n].
+local QS_NUM_ENTRIES, QS_CURSOR_POS, QS_ITEMS_ABOVE = 3, 4, 6
+local QS_ID_ITEM_BASE, QS_STATE_INPUT = 100, 1
 
 -- Press SELECT and choose the POKe RADAR in the SELECT menu. Returns true
 -- once the A press on it has closed the menu, and the frames since that
@@ -606,7 +615,7 @@ function pr.use_with_select(label)
     end, 120, "SELECT menu open")
     if not fw.assert_true(open, label .. ": the SELECT menu opened") then return false end
     local target = nil
-    for i = 0, 31 do
+    for i = 0, fw.read8(sym.addr("sQS") + QS_NUM_ENTRIES) - 1 do
         if fw.read32(sym.addr("sListItems") + i * 8 + 4) == QS_ID_ITEM_BASE + slot then
             target = i
             break
@@ -638,7 +647,9 @@ end
 -- message is printing or waiting for A (Task_ContinueTaskAfterMessagePrints)
 -- and the text it was given (gStringVar4) starts with the ROM's
 -- gText_OakForbidsUseOfItemHere ("OAK: {PLAYER}!..."), compared up to its
--- first placeholder (0xFD), which the game replaces with the player's name.
+-- first placeholder (0xFD, here {PLAYER}, which the game replaces with the
+-- player's name) or its end (0xFF, EOS: the game's strings end with 0xFF,
+-- not 0).
 function pr.oak_message_up()
     if pr.task_running("Task_ContinueTaskAfterMessagePrints") == nil then return false end
     local text = sym.addr("gText_OakForbidsUseOfItemHere")
@@ -793,7 +804,7 @@ function pr.assert_object_sprites(label)
     fw.assert_true(#objects > 0, label .. ": there are active objects")
     for _, o in ipairs(objects) do
         local ok, id = pr.object_sprite_ok(o.index)
-        local who = o.is_player and ", the player" or (o.local_id == 254 and ", the follower" or "")
+        local who = o.is_player and ", the player" or (o.local_id == LOCALID_FOLLOWER and ", the follower" or "")
         fw.assert_true(ok, string.format(
             "%s: object %d's sprite (id %d%s) is in use and linked to it", label, o.index, id, who))
     end
@@ -882,7 +893,7 @@ function pr.play_battle(action)
         for _ = 0, wait do tick() end
     end
     while decided_at == nil and frames < 3600 do
-        local f = fw.read32(funcs) & ~1
+        local f = fw.read32(funcs) & ~1   -- clear the Thumb bit (see pr.task_running)
         if f == choose_action then
             local c = fw.read8(cursor)
             if (c & 1) ~= (target & 1) then
