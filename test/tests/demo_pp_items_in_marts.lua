@@ -1,11 +1,11 @@
 -------------------------------------------------------------------------------
 -- demo_pp_items_in_marts.lua
 -- Captures screenshots of mart menus showing PP items for GIF assembly.
--- Run headless; outputs frames to /tmp/pp_demo_frames/.
+-- Run headless; outputs frames to pp_demo_frames/ in the run's own folder.
 --
 --   bash test/run_test.sh test/tests/demo_pp_items_in_marts.lua
--- Then assemble:
---   ffmpeg -framerate 8 -pattern_type glob -i '/tmp/pp_demo_frames/*.png' \
+-- Then assemble, from the folder the demo logs ("Frames go to ..."):
+--   ffmpeg -framerate 8 -pattern_type glob -i '/tmp/mgba-test.XXXXXX/pp_demo_frames/*.png' \
 --     -vf "scale=480:-1:flags=neighbor,split[a][b];[a]palettegen[p];[b][p]paletteuse" \
 --     ~/recordings/pp_items_in_marts.gif
 -------------------------------------------------------------------------------
@@ -17,8 +17,13 @@ local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local warp = dofile(project_dir .. "test/lib/warp.lua")
 
-local FRAME_DIR = "/tmp/pp_demo_frames"
-os.execute("mkdir -p " .. FRAME_DIR .. " && rm -f " .. FRAME_DIR .. "/*.png")
+-- The frames go in this run's own folder (fw.out_path), so demos running at
+-- the same time, from one checkout or several worktrees, never share them.
+-- Clearing old frames only matters when the script is loaded by hand, where
+-- fw.out_path is /tmp and an earlier run's frames may still be there.
+local FRAME_DIR = fw.out_path("pp_demo_frames")
+os.execute("mkdir -p '" .. FRAME_DIR .. "' && rm -f '" .. FRAME_DIR .. "'/*.png")
+fw.log("Frames go to " .. FRAME_DIR)
 
 local frame_idx = 0
 local function snap()
