@@ -376,8 +376,19 @@ static void ItemUseOnFieldCB_PokeRadar(u8 taskId)
 {
     /* Field-use callback: the player has confirmed using the PokeRadar and
      * the screen has finished fading in. Actually spawn the shaking patches
-     * now, consume the charge, and destroy the task. */
+     * now, consume the charge, and destroy the task.
+     *
+     * Then hand control back to the player. Both ways of using a field item
+     * leave the player locked: opening the START menu calls
+     * LockPlayerFieldControls() and freezes every object on the map
+     * (ShowStartMenu), and the SELECT Quick Select menu keeps them locked
+     * for the item too. Nothing undoes that until the item's callback does,
+     * so without these two calls the player stands frozen next to the
+     * patches it just made and can never step into one. The BICYCLE's
+     * callback above and the ITEMFINDER's clean-up end the same way. */
     PokeRadar_Activate();
+    ClearPlayerHeldMovementAndUnfreezeObjectEvents();
+    UnlockPlayerFieldControls();
     DestroyTask(taskId);
 }
 

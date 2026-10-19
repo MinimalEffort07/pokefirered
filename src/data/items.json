@@ -6057,6 +6057,22 @@
       "battleUsage": 0,
       "battleUseFunc": "NULL",
       "secondaryId": 0
+    },
+    {
+      "english": "POK\u00e9 RADAR",
+      "itemId": "ITEM_POKE_RADAR",
+      "price": 0,
+      "holdEffect": "HOLD_EFFECT_NONE",
+      "holdEffectParam": 0,
+      "description_english": "A tool that can search out POKéMON\\nthat are hiding in grass. Its\\nbatteries recharge as you walk.",
+      "importance": 1,
+      "registrability": 1,
+      "pocket": "POCKET_KEY_ITEMS",
+      "type": "ITEM_TYPE_FIELD",
+      "fieldUseFunc": "ItemUseOutOfBattle_PokeRadar",
+      "battleUsage": 0,
+      "battleUseFunc": "NULL",
+      "secondaryId": 0
     }
   ]
 }

@@ -29,3 +29,35 @@ const struct Item gItems[] = {
         .secondaryId = {{ item.secondaryId }}
     }, {% endfor %}
 };
+
+/*
+ * Build-time guard: gItems[] must hold exactly one entry per item ID, in ID
+ * order, so that gItems[itemId] is always that item's own entry.
+ *
+ * gItems[] has no explicit size, so the compiler sizes it from however many
+ * entries items.json lists. Nothing else ties it to the ITEM_* constants in
+ * include/constants/items.h. Adding an ITEM_* constant (and raising
+ * ITEMS_COUNT) without adding its items.json entry compiles cleanly: the item
+ * ID then indexes past the end of the array, and the game reads whatever data
+ * the linker placed after it. SanitizeItemId() only rejects IDs at or above
+ * ITEMS_COUNT, so it does not catch this. Each STATIC_ASSERT (include/global.h)
+ * declares an array whose size is -1 when its check is false, which stops the
+ * build with "size of array `<name>' is negative"; <name> says what went wrong.
+ *
+ * 1. Every real item's entry sits at the index equal to its own ITEM_* value.
+ *    This catches an entry inserted out of order or a constant renumbered
+ *    without moving its entry. The name ends in the item whose entry is
+ *    misplaced. Entries whose itemId is ITEM_NONE are skipped: ITEM_NONE (0)
+ *    itself and the "????????" fillers vanilla keeps for unused IDs (such as
+ *    the gaps between the ball and medicine ranges). They have no ID of their
+ *    own to compare against; they only hold a slot.
+ * 2. The table has exactly ITEMS_COUNT entries. With check 1, that means
+ *    every slot from 0 to ITEMS_COUNT - 1 has an entry and no ID at the end of
+ *    the range is left without one.
+ */
+## for item in items
+## if item.itemId != "ITEM_NONE"
+STATIC_ASSERT({{ item.itemId }} == {{ loop.index }}, ItemEntryIndexMatchesId_{{ item.itemId }})
+## endif
+## endfor
+STATIC_ASSERT(ARRAY_COUNT(gItems) == ITEMS_COUNT, ItemTableHasOneEntryPerItemId)
