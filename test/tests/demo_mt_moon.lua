@@ -32,13 +32,9 @@
 -- moves k (the seed check below fails), copy the logged value into
 -- DEMO.rng, floor by floor from 1F down: fix the first floor that fails,
 -- run again, and only then read the next floor's value. A floor's k also
--- depends on the cave the walk leaves to reach it, so a value logged
--- below a floor that rolled the wrong cave is no use. (After the follower
--- PRs #20, #21 and #47, B1F rolled the wrong cave. Walking on from that
--- cave, B2F's roll came 65 calls after the write, and the demo logged
--- 0xc62572e5 for B2F. With B1F's value refreshed, B2F's roll came 58 calls
--- after the write again, and its old value rolled 0x64f4 as before.) The
--- README's "after" renders are these same caves
+-- depends on the cave the walk leaves to reach it, so while a floor rolls
+-- the wrong cave, the values logged for the floors below it are no use.
+-- The README's "after" renders are these same caves
 -- (test/tools/dump_mtmoon_grid.lua dumps them).
 --
 -- PASS (it is a test too, so the GIF's story is checked, not just watched):
@@ -82,6 +78,12 @@ local DEMO = {
     -- The cave seed (VAR_MT_MOON_MAP_SEED) of each floor.
     seed = { ["1F"] = 0x2cba, ["B1F"] = 0xe6e7, ["B2F"] = 0x64f4 },
     -- The gRngValue written before the step onto the warp into each floor.
+    -- (The follower PRs #20, #21 and #47 added Random() calls: B1F's
+    -- 0x71B61A13 then rolled 0xc0a9, and 0xE42D448A, the value logged for
+    -- it, rolls 0xe6e7. Walking on from the wrong B1F, B2F's roll came 65
+    -- calls after B2F's gRngValue write, and the demo logged 0xC62572E5
+    -- for it. With B1F fixed, B2F's roll comes 58 calls after that write
+    -- again, and 0x232A0842 still rolls 0x64f4.)
     rng = { ["1F"] = 0x859CE6D7, ["B1F"] = 0xE42D448A, ["B2F"] = 0x232A0842 },
     -- Where the walk starts on Route 4: 2 steps south of the west door
     -- (19,5), with the Pokemon Center and the cave mouth on screen.
