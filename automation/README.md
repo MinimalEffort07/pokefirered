@@ -177,4 +177,4 @@ What they cover:
 
 **Live check:** the grill path (#55) was checked live on 2026-10-19, on issue #67: autodev grilled it and broke it into tickets with nobody watching.
 
-**Live check:** fix-ups (#59) were checked live on #80.
+**Live check:** fix-ups (#59) were checked live on #80, on 2026-10-19.
