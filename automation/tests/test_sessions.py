@@ -69,6 +69,9 @@ class LaunchCommand(unittest.TestCase):
             "--json-schema", sessions.RESULT_SCHEMA,
             "--session-id", "0b6f5a2e-0000-4000-8000-000000000061",
             "--model", "opus",
+            # Set per role, not left to the owner's own default: grilling
+            # gets the most, since its design shapes every ticket.
+            "--effort", "max",
         ])
 
     def test_a_ticket_session_runs_in_its_worktree_for_up_to_3_hours(self):
@@ -103,6 +106,7 @@ class LaunchCommand(unittest.TestCase):
             "--json-schema", sessions.RESULT_SCHEMA,
             "--session-id", "sid-68",
             "--model", "opus",
+            "--effort", "xhigh",
         ])
 
     def test_a_merge_session_knows_its_pr_and_the_comment_it_answers(self):
@@ -134,6 +138,7 @@ class LaunchCommand(unittest.TestCase):
         ])
         self.assertIn("/home/min/projects/minimaleffort/pokefirered-autodev"
                       "/automation/settings/merge.json", cmd)
+        self.assertEqual(cmd[cmd.index("--effort") + 1], "xhigh")
 
     def test_a_fix_up_session_gets_90_minutes_its_pr_and_the_comment(self):
         cmd = sessions.launch_command(
@@ -145,7 +150,8 @@ class LaunchCommand(unittest.TestCase):
                          ["-p", "WorkingDirectory=/home/min/projects/minimaleffort/"
                                 "pokefirered-autodev-worktrees/issue-68"],
                          ["--setenv=AUTODEV_ROLE=fixup", "--setenv=AUTODEV_PR=73",
-                          "--setenv=AUTODEV_HANDLED_THROUGH=9001"]):
+                          "--setenv=AUTODEV_HANDLED_THROUGH=9001"],
+                         ["--effort", "xhigh"]):
             with self.subTest(expected=expected):
                 self.assertTrue(any(cmd[i:i + len(expected)] == expected
                                     for i in range(len(cmd))))
@@ -164,7 +170,7 @@ class LaunchCommand(unittest.TestCase):
                 self.assertIn(role, dispatcher.OUTCOMES)
         # Each table keyed by role: a role missing from one is half wired.
         for table in (decide.RANKS, decide.REQUEUE, decide.DONE_CHECKS,
-                      dispatcher.OUTCOMES, issue_tool.COMMANDS):
+                      dispatcher.OUTCOMES, issue_tool.COMMANDS, sessions.EFFORTS):
             self.assertEqual(set(table), set(sessions.TIME_LIMITS))
 
     def test_the_result_schema_asks_for_an_outcome_and_a_reason(self):
