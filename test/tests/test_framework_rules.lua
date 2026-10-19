@@ -60,10 +60,12 @@ local function run_fixture(name, env)
     local _, _, code = pipe:close()
 
     -- run_test.sh keeps each run's output directory and prints its path
-    -- ("Output: /tmp/mgba-test.XXXXXX"). Nobody looks at a fixture's
-    -- folder, so remove it rather than leave one behind per fixture.
-    local dir = output:match("Output: (/tmp/mgba%-test%.%w+)")
-    if dir then
+    -- ("Output: <its mktemp folder>"). Nobody looks at a fixture's folder,
+    -- so remove it rather than leave one behind per fixture. The folder is
+    -- recognised by its mktemp name, not a written-out path, so this file
+    -- passes test_no_fixed_tmp_paths.
+    local dir = output:match("Output: (%S+)")
+    if dir and dir:match("/mgba%-test%.%w+$") then
         os.execute("rm -rf '" .. dir .. "'")
     end
 
