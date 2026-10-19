@@ -118,6 +118,8 @@ A `Needs human` comment ends with a command like this one, which reopens the ses
 cd ~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-68 && CLAUDE_CONFIG_DIR=~/.claude-personal claude --resume <session-id>
 ```
 
+The same command also reopens a session that finished normally, which is handy for reviewing what it did; its session id is the `session_id` field of its record in `~/.local/state/autodev/sessions/done/`.
+
 ## Tests
 
 ```bash
