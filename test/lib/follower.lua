@@ -62,11 +62,11 @@ local mm   = dofile(project_dir .. "test/lib/mt_moon.lua")
 
 local follower = {}
 
--- ASSERTIONS. dofile() gives every file that loads framework.lua its own
--- copy, with its own pass/fail counts, and only the test's copy writes the
--- results test/run_test.sh reads. So this library asserts through T, the
--- calling test's framework, which the test hands over with
--- follower.bind(fw) right after loading this file.
+-- ASSERTIONS. This library asserts through T, the calling test's
+-- framework, which the test hands over with follower.bind(fw) right after
+-- loading this file. Every copy of framework.lua reports into one shared
+-- results table (see test/lib/framework.lua), so assertions made through T
+-- and through this file's own copy are counted alike.
 local T = fw
 function follower.bind(test_fw)
     T = test_fw

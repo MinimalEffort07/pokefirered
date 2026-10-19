@@ -61,6 +61,11 @@
 --       fw.finish()                  -- report results and exit
 --   end)
 --
+-- A test must make at least one assertion: one that makes none fails with
+-- "0 assertions". Demos and probes, which only make frames, opt out with
+-- fw.allow_no_assertions(reason); see THE ZERO-ASSERTION RULE above
+-- fw.finish().
+--
 -------------------------------------------------------------------------------
 
 local fw = {}
@@ -90,13 +95,26 @@ fw.KEY = {
 -------------------------------------------------------------------------------
 -- Accumulates pass/fail counts and error messages during the test.
 -- Written to a JSON file at the end so the shell runner can parse results.
+--
+-- ONE RESULTS TABLE PER RUN. Test libraries load this file with dofile(),
+-- which runs it again and makes a separate copy of every function and local
+-- for each file that loads it. If each copy kept its own counts, an
+-- assertion made inside a library (test/lib/character_select.lua failing a
+-- boot, for example) would land in the library's copy, which nobody reports,
+-- and the test would never see it. So every copy shares one table, kept in a
+-- global variable (globals are shared by every file in one Lua run), and
+-- fw.run() empties it when the test starts.
 
-local results = {
-    pass = 0,       -- number of assertions that passed
-    fail = 0,       -- number of assertions that failed
-    errors = {},    -- list of error message strings
-    log_lines = {}, -- all log messages (for debugging)
-}
+local results = _G.__pokefirered_test_results
+if results == nil then
+    results = {
+        pass = 0,       -- number of assertions that passed
+        fail = 0,       -- number of assertions that failed
+        errors = {},    -- list of error message strings
+        log_lines = {}, -- all log messages (for debugging)
+    }
+    _G.__pokefirered_test_results = results
+end
 
 -- The coroutine that runs the test logic. Set by fw.run().
 local test_coroutine = nil
@@ -508,14 +526,64 @@ end
 -- and the frame callback (which runs OUTSIDE the coroutine) handles shutdown.
 local shutdown_requested = false
 
+-- THE ZERO-ASSERTION RULE: a test can only pass by proving something.
+--
+-- A test that reaches fw.finish() without making a single assertion
+-- (fw.assert_eq / fw.assert_neq / fw.assert_true) has checked nothing, so it
+-- fails, with a "0 assertions" error. Without this rule a test whose checks
+-- were all skipped (an early return, a check that only logs) would report
+-- "0/0 passed" and exit 0, exactly like a test that works.
+--
+-- THE OPT-OUT: demos and probes. A demo exists to make frames for a README
+-- GIF and a probe to print or capture something for a person to look at;
+-- neither proves anything, so neither asserts. Such a file says so once, at
+-- the top, right after loading this framework:
+--
+--   fw.allow_no_assertions("demo: only captures frames for the README GIF")
+--
+-- (A test that only skips itself in some setting, such as a GUI-only test
+-- run headless, calls it on the path that skips instead.) It then passes
+-- with zero assertions, and the RESULTS line gives the reason. The opt-out
+-- only lifts the zero-assertion rule: an assertion that fails, a crash, or a
+-- failed boot (test/lib/character_select.lua) still fails the run. As these
+-- files prove nothing, a whole-suite run should leave them out; run them on
+-- their own, or record them with test/record_test.sh.
+local ZERO_ASSERTIONS_FAILURE = "0 assertions -- this test checked nothing, "
+    .. "so it cannot pass. Assert what it is meant to prove (fw.assert_true, "
+    .. "fw.assert_eq, fw.assert_neq), or, if it is a demo or probe that only "
+    .. "makes frames, declare fw.allow_no_assertions(reason) at the top."
+
+-- The reason given to fw.allow_no_assertions, or nil if the test didn't
+-- opt out. It belongs to this copy of the framework (the one the test file
+-- loaded and calls fw.finish() on), so a library can't opt a test out.
+local no_assertions_reason = nil
+
+-- Declare that this file is a demo or probe that makes no assertions (see
+-- THE OPT-OUT above). `reason` is a short note saying what the file is for.
+function fw.allow_no_assertions(reason)
+    no_assertions_reason = reason or "no reason given"
+end
+
 -- Call this at the end of every test to report results and exit.
 -- In GUI mode, it restores normal emulation speed so you can interact.
 -- In headless mode, it triggers process termination.
 function fw.finish()
+    -- The zero-assertion rule (above). Its failure is recorded like a failed
+    -- assertion, so the results file, the exit code and the RESULTS line all
+    -- report it the same way.
+    local assertions = results.pass + results.fail
+    local summary
+    if assertions > 0 then
+        summary = string.format("RESULTS: %d/%d passed, %d failed",
+            results.pass, assertions, results.fail)
+    elseif no_assertions_reason ~= nil then
+        summary = "RESULTS: 0 assertions, as declared (" .. no_assertions_reason .. ")"
+    else
+        fw.assert_true(false, ZERO_ASSERTIONS_FAILURE)
+        summary = "RESULTS: 0 assertions, so the test fails"
+    end
+
     fw.write_results()
-    local total = results.pass + results.fail
-    local summary = string.format("RESULTS: %d/%d passed, %d failed",
-        results.pass, total, results.fail)
     if results.fail > 0 then
         fw.log_error(summary)
     else
@@ -595,6 +663,15 @@ end
 --   5. When the test calls fw.finish(), a shutdown flag is set
 --   6. On the next frame, the callback sees the flag and terminates
 function fw.run(test_fn)
+    -- Start from empty results. Under test/run_test.sh every run is a fresh
+    -- emulator, so they are empty anyway; in the mGBA GUI, scripts loaded
+    -- one after another share one Lua state (and so the shared results
+    -- table), and the second test must not inherit the first one's counts.
+    results.pass = 0
+    results.fail = 0
+    results.errors = {}
+    results.log_lines = {}
+
     -- Create the coroutine that will run the test function.
     -- xpcall wraps it in error handling so crashes produce useful messages.
     test_coroutine = coroutine.create(function()

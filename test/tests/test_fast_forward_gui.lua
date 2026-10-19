@@ -57,9 +57,10 @@ fw.run(function()
         -- Headless mode has no display rate-limiter and no menu to inspect,
         -- so both the timing measurements and the visual verification this
         -- test performs are meaningless there. Skip cleanly instead of
-        -- reporting a spurious failure.
+        -- reporting a spurious failure: with no assertions, which only this
+        -- skip declares allowed (in the GUI the test must still assert).
         fw.log("Skipped: this test only makes sense in GUI mode (mgba-qt)")
-        fw.assert_true(true, "test skipped in headless mode")
+        fw.allow_no_assertions("GUI-only test: skipped under mgba-headless")
         -- Brief wait so stdout flushes before clean_shutdown SIGTERMs us;
         -- without this the skip completes in microseconds and the kill
         -- races ahead of the log/PASS lines reaching the terminal.

@@ -61,6 +61,22 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![L/R Page Scroll](gifs/lr_page_scroll.gif)
 
+## Tests
+
+Every test is a Lua script in `test/tests/` that boots the ROM in mGBA's headless emulator and plays the game by pressing buttons and reading memory (`test/lib/framework.lua` explains how). Build first with `make -j$(nproc) firered`; the tests run `pokefirered.gba`.
+
+```bash
+bash test/run_test.sh test/tests/test_pc_anywhere.lua     # exit code 0 = pass, 1 = fail
+bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA window, recorded to video
+```
+
+**A test can only pass by proving something:**
+
+- A test passes only if it made at least one assertion (`fw.assert_true`, `fw.assert_eq`, `fw.assert_neq`) and none of them failed. A test that reaches `fw.finish()` with zero assertions fails with "0 assertions", so a test whose checks were all skipped, or only logged, can't pass.
+- If booting a new game to character select fails, the test fails with "boot to character select failed", even when it gives up before its first assertion. To check a test's failure path in about a second, fake that failure: `MGBA_TEST_FAKE_BOOT_FAILURE=1 bash test/run_test.sh test/tests/<test>.lua`.
+- Demos and probes only make frames, screenshots or logs for a person to look at, so they assert nothing. Each one says so with `fw.allow_no_assertions(reason)` and then passes with zero assertions; a failed assertion, a crash or a failed boot still fails it. In `test/tests/` they are `demo_lr_page_scroll`, `demo_pc_anywhere`, `demo_pp_items_in_marts`, `demo_slaveless_hm`, `demo_type_effectiveness_colors` and `test_char_midwalk_screenshot`, plus `test_fast_forward_gui` when it skips itself under the headless emulator (in the mGBA window it asserts). In `test/tools/` they are `explore_route1`, `probe_route1_fixture` and `test_route1_movement`. Run them on their own, or record them with `record_test.sh`.
+- `test/tests/test_framework_rules.lua` checks these rules: it runs the small scripts in `test/tests/framework_fixtures/` through `run_test.sh` and checks each exit code and message.
+
 ## Mt. Moon generator
 
 ### Before and after

@@ -140,12 +140,35 @@ local SAFE_MARGIN = 3
 -- map-load and VBlank jitter.
 local LIST_OPEN_WAIT = 500
 
+-- Every test that boots a new game starts here, so a failed boot is
+-- recorded here as a failed assertion, with this message. The test that
+-- called us usually gives up at once (`if not sel then fw.finish() return
+-- end`), often before making any assertion of its own; this failure is what
+-- makes that early return fail the run instead of passing it. (It reaches
+-- the test's results because every copy of the framework shares one results
+-- table; see test/lib/framework.lua.)
+cs.BOOT_FAILED = "boot to character select failed"
+
 -- Discover which A press opens the character list, using the sentinel trick.
--- Returns the press index (int) on success, nil on failure.
+-- Returns the press index (int) on success. On failure it records the
+-- cs.BOOT_FAILED assertion failure and returns nil.
 -- Result is cached in cs.cached_selection_press.
+--
+-- TEST STUB: with the environment variable MGBA_TEST_FAKE_BOOT_FAILURE=1 it
+-- fails at once, without booting, exactly as if the list had never opened.
+-- test/tests/test_framework_rules.lua uses it to check that a failed boot
+-- fails the test; it also lets you check any boot-dependent test's failure
+-- path in about a second:
+--   MGBA_TEST_FAKE_BOOT_FAILURE=1 bash test/run_test.sh test/tests/<test>.lua
 function cs.find_selection_press()
     if cs.cached_selection_press then
         return cs.cached_selection_press
+    end
+
+    if os.getenv("MGBA_TEST_FAKE_BOOT_FAILURE") == "1" then
+        fw.assert_true(false, cs.BOOT_FAILED
+            .. " (faked by MGBA_TEST_FAKE_BOOT_FAILURE=1)")
+        return nil
     end
 
     cs.boot_to_new_game()
@@ -163,7 +186,8 @@ function cs.find_selection_press()
         end
     end
 
-    fw.log_error("[cs] Never detected list opening after 60 presses")
+    fw.assert_true(false, cs.BOOT_FAILED
+        .. ": the character list never opened in 60 A presses of Oak's speech")
     return nil
 end
 

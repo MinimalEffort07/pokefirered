@@ -8,6 +8,7 @@
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
 local project_dir = script_dir .. "../../"
 local fw = dofile(project_dir .. "test/lib/framework.lua")
+fw.allow_no_assertions("probe: takes two screenshots for a person to compare")
 local cs = dofile(project_dir .. "test/lib/character_select.lua")
 
 local idx = tonumber(os.getenv("CHAR_IDX") or "94")
