@@ -28,7 +28,8 @@ Autodev runs this repo's GitHub Issue Workflow (CLAUDE.md steps 1–13) on its o
 | `autodev.timer` | A systemd user timer that starts `autodev-dispatcher.service` every 2 minutes. |
 | `autodev-dispatcher.service` | One dispatcher tick: `git pull` the clone, then `python3 -m autodev tick` (code in `automation/autodev/`). |
 | `autodev-<role>-<issue>.service` | One Claude session, e.g. `autodev-grill-67`. It's a transient unit that the dispatcher starts with `systemd-run`, and systemd forgets it once it ends. It runs `claude -p` in the clone as the bot (the env file), with your Claude login and plugins (`CLAUDE_CONFIG_DIR=~/.claude-personal`), the role's permissions (`automation/settings/<role>.json`) and the role's time limit. |
-| `~/autodev/logs/` | Each session's full stream-json log (`<role>-<issue>-<time>.jsonl`, with stderr in `.err`). The last `result` event holds what the session reported. |
+| `automation/bin/issue.py` | A session's only way to reach GitHub; its settings deny plain `gh`. It shows only text written by you or the bot, and it changes only the session's own issue (`AUTODEV_ISSUE`, set by the dispatcher) and the tickets it creates under it. No labels, no closing, no board. |
+| `~/autodev/logs/` | Each session's full stream-json log (`<role>-<issue>-<time>.jsonl`, with stderr in `.err`). The last `result` event holds what the session reported. The tick deletes logs older than 30 days. |
 | `~/.local/state/autodev/sessions/` | One small record per session the dispatcher started: its session id and log path. Once a session's outcome is handled, its record moves to `done/`. |
 | `autodev-recordings.service` | `test/serve_recordings.py` on port 8080, so the recording links in PRs always work. |
 | Linger | Keeps systemd user units running when no terminal is open. |
@@ -89,4 +90,7 @@ cd automation && python3 -m unittest
 What they cover:
 - **`test_tick.py`:** replays recorded GitHub responses (`tests/fixtures/`) through a fake `gh`, and checks the board snapshot the tick logs.
 - **`test_decide.py`:** checks every decision (`decide()` is a pure function) against a hand-built state, one test per scenario from #48 (D1, D2, D15, D16, D24).
-- **`test_sessions.py`:** pins down the session unit's command line: the bot's identity, your Claude login, the time limit and the role's permissions. It also checks how a session's result is read back from its log, and that the grill role keeps its deny rules (D25).
+- **`test_sessions.py`:** pins down the session unit's command line: the bot's identity, your Claude login, the time limit, the role's permissions and the session's issue. It also checks what counts as "still running" and how a session's result is read back from its log, and that the grill role keeps its deny rules and has no plain `gh` access (D25).
+- **`test_issue_tool.py`:** checks `bin/issue.py`'s rules: untrusted authors' text is withheld, comments get the marker, and a ticket must name its parent and is created without labels and linked as a sub-issue.
+- **`test_github.py`:** checks what the dispatcher accepts as a finished grill's work: only the bot's comment with the design marker, and only open issues whose `## Parent` names the parent, with their blockers checked. It also covers deleting session files older than 30 days.
+- **Failures:** if one of a tick's actions fails, the tick logs it and skips the rest of that issue's actions, but carries on with the others.

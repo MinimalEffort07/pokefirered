@@ -11,6 +11,7 @@ import datetime
 import json
 import os
 import subprocess
+import time
 import uuid
 
 from autodev import sessions
@@ -34,23 +35,30 @@ class Registry:
                 continue
             with open(os.path.join(self.config.state_dir, name)) as f:
                 record = json.load(f)
-            running = self.is_active(sessions.unit_name(record["role"], record["issue"]))
+            running = self.is_running(sessions.unit_name(record["role"], record["issue"]))
             found.append(Session(
                 role=record["role"], issue=record["issue"],
                 session_id=record["session_id"], running=running,
                 result=None if running else sessions.read_result(record["log"])))
         return found
 
-    def is_active(self, unit):
-        # "activating" and "active" both count: the session is under way.
-        return self.run(["systemctl", "--user", "is-active", "--quiet", unit]
-                        ).returncode == 0
+    # systemd's ActiveState for a unit that is still under way. A unit that
+    # has ended is "inactive" or "failed"; one systemd has already
+    # forgotten (--collect) also shows as "inactive".
+    RUNNING_STATES = {"active", "activating", "deactivating", "reloading",
+                      "refreshing"}
+
+    def is_running(self, unit):
+        state = self.run(["systemctl", "--user", "show", "--property",
+                          "ActiveState", "--value", unit],
+                         capture_output=True, text=True).stdout.strip()
+        return state in self.RUNNING_STATES
 
     def start(self, role, issue, prompt):
         os.makedirs(self.config.state_dir, exist_ok=True)
         os.makedirs(self.config.log_dir, exist_ok=True)
         session_id = str(uuid.uuid4())
-        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        stamp = _stamp()
         log = os.path.join(self.config.log_dir, "%s-%d-%s.jsonl" % (role, issue, stamp))
         record = {"role": role, "issue": issue, "session_id": session_id,
                   "log": log, "started": stamp}
@@ -62,11 +70,28 @@ class Registry:
         except Exception:
             os.remove(self._record_path(role, issue))
             raise
-        return record
 
     def finish(self, role, issue):
         done = os.path.join(self.config.state_dir, "done")
         os.makedirs(done, exist_ok=True)
         os.replace(self._record_path(role, issue),
-                   os.path.join(done, "%s-%d-%s.json" % (
-                       role, issue, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))))
+                   os.path.join(done, "%s-%d-%s.json" % (role, issue, _stamp())))
+
+    def prune(self, days=30, now=None):
+        """Delete session logs and handled records older than `days`
+        (#48 keeps logs for 30 days). Returns how many files went."""
+        cutoff = (now if now is not None else time.time()) - days * 24 * 3600
+        removed = 0
+        for folder in (self.config.log_dir, os.path.join(self.config.state_dir, "done")):
+            if not os.path.isdir(folder):
+                continue
+            for name in os.listdir(folder):
+                path = os.path.join(folder, name)
+                if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+                    removed += 1
+        return removed
+
+
+def _stamp():
+    return datetime.datetime.now().strftime("%Y%m%d-%H%M%S")

@@ -22,6 +22,15 @@ class Config:
     resume_command: str = "claude --resume {session_id}"
 
 
+    def session_config(self):
+        """The part of the config a session launch needs."""
+        from autodev.sessions import SessionConfig
+        return SessionConfig(
+            claude=self.claude, claude_config_dir=self.claude_config_dir,
+            env_file=self.env_file, clone=self.clone, log_dir=self.log_dir,
+            state_dir=self.state_dir, model=self.model)
+
+
 def load(path):
     with open(path) as f:
         values = json.load(f)

@@ -7,12 +7,12 @@ journal (`journalctl --user -u autodev-dispatcher`).
 """
 
 import os
-from dataclasses import fields
 
-from autodev import board, sessions
+from autodev import board
 from autodev.decide import (Comment, Finish, Launch, LinkSubIssue,
-                            PlaceOnBoard, SetStatus, State, decide)
+                            PlaceOnBoard, SetStatus, State, plan)
 from autodev.github import GitHub
+from autodev.gh import GhError
 from autodev.registry import Registry
 
 PROMPTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
@@ -44,25 +44,38 @@ def tick(gh, config, log, registry=None):
     code, snapshot = log_board(gh, config, log)
     if snapshot is None:
         return code
-    registry = registry or Registry(session_config(config))
+    registry = registry or Registry(config.session_config())
     github = GitHub(gh, config, snapshot)
     known = registry.load()
-    outcomes = {
-        s.issue: github.grill_outcome(s.issue, (s.result or {}).get("links", []))
-        for s in known if s.role == "grill" and not s.running}
-    state = State(owner=config.owner, bot=config.bot, items=snapshot.items,
-                  sessions=known, outcomes=outcomes,
-                  max_sessions=config.max_sessions,
+    outcomes = {}
+    for s in known:
+        if s.role == "grill" and not s.running:
+            try:
+                outcomes[s.issue] = github.grill_outcome(
+                    s.issue, (s.result or {}).get("links", []))
+            except GhError as e:
+                # Leave this session for the next tick; the others go on.
+                print("error: reading #%d's grill outcome: %s" % (s.issue, e),
+                      file=log)
+                code = 1
+    state = State(owner=config.owner, items=snapshot.items, sessions=known,
+                  outcomes=outcomes, max_sessions=config.max_sessions,
                   resume_command=config.resume_command)
-    for action in decide(state):
-        print("→ %s" % _describe(action), file=log)
-        _carry_out(action, github, registry, config)
-    return 0
-
-
-def session_config(config):
-    names = {f.name for f in fields(sessions.SessionConfig)}
-    return sessions.SessionConfig(**{n: getattr(config, n) for n in names})
+    for group in plan(state):
+        for action in group:
+            print("→ %s" % _describe(action), file=log)
+            try:
+                _carry_out(action, github, registry, config)
+            except Exception as e:
+                # Skip the rest of this issue's actions, not everyone's.
+                print("error: %s failed: %s" % (_describe(action), e), file=log)
+                code = 1
+                break
+    removed = registry.prune()
+    if removed:
+        print("pruned %d session file%s older than 30 days" % (
+            removed, "" if removed == 1 else "s"), file=log)
+    return code
 
 
 def _carry_out(action, github, registry, config):
@@ -83,9 +96,15 @@ def _carry_out(action, github, registry, config):
 
 
 def prompt(config, role, issue):
+    """The role's prompt with its {issue}, {repo}, {owner} and {bot}
+    placeholders filled in. Plain replacement, so any other braces in the
+    Markdown are left alone."""
     with open(os.path.join(PROMPTS, role + ".md")) as f:
-        return f.read().format(issue=issue, repo=config.repo,
-                               owner=config.owner, bot=config.bot)
+        text = f.read()
+    for name, value in (("issue", issue), ("repo", config.repo),
+                        ("owner", config.owner), ("bot", config.bot)):
+        text = text.replace("{%s}" % name, str(value))
+    return text
 
 
 def _describe(action):

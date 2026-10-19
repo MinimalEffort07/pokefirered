@@ -58,13 +58,23 @@ def launch_command(config, role, issue, session_id, log_path, prompt):
     err_path = os.path.splitext(log_path)[0] + ".err"
     return [
         "systemd-run", "--user", "--quiet", "--collect",
+        # By default systemd-run expands $VAR in the command's arguments,
+        # which would silently change any prompt that mentions one.
+        "--expand-environment=no",
         "--unit", unit_name(role, issue),
+        # Type=exec: systemd-run only returns once claude has really
+        # started, so a bad path fails the launch instead of looking like
+        # a crash later.
+        "-p", "Type=exec",
         "-p", "RuntimeMaxSec=%d" % TIME_LIMITS[role],
         "-p", "EnvironmentFile=" + config.env_file,
         "-p", "WorkingDirectory=" + config.clone,
         "-p", "StandardOutput=append:" + log_path,
         "-p", "StandardError=append:" + err_path,
         "--setenv=CLAUDE_CONFIG_DIR=" + config.claude_config_dir,
+        # The issue this session works on. automation/bin/issue.py only
+        # lets a session change this one issue (and its own new tickets).
+        "--setenv=AUTODEV_ISSUE=%d" % issue,
         "--",
         config.claude, "-p", prompt,
         # Auto mode lets the safety classifier approve routine actions; with

@@ -5,8 +5,7 @@ Everything here runs as the bot: the dispatcher's unit loads the bot's
 GH_TOKEN, and gh uses it for every call.
 """
 
-import re
-
+from autodev.board import issue_numbers, section
 from autodev.decide import GrillOutcome, Ticket
 
 # The grill session marks its design comment with this hidden tag
@@ -29,17 +28,6 @@ mutation AddToBoard($board: ID!, $issue: ID!) {
   }
 }
 """
-
-
-def section(body, heading):
-    """The text under a "## <heading>" line, up to the next "## " heading."""
-    match = re.search(r"^##\s+%s\b(.*?)(?=^##\s|\Z)" % re.escape(heading),
-                      body or "", re.MULTILINE | re.DOTALL)
-    return match.group(1) if match else None
-
-
-def issue_numbers(text):
-    return [int(n) for n in re.findall(r"#(\d+)\b", text or "")]
 
 
 class GitHub:
@@ -90,12 +78,10 @@ class GitHub:
         `reported` is the ticket numbers the session listed in its result;
         the parent's sub-issues are checked too, in case it missed one."""
         repo = self.config.repo
-        comments = self.gh.rest("GET", "repos/%s/issues/%d/comments?per_page=100"
-                                % (repo, parent)) or []
+        comments = self.gh.rest_list("repos/%s/issues/%d/comments" % (repo, parent))
         design = any(c["user"]["login"] == self.config.bot
                      and DESIGN_MARKER in (c["body"] or "") for c in comments)
-        subs = self.gh.rest("GET", "repos/%s/issues/%d/sub_issues?per_page=100"
-                            % (repo, parent)) or []
+        subs = self.gh.rest_list("repos/%s/issues/%d/sub_issues" % (repo, parent))
         linked = {s["number"] for s in subs}
         tickets = []
         for number in sorted(set(reported) | linked):

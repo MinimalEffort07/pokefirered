@@ -10,7 +10,7 @@ import json
 import os
 import unittest
 
-from autodev import sessions
+from autodev import registry, sessions
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 AUTOMATION = os.path.dirname(os.path.dirname(__file__))
@@ -33,7 +33,13 @@ class LaunchCommand(unittest.TestCase):
             "/home/min/autodev/logs/grill-61.jsonl", "PROMPT")
         self.assertEqual(cmd, [
             "systemd-run", "--user", "--quiet", "--collect",
+            # Pass the prompt through untouched: by default systemd-run
+            # would expand any $VAR in the command's arguments.
+            "--expand-environment=no",
             "--unit", "autodev-grill-61",
+            # Type=exec makes systemd-run itself fail if claude can't be
+            # started, instead of the session looking like a crash later.
+            "-p", "Type=exec",
             # systemd stops the session after 60 minutes (#48, Sessions).
             "-p", "RuntimeMaxSec=3600",
             # GH_TOKEN for gh and git: the bot's, never the owner's.
@@ -43,6 +49,8 @@ class LaunchCommand(unittest.TestCase):
             "-p", "StandardError=append:/home/min/autodev/logs/grill-61.err",
             # The owner's Claude login and plugins (the grilling skill).
             "--setenv=CLAUDE_CONFIG_DIR=/home/min/.claude-personal",
+            # The only issue the session may change (automation/bin/issue.py).
+            "--setenv=AUTODEV_ISSUE=61",
             "--",
             "/home/min/.local/bin/claude", "-p", "PROMPT",
             "--permission-mode", "auto", "--permission-prompts", "none",
@@ -59,6 +67,29 @@ class LaunchCommand(unittest.TestCase):
         self.assertEqual(schema["properties"]["outcome"]["enum"],
                          ["done", "failed"])
         self.assertEqual(schema["required"], ["outcome", "reason", "links"])
+
+
+class RunningOrNot(unittest.TestCase):
+    """Whether a session's unit is still under way, from systemd's
+    ActiveState. A unit systemd has forgotten (--collect) is inactive."""
+
+    def registry_seeing(self, active_state):
+        class Done:
+            stdout = active_state + "\n"
+            returncode = 0
+        return registry.Registry(CONFIG, run=lambda *a, **k: Done())
+
+    def test_a_starting_or_stopping_unit_still_counts_as_running(self):
+        for active_state in ("active", "activating", "deactivating", "reloading"):
+            with self.subTest(active_state=active_state):
+                self.assertTrue(self.registry_seeing(active_state)
+                                .is_running("autodev-grill-61"))
+
+    def test_an_ended_or_forgotten_unit_is_not_running(self):
+        for active_state in ("inactive", "failed"):
+            with self.subTest(active_state=active_state):
+                self.assertFalse(self.registry_seeing(active_state)
+                                 .is_running("autodev-grill-61"))
 
 
 class ReadingResults(unittest.TestCase):
@@ -89,22 +120,30 @@ class ReadingResults(unittest.TestCase):
 class RolePermissions(unittest.TestCase):
     """D25: each role's settings file carries its deny rules."""
 
-    def deny_rules(self, role):
+    def rules(self, role):
         with open(os.path.join(AUTOMATION, "settings", role + ".json")) as f:
-            return json.load(f)["permissions"]["deny"]
+            return json.load(f)["permissions"]
 
     def test_D25_the_grill_role_is_read_only_and_cannot_merge_or_push(self):
-        deny = self.deny_rules("grill")
+        deny = self.rules("grill")["deny"]
         for rule in [
             "Edit", "Write", "NotebookEdit",           # read-only on the repo
+            "Bash(gh:*)",                              # no direct GitHub access
             "Bash(git commit:*)", "Bash(git push:*)",  # no commits or pushes
-            "Bash(gh pr merge:*)",                     # only the merge role
-            "Bash(gh repo edit:*)", "Bash(gh repo delete:*)",
+            "Bash(git checkout:*)", "Bash(git reset:*)", "Bash(git clean:*)",
             "Bash(*pret/pokefirered*)",                # never the upstream repo
             "Bash(git remote:*)",
+            "WebFetch", "WebSearch",                   # no untrusted web text
         ]:
             self.assertIn(rule, deny)
 
+    def test_the_grill_role_reaches_github_only_through_issue_py(self):
+        # automation/bin/issue.py withholds untrusted authors' text and only
+        # changes the session's own issue; a plain gh allow rule would let
+        # the session around both.
+        allow = self.rules("grill")["allow"]
+        self.assertIn("Bash(python3 automation/bin/issue.py:*)", allow)
+        self.assertEqual([r for r in allow if r.startswith("Bash(gh")], [])
 
 if __name__ == "__main__":
     unittest.main()

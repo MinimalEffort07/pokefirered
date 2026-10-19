@@ -10,7 +10,7 @@ import unittest
 from autodev.board import Item
 from autodev.decide import (
     Comment, Finish, GrillOutcome, Launch, LinkSubIssue, PlaceOnBoard,
-    Session, SetStatus, State, Ticket, decide,
+    Session, SetStatus, State, Ticket, decide, plan,
 )
 
 OWNER = "MinimalEffort07"
@@ -23,9 +23,29 @@ def item(number, status="Todo", author=OWNER, has_parent=False):
 
 
 def state(items=(), sessions=(), outcomes=None, max_sessions=2):
-    return State(owner=OWNER, bot=BOT, items=list(items),
+    return State(owner=OWNER, items=list(items),
                  sessions=list(sessions), outcomes=outcomes or {},
                  max_sessions=max_sessions)
+
+
+class Plans(unittest.TestCase):
+    def test_actions_come_in_one_group_per_issue_or_session(self):
+        # The tick runs each group in order and, if one action fails, skips
+        # the rest of that group only, so one broken issue can't stall the
+        # others on every tick.
+        outcome = GrillOutcome(design_comment=True, tickets=[
+            Ticket(70, linked=False, on_board=True, status="Todo",
+                   open_blockers=False)])
+        groups = plan(State(
+            owner=OWNER, items=[item(60, status="Grilling"), item(61)],
+            sessions=[Session("grill", 60, "sid-60", running=False,
+                              result={"outcome": "done"})],
+            outcomes={60: outcome}))
+        self.assertEqual(groups, [
+            [LinkSubIssue(60, 70), SetStatus(60, "In progress"),
+             Finish("grill", 60)],
+            [Launch("grill", 61), SetStatus(61, "Grilling")],
+        ])
 
 
 class ParentIssues(unittest.TestCase):
@@ -94,7 +114,7 @@ def needs_human(reason):
 class FinishedGrills(unittest.TestCase):
     def run_finished(self, result, outcome):
         return decide(State(
-            owner=OWNER, bot=BOT, items=[item(61, status="Grilling")],
+            owner=OWNER, items=[item(61, status="Grilling")],
             sessions=[finished_grill(result)],
             outcomes={61: outcome} if outcome else {},
             resume_command=RESUME))

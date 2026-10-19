@@ -14,11 +14,22 @@ from typing import Optional
 # dispatcher exactly like one in Todo, so it is reported as Todo.
 DEFAULT_STATUS = "Todo"
 
-# Tickets are recognised by a "## Parent" heading in their body (the
-# to-tickets format); every other issue is a parent to be grilled. The
-# heading may carry the parent's number on the same line ("## Parent #48"),
-# but "## Parenting" is a different heading.
-_PARENT_HEADING = re.compile(r"^##\s+Parent\b", re.MULTILINE)
+
+
+def section(body, heading):
+    """The text under a "## <heading>" line, up to the next "## " heading,
+    or None if the body has no such heading. The heading may carry text on
+    the same line ("## Parent #48"), but "## Parenting" is a different one.
+    """
+    match = re.search(r"^##\s+%s\b(.*?)(?=^##\s|\Z)" % re.escape(heading),
+                      body or "", re.MULTILINE | re.DOTALL)
+    return match.group(1) if match else None
+
+
+def issue_numbers(text):
+    """Every "#123" reference in the text, as numbers."""
+    return [int(n) for n in re.findall(r"#(\d+)\b", text or "")]
+
 
 # GitHub reports no author for an issue whose account was deleted, and
 # shows such issues as written by "ghost".
@@ -51,7 +62,7 @@ query BoardItems($owner: String!, $number: Int!, $cursor: String) {
           content {
             __typename
             ... on Issue {
-              id number title body state
+              number title body state
               author { login }
               repository { nameWithOwner }
             }
@@ -84,7 +95,6 @@ class Item:
     status: str
     has_parent: bool
     item_id: Optional[str] = None   # the card's id on the board
-    node_id: Optional[str] = None   # the issue's GraphQL id
 
 
 def find_board(gh, config):
@@ -132,7 +142,8 @@ def _parse_item(node):
         number=content["number"],
         author=(content["author"] or {}).get("login", DELETED_AUTHOR),
         status=status,
-        has_parent=bool(_PARENT_HEADING.search(content["body"])),
+        # Tickets carry a "## Parent" section (the to-tickets format);
+        # every other issue is a parent to be grilled.
+        has_parent=section(content["body"], "Parent") is not None,
         item_id=node["id"],
-        node_id=content["id"],
     )

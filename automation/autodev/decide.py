@@ -10,6 +10,13 @@ lets every decision be tested with a hand-built State (tests/test_decide.py).
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Board Status options (the board's own names, set up by setup.sh).
+TODO = "Todo"
+GRILLING = "Grilling"
+BLOCKED = "Blocked"
+IN_PROGRESS = "In progress"
+NEEDS_HUMAN = "Needs human"
+
 
 # ── What the dispatcher knows ─────────────────────────────────────────────
 
@@ -43,7 +50,6 @@ class GrillOutcome:
 @dataclass(frozen=True)
 class State:
     owner: str              # the human; only their parent issues are run
-    bot: str                # autodev's own account
     items: list             # board.Item for every issue on the board
     sessions: list = field(default_factory=list)
     # GrillOutcome per parent whose grill session has ended
@@ -98,23 +104,32 @@ class Finish:
 MARKER = "<!-- autodev -->"
 
 
-def decide(state):
-    actions = []
+def plan(state):
+    """The tick's actions, in groups: one group per finished session or
+    board issue, each in the order it must run. The tick skips the rest of
+    a group when one of its actions fails, but carries on with the others,
+    so one broken issue can't stall the whole board."""
+    groups = []
     for session in state.sessions:
         if not session.running and session.role == "grill":
-            actions += _finished_grill(state, session)
+            groups.append(_finished_grill(state, session))
     free = state.max_sessions - sum(1 for s in state.sessions if s.running)
     has_session = {s.issue for s in state.sessions}
     for item in sorted(state.items, key=lambda i: i.number):
-        if (item.status == "Todo" and not item.has_parent
+        if (item.status == TODO and not item.has_parent
                 and item.number not in has_session):
             new = _new_parent(state, item)
             launches = sum(1 for a in new if isinstance(a, Launch))
             if launches > free:
                 continue    # no free slot: it stays in Todo for a later tick
             free -= launches
-            actions += new
-    return actions
+            groups.append(new)
+    return [g for g in groups if g]
+
+
+def decide(state):
+    """Every action of plan(state), in order."""
+    return [action for group in plan(state) for action in group]
 
 
 def _new_parent(state, item):
@@ -122,20 +137,20 @@ def _new_parent(state, item):
     # parent issues are ever handed to a Claude session (#48, "Identity
     # and trust"); anything else is parked without its text being read.
     if item.author != state.owner:
-        return [SetStatus(item.number, "Needs human"),
+        return [SetStatus(item.number, NEEDS_HUMAN),
                 Comment(item.number, _bot_comment(
                     "Autodev only runs issues written by @%s; restate it as "
                     "your own issue to run it." % state.owner))]
     # Launch first: if the Status update then fails, the session record
     # still stops a second launch on the next tick.
-    return [Launch("grill", item.number), SetStatus(item.number, "Grilling")]
+    return [Launch("grill", item.number), SetStatus(item.number, GRILLING)]
 
 
 def _finished_grill(state, session):
     parent = session.issue
     outcome = state.outcomes.get(parent)
     if outcome is None:
-        return []   # the tick couldn't read GitHub; try again next tick
+        return []   # the tick couldn't read this from GitHub; next tick retries
     result = session.result
     if result is None:
         problem = ("the grill session ended without reporting a result "
@@ -151,8 +166,8 @@ def _finished_grill(state, session):
                    "no tickets")
     else:
         return (_place_tickets(parent, outcome.tickets)
-                + [SetStatus(parent, "In progress"), Finish("grill", parent)])
-    return [SetStatus(parent, "Needs human"),
+                + [SetStatus(parent, IN_PROGRESS), Finish("grill", parent)])
+    return [SetStatus(parent, NEEDS_HUMAN),
             Comment(parent, _parked(state, session, problem)),
             Finish("grill", parent)]
 
@@ -164,7 +179,7 @@ def _place_tickets(parent, tickets):
     for t in tickets:
         if not t.linked:
             actions.append(LinkSubIssue(parent, t.number))
-        status = "Blocked" if t.open_blockers else "Todo"
+        status = BLOCKED if t.open_blockers else TODO
         if not t.on_board or t.status != status:
             actions.append(PlaceOnBoard(t.number, status))
     return actions
