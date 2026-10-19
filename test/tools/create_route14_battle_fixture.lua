@@ -13,9 +13,11 @@
 --
 -- HOW TO RUN:
 --   bash test/run_test.sh test/tools/create_route14_battle_fixture.lua
--- The state is written to /tmp/pokefirered-route14-double.ss (a fixed path
--- outside the run's output directory, so it outlives the run). Load it in
--- mgba-qt with File > Load State File.
+-- The state is written to pokefirered-route14-double.ss in the run's own
+-- output folder, /tmp/mgba-test.XXXXXX (fw.out_path; run_test.sh prints the
+-- folder and keeps it after the run, until /tmp is cleared on reboot). A
+-- private folder means two runs at once can't overwrite each other's state.
+-- Load it in mgba-qt with File > Load State File.
 -------------------------------------------------------------------------------
 
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
@@ -24,7 +26,7 @@ local project_dir = script_dir .. "../../"
 local fw  = dofile(project_dir .. "test/lib/framework.lua")
 local r14 = dofile(project_dir .. "test/lib/route14_battle.lua")
 
-local FIXTURE_PATH = "/tmp/pokefirered-route14-double.ss"
+local FIXTURE_PATH = fw.out_path("pokefirered-route14-double.ss")
 
 fw.run(function()
     fw.log("=== create_route14_battle_fixture.lua ===")

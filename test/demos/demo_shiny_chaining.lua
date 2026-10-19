@@ -77,7 +77,7 @@ fw.run(function()
     fw.assert_true(cs.is_player_active(),
         "player ObjectEvent is active (state loaded on Route 1)")
     log_state("post-load")
-    fw.screenshot("/tmp/mgba-demo-02-warp.png")
+    fw.screenshot(fw.out_path("mgba-demo-02-warp.png"))
 
     -- The fixture state already places the player ON a tall-grass tile
     -- on Route 1 (exact column/row depends on when the fixture was last
@@ -92,29 +92,29 @@ fw.run(function()
     fw.log(string.format("[diag] player on fixture tile (%d,%d) mtb=0x%02X",
         curX, curY, cur_mt))
     fw.assert_true(cur_mt == 0x02, "player starts on tall-grass tile")
-    fw.screenshot("/tmp/mgba-demo-03-walk.png")
+    fw.screenshot(fw.out_path("mgba-demo-03-walk.png"))
 
     -- 4) Open the bag.
     fw.log(">>> Opening bag...")
     fw.press("START"); fw.wait_frames(60)
-    fw.screenshot("/tmp/mgba-demo-04-menu.png")
+    fw.screenshot(fw.out_path("mgba-demo-04-menu.png"))
     fw.press("A");     fw.wait_frames(120)
-    fw.screenshot("/tmp/mgba-demo-05-bag.png")
+    fw.screenshot(fw.out_path("mgba-demo-05-bag.png"))
 
     fw.log(">>> Switching to KEY ITEMS pocket...")
     fw.press("RIGHT"); fw.wait_frames(60)
-    fw.screenshot("/tmp/mgba-demo-06-key-items.png")
+    fw.screenshot(fw.out_path("mgba-demo-06-key-items.png"))
 
     fw.log(">>> Selecting POKERADAR -> USE...")
     fw.press("A"); fw.wait_frames(60)
-    fw.screenshot("/tmp/mgba-demo-07-item-menu.png")
+    fw.screenshot(fw.out_path("mgba-demo-07-item-menu.png"))
     fw.press("A"); fw.wait_frames(120)
-    fw.screenshot("/tmp/mgba-demo-08-after-use.png")
+    fw.screenshot(fw.out_path("mgba-demo-08-after-use.png"))
 
     fw.log(">>> Waiting for patches to appear...")
     fw.wait_frames(240)
     log_state("post-activate")
-    fw.screenshot("/tmp/mgba-demo-09-patches.png")
+    fw.screenshot(fw.out_path("mgba-demo-09-patches.png"))
 
     fw.assert_true((pr.get_flags() & pr.FLAG_PATCHES_ACTIVE) ~= 0,
         "PATCHES_ACTIVE flag set after radar use")

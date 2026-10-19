@@ -17,10 +17,10 @@
 -- in pokefirered.ss1). Injects 2 Bulbasaurs into gPlayerParty so all
 -- three phases are reachable in a single run.
 --
--- Run:
+-- Run (frames go to pc_demo_frames/ in the run's own folder):
 --   bash test/run_test.sh test/tests/demo_pc_anywhere.lua
--- Assemble GIF:
---   ffmpeg -framerate 8 -pattern_type glob -i '/tmp/pc_demo_frames/*.png' \
+-- Assemble GIF, from the folder the demo logs ("Frames go to ..."):
+--   ffmpeg -framerate 8 -pattern_type glob -i '/tmp/mgba-test.XXXXXX/pc_demo_frames/*.png' \
 --     -vf "scale=480:-1:flags=neighbor,split[a][b];[a]palettegen[p];[b][p]paletteuse" \
 --     ~/recordings/pc_anywhere.gif
 -------------------------------------------------------------------------------
@@ -32,11 +32,16 @@ local fw   = dofile(project_dir .. "test/lib/framework.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 
-local FRAME_DIR    = "/tmp/pc_demo_frames"
 local PARTY_BASE   = 0x02024284  -- gPlayerParty (from pokefirered.map)
 local POKEMON_SIZE = 100         -- sizeof(struct Pokemon)
 
-os.execute("mkdir -p " .. FRAME_DIR .. " && rm -f " .. FRAME_DIR .. "/*.png")
+-- The frames go in this run's own folder (fw.out_path), so demos running at
+-- the same time, from one checkout or several worktrees, never share them.
+-- Clearing old frames only matters when the script is loaded by hand, where
+-- fw.out_path is /tmp and an earlier run's frames may still be there.
+local FRAME_DIR = fw.out_path("pc_demo_frames")
+os.execute("mkdir -p '" .. FRAME_DIR .. "' && rm -f '" .. FRAME_DIR .. "'/*.png")
+fw.log("Frames go to " .. FRAME_DIR)
 
 local frame_idx = 0
 local function snap()

@@ -344,6 +344,14 @@ end
 --
 -- Every file a test writes should go through fw.out_path:
 --   fw.screenshot(fw.out_path("mgba-roaming-init.png"))
+--
+-- No script under test/ may use a fixed /tmp path, meaning a file or folder
+-- that every run uses under the same name (test/tests/test_no_fixed_tmp_paths.lua
+-- fails if one does). The only fixed paths allowed are two savestate
+-- fixtures that a person makes by hand and the tests only read:
+-- /tmp/pokefirered-route1.ss and /tmp/pokefirered-route1-grass.ss.
+-- (record_test.sh's /tmp/mgba-recordings folder is shared, but each video in
+-- it gets its own timestamped name, so no two runs use the same file.)
 
 local out_dir = os.getenv("MGBA_TEST_DIR")
 if out_dir == nil or out_dir == "" then
