@@ -15,7 +15,7 @@ Autodev runs this repo's GitHub Issue Workflow (CLAUDE.md steps 1–13) on its o
 | `autodev-dispatcher.service` | One dispatcher tick: `git pull` the clone, then `python3 -m autodev tick` (code in `automation/autodev/`). |
 | `autodev-recordings.service` | `test/serve_recordings.py` on port 8080, so the recording links in PRs always work. |
 | Linger | Keeps systemd user units running when no terminal is open. |
-| Windows logon task | Starts a hidden `wsl.exe … sleep infinity` at Windows logon, because WSL shuts down when no Windows program is using it. |
+| Windows logon keepalive | Starts a hidden `wsl.exe … sleep infinity` at every Windows logon, because WSL shuts down when no Windows program is using it. It's a Task Scheduler task when Windows allows one, and otherwise a "WSL autodev keepalive" shortcut in your Startup folder (Task Scheduler usually wants admin for logon tasks). |
 | Master rulesets | "autodev: master history" blocks force-pushes and deleting master, with no exceptions. "autodev: master via PR" requires a PR from anyone who isn't an admin, so the bot can only change master by merging one. |
 
 ## Setup
