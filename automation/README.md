@@ -2,7 +2,7 @@
 
 Autodev runs this repo's GitHub Issue Workflow (CLAUDE.md steps 1–13) on its own. You add an issue to the **pokefirered autodev** board. A headless Claude Code session grills it, taking every recommended answer, and breaks it into tickets. Other sessions implement the tickets and open PRs. Nothing reaches master until you comment `/merge` on the PR. The full design is on issue #48.
 
-> **Status:** grilling (#55), implementation (#56) and merging (#57) work. An issue you add to the board gets grilled into a design and tickets. Each ticket is implemented in its own worktree as soon as nothing blocks it, ending in a PR that waits for you. Your `/merge` comment on that PR gets it merged, and the ticket and, in the end, the parent are closed. Pausing and failure handling (#58) and fix-ups after your feedback (#59) come next.
+> **Status:** grilling (#55), implementation (#56), merging (#57) and pausing and failure handling (#58) work. An issue you add to the board gets grilled into a design and tickets. Each ticket is implemented in its own worktree as soon as nothing blocks it, ending in a PR that waits for you. Your `/merge` comment on that PR gets it merged, and the ticket and, in the end, the parent are closed. `Paused` stops work; usage limits and crashes are ridden out. Fix-ups after your feedback (#59) come next.
 
 ## What happens to an issue you add
 
@@ -16,7 +16,7 @@ Autodev runs this repo's GitHub Issue Workflow (CLAUDE.md steps 1–13) on its o
    - It is read-only on the code and has 60 minutes.
 3. **On the first tick after it ends**, the dispatcher checks GitHub: is the design comment there, and is there at least one ticket?
    - **Yes:** each ticket goes on the board, as `Blocked` if an issue under its `## Blocked by` is still open, otherwise `Todo`. The parent moves to `In progress`.
-   - **No**, or the session reported a failure, or it ended without a result (it crashed or hit its time limit): the parent goes to `Needs human`. The bot comments with the reason, @mentions you, and gives the command that resumes the session.
+   - **No**, or the session reported a failure, or it hit its time limit: the parent goes to `Needs human`. The bot comments with the reason, @mentions you, and gives the command that resumes the session. A crash or the usage limit re-queues it instead (see "Pausing, usage limits and crashes").
 
 ## What happens to a ticket
 
@@ -33,7 +33,7 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
    It has 3 hours.
 4. **On the first tick after it ends**, the dispatcher looks on GitHub for the bot's open PR from an `issue-<T>-*` branch of this repo. A PR from a fork doesn't count.
    - **Found:** the card moves to `In review`, and the PR waits for you.
-   - **Not found**, or the session reported a failure, or it ended without a result: the card goes to `Needs human`, with the reason and the resume command. When systemd stopped the session at its time limit, the reason says so ("hit its 3-hour time limit").
+   - **Not found**, or the session reported a failure, or it hit its time limit: the card goes to `Needs human`, with the reason and the resume command ("hit its 3-hour time limit" when systemd stopped it). A crash or the usage limit re-queues it instead, unless its PR is already open, which counts as done.
 
 ## When you comment `/merge`
 
@@ -48,9 +48,30 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
 3. **On the first tick after it ends:**
    - **Merged** (even if the session failed or timed out afterwards): the ticket is closed (the PR's closing line usually did that already), its worktree and local branch are removed, and the card moves to `Done`.
    - **Conflict reply posted:** the card goes back to `In review` to wait for your `/merge`.
-   - **Neither,** or the session reported a failure, or it ended without a result: `Needs human`, with the reason and the resume command.
+   - **Neither,** or the session reported a failure, or it hit its time limit: `Needs human`, with the reason and the resume command. A crash or the usage limit sends it back to `In review` instead, unless its conflict reply is already posted, which counts as done.
 4. **Closed tickets are tidied up whoever closed them.** A ticket you close yourself, or whose PR you merge yourself, also loses its worktree, and its card moves to `Done`. The tickets it blocked move on to `Todo`.
 5. **Once every ticket of one of your parents is closed,** the bot closes the parent, comments on it @mentioning you, and moves it to `Done`. A parent's tickets are the board issues whose `## Parent` names it.
+
+## Pausing, usage limits and crashes
+
+- **`Paused` is your stop switch.**
+  - **What it stops:** on a parent, none of its tickets start, neither implementation nor merge. On a ticket, that ticket doesn't start.
+  - **Sessions already running** finish their run. When one ends, its comments still post, but a paused card stays `Paused`.
+  - **Resuming:** move the card back to `Todo`, and it is picked up on the next tick.
+    - A parent that already has tickets goes back to `In progress`; it isn't grilled again.
+    - A ticket whose PR is already open goes back to `In review`; it isn't implemented again.
+  - **Stopping a session for good:** pause its card (or its parent), then `systemctl --user stop` its unit. A stop on its own counts as a crash, so the work would run once more.
+- **The usage limit:** a session that stops on the Claude usage-limit message ("You've hit your … limit · resets 3pm" and similar) pauses everything.
+  - No session of any role starts until the reset time plus 5 minutes, worked out from when the session stopped. The board is still kept up to date, and each tick logs `usage limit: no session starts until …`.
+  - The bot comments "paused until <time>" on the issue, @mentioning you. Only an error result or stderr is read for the message, never the session's own words.
+  - The interrupted work goes back to `Todo`, or a merge back to `In review` with your `/merge` still unhandled. It starts again once the pause is over, as a fresh session that carries on from its branch.
+  - **Unreadable time:** if the message's time can't be read, the pause lasts an hour.
+  - **Where it's kept:** the pause is in `~/.local/state/autodev/sessions/paused-until`, so it survives reboots. Delete that file to lift it early.
+- **Crashes:** a session that ends with no report, no usage-limit message and not at its time limit has crashed. That includes one killed or stopped, and one whose unit vanished in a reboot.
+  - **The first time:** the work is re-queued (`Todo`, or `In review` for a merge), and the bot notes it on the issue. A re-queued grill is grilled again, even though the tickets it had already created are on the board (the board adds sub-issues as they are made). Those tickets wait while their parent is `Grilling`.
+  - **Work already done counts:** a ticket session whose PR is open, or a merge session whose conflict reply is posted, is done however it ended.
+  - **The second time** for the same role and issue: `Needs human`, with the reason and the resume command.
+  - **Time limit:** a session that hit its time limit goes to `Needs human` straight away.
 
 ## How it runs
 
@@ -67,7 +88,7 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
 | `automation/bin/issue.py` | A session's only way to reach GitHub; its settings deny plain `gh`. Sessions run the clone's copy (ticket and merge sessions by its full path), never their worktree's. Every role's settings deny commands that mention `AUTODEV_`, so a session can't point the tool at another issue or PR for one command, and the tool checks a merge session's PR is the bot's PR from that ticket's branch anyway. It shows only text written by you or the bot, and it changes only the session's own issue (`AUTODEV_ISSUE`, set by the dispatcher). Each role gets only its own commands (`AUTODEV_ROLE`): a grill session may comment, rewrite its parent's body and create tickets; a ticket session may comment and open its PR; a merge session may reply on its PR (`AUTODEV_PR`), @mentioning you and naming the `/merge` it answers (`AUTODEV_HANDLED_THROUGH`), and merge it with a merge commit of the commit it tested. No labels, no closing, no board. |
 | `~/autodev/logs/` | Each session's full stream-json log (`<role>-<issue>-<time>.jsonl`, with stderr in `.err`). The newest `result` event that carries a report holds what the session reported. A session can log several: one per turn, including an empty one when a background job wakes it after it reported. When the unit ends, systemd writes how it ended into `.exit` (`success`, `exit-code`, or `timeout` at the time limit). The tick deletes logs older than 30 days. |
 | `/tmp/autodev-record.lock` | The machine-wide lock `test/record_test.sh` takes, because a recording films the whole virtual display. Sessions recording at the same time take turns. |
-| `~/.local/state/autodev/sessions/` | One small record per session the dispatcher started: its session id and log path. Once a session's outcome is handled, its record moves to `done/`. |
+| `~/.local/state/autodev/sessions/` | One small record per session the dispatcher started: its session id and log path. Once a session's outcome is handled, its record moves to `done/`, marked `"crashed": true` if it crashed (a second crash parks the work). `paused-until` holds a usage-limit pause. |
 | `autodev-recordings.service` | `test/serve_recordings.py` on port 8080, so the recording links in PRs always work. |
 | Linger | Keeps systemd user units running when no terminal is open. |
 | Windows logon keepalive | Starts a hidden `wsl.exe … sleep infinity` at every Windows logon, because WSL shuts down when no Windows program is using it. It's a Task Scheduler task when Windows allows one, and otherwise a "WSL autodev keepalive" shortcut in your Startup folder (Task Scheduler usually wants admin for logon tasks). |
@@ -96,7 +117,7 @@ systemctl --user list-timers autodev.timer        # when the next tick is due
 journalctl --user -u autodev-dispatcher -f        # each tick: snapshot, then actions
 systemctl --user list-units 'autodev-*'           # sessions running right now
 systemctl --user stop autodev.timer               # stop new ticks (running sessions carry on)
-systemctl --user stop autodev-ticket-68           # stop one running session
+systemctl --user stop autodev-ticket-68           # stop one running session (pause its card first, or it runs once more)
 systemctl --user start autodev.timer              # start again
 ```
 
@@ -137,9 +158,12 @@ What they cover:
     - D6 (a merge goes first)
     - a finished merge: merged (D21, even if the session then failed), a conflict reply, or neither
   - closing: D22 (closed without a PR), the board's own `Done`, a worktree still in use, and D23 (a parent whose tickets are all closed)
+  - pausing: D7 (a paused parent or ticket starts nothing; running sessions finish), D8 (resuming a parent with tickets, or a ticket with a PR), and a paused card staying `Paused` when its session ends
+  - usage limits and crashes: D18 (pause everything, re-queue, start again after), D19 (a first crash is re-queued, a vanished unit too) and D20 (a second crash parks it)
 - **`test_sessions.py`:**
   - pins down the session unit's command line for a grill, a ticket and a merge: the bot's identity, your Claude login, the working folder, the time limit, the role's permissions, the session's issue and role, a merge's PR and `/merge` comment, and the record of how the unit ended
   - checks what counts as "still running", and how a session's result, end reason and folder are read back
+  - reads the usage-limit message in its known forms and works out when the limit resets, and keeps crashes and the pause on disk
   - checks that each role keeps its deny rules (D25) and has no plain `gh` access
 - **`test_worktrees.py`:** runs real git in a temporary folder. A ticket's worktree is cut from `origin/master` whatever the clone has checked out, its branch tracks nothing (so a bare `git push` can't aim at master), and `tools/agbcc` is linked. Asking again leaves an existing worktree alone but puts back a missing agbcc link. A branch left by a deleted worktree is checked out again, and one that only GitHub has is checked out from there. Removing deletes the folder and its local branch and is safe to repeat. It also checks branch names and listing which tickets have a worktree.
 - **`test_issue_tool.py`:** checks `bin/issue.py`'s rules:

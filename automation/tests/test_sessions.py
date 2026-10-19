@@ -9,6 +9,7 @@ permissions, and the session id used to resume it.
 import json
 import os
 import tempfile
+import time
 import unittest
 
 from autodev import registry, sessions
@@ -213,6 +214,94 @@ class EndedSessions(unittest.TestCase):
                              ("merge", 68, 73, 501))
 
 
+class Remembering(unittest.TestCase):
+    """What the registry keeps between ticks for D18-D20."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.config = sessions.SessionConfig(
+            claude="claude", claude_config_dir="", env_file="", clone="/clone",
+            log_dir=os.path.join(tmp.name, "logs"),
+            state_dir=os.path.join(tmp.name, "state"), model="opus")
+
+        class Ended:
+            stdout = "inactive\n"
+        self.registry = registry.Registry(self.config, run=lambda *a, **k: Ended())
+
+    def test_crashes_are_counted_per_role_and_issue(self):
+        for role, crashed in (("ticket", True), ("ticket", False), ("merge", True),
+                              ("ticket", True)):
+            self.registry.start(role, 68, "PROMPT")
+            self.registry.finish(role, 68, crashed=crashed)
+        self.assertEqual(self.registry.crashes(), {("ticket", 68): 2, ("merge", 68): 1})
+
+    def test_a_pause_is_kept_on_disk_and_only_ever_lengthened(self):
+        self.assertEqual(self.registry.paused_until(), 0.0)
+        self.registry.pause(1_800_003_600.0)
+        self.registry.pause(1_800_000_000.0)    # a second limit, resetting sooner
+        self.assertEqual(self.registry.paused_until(), 1_800_003_600.0)
+
+    def test_requeued_work_is_remembered_until_it_runs_again(self):
+        # So a re-queued grill is grilled again, not taken for a resumed one.
+        self.registry.start("grill", 67, "PROMPT")
+        self.registry.finish("grill", 67, requeued=True)
+        self.assertEqual(self.registry.requeued(), {("grill", 67)})
+        self.registry.start("grill", 67, "PROMPT")
+        self.registry.finish("grill", 67)
+        self.assertEqual(self.registry.requeued(), set())
+
+    def test_crash_records_outlive_the_30_day_clean_up(self):
+        # Crashes count for all time (D20).
+        for crashed in (True, False):
+            self.registry.start("ticket", 68, "PROMPT")
+            self.registry.finish("ticket", 68, crashed=crashed)
+        done = os.path.join(self.config.state_dir, "done")
+        for name in os.listdir(done):
+            os.utime(os.path.join(done, name), (0, 0))
+        self.registry.prune()
+        self.assertEqual(self.registry.crashes(), {("ticket", 68): 1})
+        self.assertEqual(len(os.listdir(done)), 1)
+
+    def test_an_unreadable_pause_file_is_no_pause(self):
+        os.makedirs(self.config.state_dir)
+        with open(os.path.join(self.config.state_dir, "paused-until"), "w") as f:
+            f.write("garbage")
+        self.assertEqual(self.registry.paused_until(), 0.0)
+
+    def test_the_reset_time_is_read_as_of_when_the_session_ended(self):
+        # It stopped at 14:58 on "resets 3pm"; the tick reads it at 15:01.
+        # Read as of the tick, 3pm would be tomorrow: a 24-hour pause.
+        import datetime
+        def utc(hm):
+            return datetime.datetime(2026, 10, 19, *hm,
+                                     tzinfo=datetime.timezone.utc).timestamp()
+        self.registry.start("ticket", 68, "PROMPT")
+        [record] = os.listdir(self.config.state_dir)
+        with open(os.path.join(self.config.state_dir, record)) as f:
+            log = json.load(f)["log"]
+        with open(log, "w") as f:
+            f.write(json.dumps({"type": "result", "is_error": True, "result":
+                                "You've hit your limit \u00b7 resets 3pm (UTC)"}) + "\n")
+        with open(sessions.exit_path(log), "w") as f:
+            f.write("exit-code\n")
+        os.utime(sessions.exit_path(log), (utc((14, 58)),) * 2)
+        [found] = self.registry.load(now=utc((15, 1)))
+        self.assertEqual(found.limit_reset, utc((15, 0)))
+
+    def test_a_session_that_stopped_on_the_usage_limit_says_when_it_resets(self):
+        self.registry.start("ticket", 68, "PROMPT")
+        [record] = os.listdir(self.config.state_dir)
+        with open(os.path.join(self.config.state_dir, record)) as f:
+            log = json.load(f)["log"]
+        with open(log, "w") as f:
+            f.write(json.dumps({"type": "result", "is_error": True, "result":
+                                "Claude AI usage limit reached|1800009000"}) + "\n")
+        [found] = self.registry.load(now=1_800_000_000.0)
+        self.assertEqual((found.limit_reset, found.limit_note),
+                         (1_800_009_000.0, "Claude AI usage limit reached|1800009000"))
+
+
 class ReadingResults(unittest.TestCase):
     def test_the_structured_result_is_read_from_the_log(self):
         # Recorded from a real `claude -p --json-schema` run.
@@ -257,6 +346,90 @@ class ReadingResults(unittest.TestCase):
 
     def test_a_missing_log_has_no_result(self):
         self.assertIsNone(sessions.read_result("/nonexistent/grill-61.jsonl"))
+
+
+class UsageLimits(unittest.TestCase):
+    """D18: reading when the Claude usage limit resets from what the CLI
+    printed. The wording isn't documented, so several forms are accepted."""
+
+    SYDNEY = "Australia/Sydney"
+
+    def at(self, text, zone="UTC"):
+        """`text` as a time in `zone`, as seconds since 1970."""
+        import datetime, zoneinfo
+        return datetime.datetime.strptime(text, "%Y-%m-%d %H:%M").replace(
+            tzinfo=zoneinfo.ZoneInfo(zone)).timestamp()
+
+    def test_the_reset_time_is_read_in_its_own_zone_or_the_machines(self):
+        now = self.at("2026-10-19 14:10", self.SYDNEY)
+        for text, zone, expected in [
+            ("You've hit your limit \u00b7 resets 3pm (Australia/Sydney)", "UTC",
+             self.at("2026-10-19 15:00", self.SYDNEY)),
+            # A time already past today means tomorrow.
+            ("You've hit your 5-hour limit \u00b7 resets 10:30am", self.SYDNEY,
+             self.at("2026-10-20 10:30", self.SYDNEY)),
+            ("Weekly usage limit reached \u2219 resets Oct 23, 9am (UTC)", self.SYDNEY,
+             self.at("2026-10-23 09:00")),
+            # Older CLIs printed the reset as seconds since 1970.
+            ("Claude AI usage limit reached|1792400000", self.SYDNEY, 1792400000.0),
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(sessions.usage_limit(text, now, zone), expected)
+
+    def test_a_year_in_the_date_is_not_read_as_the_hour(self):
+        now = self.at("2026-10-19 14:10")
+        self.assertEqual(sessions.usage_limit(
+            "You've hit your limit \u00b7 resets Oct 23, 2026 at 9am (UTC)", now),
+            self.at("2026-10-23 09:00"))
+
+    def test_without_a_zone_the_machines_daylight_saving_is_respected(self):
+        # Sydney's clocks go back an hour at 3am on 5 April 2026, so 3pm the
+        # next day is 11 hours after 8pm, not 10.
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = self.SYDNEY
+        time.tzset()
+        try:
+            now = self.at("2026-04-04 20:00", self.SYDNEY)
+            self.assertEqual(sessions.usage_limit(
+                "You've hit your limit \u00b7 resets 3pm", now),
+                self.at("2026-04-05 15:00", self.SYDNEY))
+        finally:
+            if old is None:
+                del os.environ["TZ"]
+            else:
+                os.environ["TZ"] = old
+            time.tzset()
+
+    def test_a_limit_without_a_readable_time_pauses_for_an_hour(self):
+        now = 1_800_000_000.0
+        for text in ("You've hit your usage limit.",
+                     "You've hit your limit \u00b7 resets 13pm"):
+            with self.subTest(text=text):
+                self.assertEqual(sessions.usage_limit(text, now), now + 3600)
+
+    def test_other_failures_are_not_usage_limits(self):
+        for text in ("Error: the 45-minute time limit was hit",
+                     "API Error: 500 Internal Server Error", "",
+                     # A session talking about the feature isn't hitting it.
+                     "Added a note on usage limits; the counter resets 3 times."):
+            with self.subTest(text=text):
+                self.assertIsNone(sessions.usage_limit(text, 1_800_000_000.0))
+
+    def test_the_message_is_looked_for_in_the_final_result_and_stderr(self):
+        with tempfile.TemporaryDirectory() as root:
+            log = os.path.join(root, "ticket-68.jsonl")
+            with open(log, "w") as f:
+                f.write(json.dumps({"type": "assistant", "message": {"content": [
+                    {"type": "text", "text": "This ticket is about usage limits."}]}}) + "\n")
+                # A turn's own closing words (not an error) don't count.
+                f.write(json.dumps({"type": "result", "is_error": False,
+                                    "result": "I hit your usage limit section."}) + "\n")
+                f.write(json.dumps({"type": "result", "is_error": True,
+                                    "result": "You've hit your limit \u00b7 resets 3pm"}) + "\n")
+            with open(os.path.join(root, "ticket-68.err"), "w") as f:
+                f.write("some warning\n")
+            self.assertEqual(sessions.limit_text(log).strip(),
+                             "You've hit your limit \u00b7 resets 3pm\nsome warning")
 
 
 class RolePermissions(unittest.TestCase):

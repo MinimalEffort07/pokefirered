@@ -238,6 +238,7 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - Every comment you post ends with a hidden marker. Usually that's `<!-- autodev -->`. A reply that handles PR comments ends with `<!-- autodev handled-through: <newest comment id> -->` instead, and that marker also marks it as autodev's.
 - Step 5 (launching the frontier) is the dispatcher's job, not yours.
 - Finish with the structured result the dispatcher asks for: `done` with the issue numbers you created or changed in `links`, or `failed` with the reason. The dispatcher checks a `done` claim against GitHub, so claim it only when the work is really there.
+- You may be a re-queued run: the dispatcher starts a fresh session after a crash or the usage limit (added by #58). So first look at what an earlier run already left, and carry on from there instead of redoing or duplicating it. That includes commits on your branch, your comments, tickets, and a PR.
 
 **Grill role** (a parent issue `#<N>`; steps 1–4):
 - **GitHub access:** your only way to read or change issues is `automation/bin/issue.py`. Plain `gh` is denied. It shows only text by the owner or the bot, and it only changes your own issue:

@@ -136,14 +136,14 @@ class GitHub:
         pr = self._find_ticket_pr(number)
         return TicketOutcome(pr=pr["number"] if pr else None)
 
-    def ticket_pr(self, number):
-        """The bot's open PR for ticket `number`, with everything said on it,
-        or None."""
+    def ticket_pr(self, number, comments=True):
+        """The bot's open PR for ticket `number`, with everything said on it
+        (unless `comments` is False), or None."""
         pr = self._find_ticket_pr(number)
         if pr is None:
             return None
         return PullRequest(number=pr["number"], head=pr["head"]["ref"],
-                           comments=self._timeline(pr["number"]))
+                           comments=self._timeline(pr["number"]) if comments else ())
 
     def _timeline(self, pr):
         """Everything said on a PR, oldest first: comments in its

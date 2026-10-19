@@ -11,11 +11,12 @@ autodev-dispatcher`).
 """
 
 import os
+import time
 
 from autodev import board, worktrees
-from autodev.decide import (IN_REVIEW, CloseIssue, Comment, Finish, Launch,
-                            LinkSubIssue, MakeWorktree, PlaceOnBoard,
-                            RemoveWorktree, SetStatus, State,
+from autodev.decide import (IN_REVIEW, TODO, CloseIssue, Comment, Finish,
+                            Launch, LinkSubIssue, MakeWorktree, PauseLaunches,
+                            PlaceOnBoard, RemoveWorktree, SetStatus, State,
                             is_waiting_ticket, plan)
 from autodev.github import GitHub
 from autodev.gh import GhError
@@ -54,6 +55,9 @@ def tick(gh, config, log, registry=None):
     github = GitHub(gh, config, snapshot)
     read_code, state = read_state(github, config, snapshot, registry, log)
     code = code or read_code
+    if state.now < state.paused_until:
+        print("usage limit: no session starts until %s" % state.show_time(
+            state.paused_until), file=log)
     for group in plan(state):
         for action in group:
             print("→ %s" % _describe(action), file=log)
@@ -75,9 +79,11 @@ def read_state(github, config, snapshot, registry, log):
     """Everything decide() needs beyond the board: the sessions, what
     GitHub shows for the ones that ended, which of the waiting tickets'
     blockers are closed, the PRs waiting in review and what was said on
-    them, and which tickets have a worktree. Returns (exit code, State)."""
+    them, which tickets have a worktree, and what the registry remembers:
+    a usage-limit pause and earlier crashes. Returns (exit code, State)."""
     code = 0
-    known = registry.load()
+    now = time.time()
+    known = registry.load(now=now)
     outcomes = {}
     for s in known:
         if s.running or s.role not in _OUTCOMES:
@@ -108,9 +114,12 @@ def read_state(github, config, snapshot, registry, log):
             closed.add(number)
     prs = {}
     for item in snapshot.items:
-        if item.has_parent and item.is_open and item.status == IN_REVIEW:
+        # In review: what was said on the PR (D9). Todo: only whether it has
+        # one, so a resumed or re-queued ticket goes back to review (D8).
+        if item.has_parent and item.is_open and item.status in (IN_REVIEW, TODO):
             try:
-                pr = github.ticket_pr(item.number)
+                pr = github.ticket_pr(item.number,
+                                      comments=item.status == IN_REVIEW)
             except GhError as e:
                 print("error: reading #%d's PR: %s" % (item.number, e), file=log)
                 code = 1
@@ -122,7 +131,9 @@ def read_state(github, config, snapshot, registry, log):
         sessions=known, outcomes=outcomes, max_sessions=config.max_sessions,
         closed=frozenset(closed), prs=prs,
         worktrees=frozenset(worktrees.tickets_with_worktrees(config.clone)),
-        resume_command=config.resume_command)
+        resume_command=config.resume_command, now=now,
+        paused_until=registry.paused_until(), crashes=registry.crashes(),
+        requeued=frozenset(registry.requeued()))
 
 
 # What GitHub shows once a session of each role has ended.
@@ -155,7 +166,10 @@ def _carry_out(action, github, registry, config):
     elif isinstance(action, PlaceOnBoard):
         github.place_on_board(action.issue, action.status)
     elif isinstance(action, Finish):
-        registry.finish(action.role, action.issue)
+        registry.finish(action.role, action.issue, crashed=action.crashed,
+                        requeued=action.requeued)
+    elif isinstance(action, PauseLaunches):
+        registry.pause(action.until)
     else:
         raise ValueError("unknown action %r" % (action,))
 
