@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from autodev import worktrees
 
 # Time limits per role, in seconds (#48, Sessions).
-TIME_LIMITS = {"grill": 60 * 60, "ticket": 3 * 60 * 60}
+TIME_LIMITS = {"grill": 60 * 60, "ticket": 3 * 60 * 60, "merge": 45 * 60}
 
 # What every session must report when it ends. The dispatcher only
 # believes "done" after checking GitHub (decide.py).
@@ -69,8 +69,10 @@ def working_directory(config, role, issue):
     return worktrees.path(config.clone, issue)
 
 
-def launch_command(config, role, issue, session_id, log_path, prompt):
-    """The systemd-run command that starts one session."""
+def launch_command(config, role, issue, session_id, log_path, prompt,
+                   pr=None, handled_through=None):
+    """The systemd-run command that starts one session. A merge session
+    also gets its PR and the /merge comment it answers."""
     err_path = os.path.splitext(log_path)[0] + ".err"
     return [
         "systemd-run", "--user", "--quiet", "--collect",
@@ -99,6 +101,9 @@ def launch_command(config, role, issue, session_id, log_path, prompt):
         # new tickets), with the commands its role needs.
         "--setenv=AUTODEV_ISSUE=%d" % issue,
         "--setenv=AUTODEV_ROLE=" + role,
+    ] + (["--setenv=AUTODEV_PR=%d" % pr] if pr is not None else []) + (
+        ["--setenv=AUTODEV_HANDLED_THROUGH=%d" % handled_through]
+        if handled_through is not None else []) + [
         "--",
         config.claude, "-p", prompt,
         # Auto mode lets the safety classifier approve routine actions; with

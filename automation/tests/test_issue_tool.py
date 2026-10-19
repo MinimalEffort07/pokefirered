@@ -144,12 +144,45 @@ class OpeningPRs(unittest.TestCase):
                      PR_BODY.replace("@MinimalEffort07", "`@MinimalEffort07`"),
                      PR_BODY.replace("Fixes #68", "`Fixes #68`"),
                      PR_BODY.replace("@MinimalEffort07",
-                                     "```\n@MinimalEffort07\n```")):
+                                     "```\n@MinimalEffort07\n```"),
+                     # Merging would close any issue a closing keyword
+                     # names, so the body may close its own ticket only.
+                     PR_BODY + "\n\nAlso fixes #70.",
+                     PR_BODY + "\n\n| Closes #67 | quoted |",
+                     PR_BODY + "\n\nResolves MinimalEffort07/pokefirered#48"):
             with self.subTest(body=body):
                 gh = FakeRest({})
                 with self.assertRaises(issue_tool.Refused):
                     issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note", body)
                 self.assertEqual(gh.writes, [])
+
+
+COMPARE = "repos/MinimalEffort07/pokefirered/compare/abc123...master"
+
+
+class MergingPRs(unittest.TestCase):
+    def test_a_merge_session_merges_the_commit_it_tested_with_a_merge_commit(self):
+        # Its branch already holds all of master, so the merged tree is the
+        # tree it built and tested.
+        gh = FakeRest({COMPARE: {"ahead_by": 0}})
+        issue_tool.merge_pr(gh, CONFIG, 73, "abc123")
+        self.assertEqual(gh.writes, [
+            ("PUT", PULLS + "/73/merge", {"merge_method": "merge", "sha": "abc123"})])
+
+    def test_it_refuses_when_master_has_moved_on_since_it_was_merged_in(self):
+        gh = FakeRest({COMPARE: {"ahead_by": 2}})
+        with self.assertRaises(issue_tool.Refused) as refused:
+            issue_tool.merge_pr(gh, CONFIG, 73, "abc123")
+        self.assertIn("master has 2 commits", str(refused.exception))
+        self.assertEqual(gh.writes, [])
+
+    def test_a_reply_on_the_pr_says_which_comment_it_handled(self):
+        gh = FakeRest({})
+        issue_tool.pr_comment(gh, CONFIG, 73, 501, "Resolved the conflict by ...")
+        self.assertEqual(gh.writes, [
+            ("POST", ISSUES + "/73/comments", {"body": (
+                "Resolved the conflict by ...\n\n"
+                "<!-- autodev handled-through: 501 -->")})])
 
 
 class Roles(unittest.TestCase):
@@ -161,6 +194,10 @@ class Roles(unittest.TestCase):
             ("grill", "open-pr", False),
             ("ticket", "open-pr", True), ("ticket", "comment", True),
             ("ticket", "create-ticket", False), ("ticket", "set-body", False),
+            ("ticket", "merge-pr", False),
+            ("merge", "merge-pr", True), ("merge", "pr-comment", True),
+            ("merge", "read", True), ("merge", "open-pr", False),
+            ("merge", "create-ticket", False),
             # Outside a session (no role) the tool only reads.
             (None, "read", True), (None, "comment", False),
         ]:

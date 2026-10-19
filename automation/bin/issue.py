@@ -12,10 +12,18 @@
                                                           your ticket's PR into master,
                                                           from the branch checked out
                                                           in the current folder
+  python3 automation/bin/issue.py pr-comment < body.md   reply on your PR, marked as
+                                                          handling the /merge you answer
+  python3 automation/bin/issue.py merge-pr               merge your PR with a merge
+                                                          commit of the commit checked
+                                                          out here (it must be pushed
+                                                          and hold all of master)
 
 "Your issue" is AUTODEV_ISSUE, which the dispatcher sets for each session.
 Grill sessions may comment, set-body and create-ticket; ticket sessions
-may comment and open-pr (AUTODEV_ROLE). Every rule is enforced in
+may comment and open-pr; merge sessions may pr-comment and merge-pr
+(AUTODEV_ROLE). A merge session's PR and the comment it answers are
+AUTODEV_PR and AUTODEV_HANDLED_THROUGH. Every rule is enforced in
 automation/autodev/issue_tool.py.
 """
 
@@ -39,6 +47,8 @@ def main():
     sub.add_parser("set-body")
     sub.add_parser("create-ticket").add_argument("--title", required=True)
     sub.add_parser("open-pr").add_argument("--title", required=True)
+    sub.add_parser("pr-comment")
+    sub.add_parser("merge-pr")
     args = parser.parse_args()
 
     config = config_module.load(os.path.join(os.path.dirname(HERE), "config.json"))
@@ -49,26 +59,37 @@ def main():
             print(issue_tool.read(gh, config, args.number))
             return 0
         issue = int(os.environ["AUTODEV_ISSUE"])
+        if args.command == "merge-pr":
+            issue_tool.merge_pr(gh, config, int(os.environ["AUTODEV_PR"]), _git("rev-parse", "HEAD"))
+            print("merged")
+            return 0
         body = sys.stdin.read()
         if args.command == "comment":
             issue_tool.comment(gh, config, issue, body)
         elif args.command == "set-body":
             issue_tool.set_body(gh, config, issue, body)
+        elif args.command == "pr-comment":
+            issue_tool.pr_comment(gh, config, int(os.environ["AUTODEV_PR"]),
+                                  int(os.environ["AUTODEV_HANDLED_THROUGH"]), body)
         elif args.command == "open-pr":
-            head = subprocess.run(
-                ["git", "branch", "--show-current"], capture_output=True,
-                text=True, check=True).stdout.strip()
-            created = issue_tool.open_pr(gh, config, issue, args.title, head, body)
+            created = issue_tool.open_pr(gh, config, issue, args.title,
+                                         _git("branch", "--show-current"), body)
             print("#%d %s" % (created["number"], created["html_url"]))
         else:
             print("#%d" % issue_tool.create_ticket(gh, config, issue, args.title, body))
         return 0
-    except KeyError:
-        print("error: AUTODEV_ISSUE is not set (only autodev sessions may write)",
+    except KeyError as e:
+        print("error: %s is not set (only autodev sessions may write)" % e,
               file=sys.stderr)
     except (issue_tool.Refused, GhError) as e:
         print("error: %s" % e, file=sys.stderr)
     return 1
+
+
+def _git(*args):
+    """A git answer about the current folder (the session's worktree)."""
+    return subprocess.run(["git", *args], capture_output=True, text=True,
+                          check=True).stdout.strip()
 
 
 if __name__ == "__main__":

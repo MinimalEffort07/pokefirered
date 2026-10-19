@@ -2,7 +2,7 @@
 
 Autodev runs this repo's GitHub Issue Workflow (CLAUDE.md steps 1–13) on its own. You add an issue to the **pokefirered autodev** board. A headless Claude Code session grills it, taking every recommended answer, and breaks it into tickets. Other sessions implement the tickets and open PRs. Nothing reaches master until you comment `/merge` on the PR. The full design is on issue #48.
 
-> **Status:** grilling (#55) and implementation (#56) work. An issue you add to the board gets grilled into a design and tickets, and each ticket is implemented in its own worktree as soon as nothing blocks it, ending in a PR that waits for you. Merging on `/merge` (#57), pausing and failure handling (#58) and fix-ups (#59) come next. Until then, merge a PR yourself; its `Fixes #<T>` closes the ticket, and that unblocks the tickets waiting on it.
+> **Status:** grilling (#55), implementation (#56) and merging (#57) work. An issue you add to the board gets grilled into a design and tickets. Each ticket is implemented in its own worktree as soon as nothing blocks it, ending in a PR that waits for you. Your `/merge` comment on that PR gets it merged, and the ticket and, in the end, the parent are closed. Pausing and failure handling (#58) and fix-ups after your feedback (#59) come next.
 
 ## What happens to an issue you add
 
@@ -35,6 +35,23 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
    - **Found:** the card moves to `In review`, and the PR waits for you.
    - **Not found**, or the session reported a failure, or it ended without a result: the card goes to `Needs human`, with the reason and the resume command. When systemd stopped the session at its time limit, the reason says so ("hit its 3-hour time limit").
 
+## When you comment `/merge`
+
+1. **On the next tick**, the dispatcher reads everything said on each `In review` ticket's PR: conversation comments, reviews and inline review comments.
+   - **What counts as unhandled:** each of autodev's replies ends with a hidden `<!-- autodev handled-through: <id> -->` marker naming the newest of your comments it dealt with. Your comments after that one are unhandled; nobody else's count.
+   - **When it merges:** if your newest unhandled comment is exactly `/merge`, a merge session starts and the card moves to `In progress`. Feedback you post after `/merge` cancels it; fix-ups for feedback come with #59.
+   - **While a session runs:** comments that arrive wait until it ends.
+2. **The merge session** runs in the ticket's worktree and follows CLAUDE.md's "Autonomous mode" for the merge role. It has 45 minutes.
+   - It brings the branch up to date, merges master in, and builds and runs the unit tests and `run_suite.sh` on that exact tree.
+   - **If all of that passes,** it pushes, then merges with `issue.py merge-pr`. That always makes a merge commit (never a squash or rebase) of the commit it tested. It refuses if master has moved on since, so the merged tree is always the tested tree.
+   - **On a conflict,** it resolves it on the branch, re-tests and pushes. Then it explains on the PR exactly how it resolved each conflict, @mentioning you. It doesn't merge: your fresh `/merge` approves the resolution and starts a new merge session.
+3. **On the first tick after it ends:**
+   - **Merged:** the ticket is closed (the PR's closing line usually did that already), its worktree and local branch are removed, and the card moves to `Done`.
+   - **Conflict reply posted:** the card goes back to `In review` to wait for your `/merge`.
+   - **Neither,** or the session reported a failure, or it ended without a result: `Needs human`, with the reason and the resume command.
+4. **Closed tickets are tidied up whoever closed them.** A ticket you close yourself, or whose PR you merge yourself, also loses its worktree, and its card moves to `Done`. The tickets it blocked move on to `Todo`.
+5. **Once every ticket of a parent is closed,** the bot comments on the parent, @mentioning you, then closes it and moves it to `Done`. A parent's tickets are the board issues whose `## Parent` names it.
+
 ## How it runs
 
 | Piece | What it is |
@@ -44,10 +61,10 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
 | `~/projects/minimaleffort/pokefirered-autodev` | Autodev's own clone, kept apart from the checkout you work in. It pushes as the bot over HTTPS, using `gh` as git's credential helper. |
 | `autodev.timer` | A systemd user timer that starts `autodev-dispatcher.service` every 2 minutes. |
 | `autodev-dispatcher.service` | One dispatcher tick: `git pull` the clone, then `python3 -m autodev tick` (code in `automation/autodev/`). |
-| `autodev-<role>-<issue>.service` | One Claude session, e.g. `autodev-grill-67` or `autodev-ticket-68`. It's a transient unit that the dispatcher starts with `systemd-run`, and systemd forgets it once it ends. It runs `claude -p` as the bot (the env file), with your Claude login and plugins (`CLAUDE_CONFIG_DIR=~/.claude-personal`), the role's permissions and the role's time limit (grill 60 minutes, ticket 3 hours). A grill session runs in the clone; a ticket session runs in the ticket's worktree. |
-| `~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-<T>` | Each ticket's worktree (a second checkout of the clone's repository), on its branch `issue-<T>-<slug>`. The ticket's later fix-up and merge sessions (#57, #59) reuse it. The worktrees sit beside the clone, not inside it: Claude reads every CLAUDE.md in the folders above where it starts, so a session in a worktree inside the clone would also load the clone's CLAUDE.md. |
-| `automation/settings/<role>.json` | Each role's permissions. A session always uses the clone's copy, never its worktree's, because it could edit the one in its worktree. The grill role is read-only. The ticket and fix-up roles may edit, build, test, commit and push, but they can't use `gh`, push to master, force-push, delete branches, run their worktree's own `issue.py`, or touch `pret/pokefirered` or the `upstream` remote. In auto mode an allow rule only skips the safety classifier, so every limit is a deny rule. The master rulesets are the backstop. |
-| `automation/bin/issue.py` | A session's only way to reach GitHub; its settings deny plain `gh`. Sessions run the clone's copy (a ticket session by its full path), never their worktree's. It shows only text written by you or the bot, and it changes only the session's own issue (`AUTODEV_ISSUE`, set by the dispatcher). Each role gets only its own commands (`AUTODEV_ROLE`): a grill session may comment, rewrite its parent's body and create tickets; a ticket session may comment and open its PR. No labels, no closing, no merging, no board. |
+| `autodev-<role>-<issue>.service` | One Claude session, e.g. `autodev-grill-67` or `autodev-ticket-68`. It's a transient unit that the dispatcher starts with `systemd-run`, and systemd forgets it once it ends. It runs `claude -p` as the bot (the env file), with your Claude login and plugins (`CLAUDE_CONFIG_DIR=~/.claude-personal`), the role's permissions and the role's time limit (grill 60 minutes, ticket 3 hours, merge 45 minutes). A grill session runs in the clone; ticket and merge sessions run in the ticket's worktree. |
+| `~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-<T>` | Each ticket's worktree (a second checkout of the clone's repository), on its branch `issue-<T>-<slug>`. The ticket's merge session and its fix-up sessions (#59) reuse it, and it is removed once the ticket closes. The worktrees sit beside the clone, not inside it: Claude reads every CLAUDE.md in the folders above where it starts, so a session in a worktree inside the clone would also load the clone's CLAUDE.md. |
+| `automation/settings/<role>.json` | Each role's permissions. A session always uses the clone's copy, never its worktree's, because it could edit the one in its worktree. The grill role is read-only. The ticket and fix-up roles may edit, build, test, commit and push, but they can't use `gh`, push to master, force-push, delete branches, run their worktree's own `issue.py`, or touch `pret/pokefirered` or the `upstream` remote. The merge role has the same limits, can't rebase either, and merges only through `issue.py merge-pr`. In auto mode an allow rule only skips the safety classifier, so every limit is a deny rule. The master rulesets are the backstop. |
+| `automation/bin/issue.py` | A session's only way to reach GitHub; its settings deny plain `gh`. Sessions run the clone's copy (a ticket session by its full path), never their worktree's. It shows only text written by you or the bot, and it changes only the session's own issue (`AUTODEV_ISSUE`, set by the dispatcher). Each role gets only its own commands (`AUTODEV_ROLE`): a grill session may comment, rewrite its parent's body and create tickets; a ticket session may comment and open its PR; a merge session may reply on its PR (`AUTODEV_PR`), naming the `/merge` it answers (`AUTODEV_HANDLED_THROUGH`), and merge it with a merge commit of the commit it tested. No labels, no closing, no board. |
 | `~/autodev/logs/` | Each session's full stream-json log (`<role>-<issue>-<time>.jsonl`, with stderr in `.err`). The last `result` event holds what the session reported. When the unit ends, systemd writes how it ended into `.exit` (`success`, `exit-code`, or `timeout` at the time limit). The tick deletes logs older than 30 days. |
 | `/tmp/autodev-record.lock` | The machine-wide lock `test/record_test.sh` takes, because a recording films the whole virtual display. Sessions recording at the same time take turns. |
 | `~/.local/state/autodev/sessions/` | One small record per session the dispatcher started: its session id and log path. Once a session's outcome is handled, its record moves to `done/`. |
@@ -112,15 +129,22 @@ What they cover:
 - **`test_decide.py`:** checks every decision (`decide()` is a pure function) against a hand-built state, one test per scenario from #48:
   - parents: D1, D2, and D15, D16 and D24 for grills
   - tickets: D2 (someone else's ticket), D3 (launch), D4 (`Blocked`), D5 (back to `Todo`), D6 (two slots, by priority), D15 (`In review`), D16 (no PR) and D17 (time limit), plus a closed issue never launching
+  - merging:
+    - D9 (`/merge` launches a merge), D10 (`/merge` from someone else or the bot), D12 (all handled) and D13 (a session already running)
+    - feedback after `/merge`, and a `/merge` posted while the last reply was being written
+    - D6 (a merge goes first)
+    - a finished merge: merged (D21), a conflict reply, or neither
+  - closing: D22 (closed without a PR), the board's own `Done`, a worktree still in use, and D23 (a parent whose tickets are all closed)
 - **`test_sessions.py`:**
-  - pins down the session unit's command line for a grill and for a ticket: the bot's identity, your Claude login, the working folder, the time limit, the role's permissions, the session's issue and role, and the record of how the unit ended
+  - pins down the session unit's command line for a grill, a ticket and a merge: the bot's identity, your Claude login, the working folder, the time limit, the role's permissions, the session's issue and role, a merge's PR and `/merge` comment, and the record of how the unit ended
   - checks what counts as "still running", and how a session's result, end reason and folder are read back
   - checks that each role keeps its deny rules (D25) and has no plain `gh` access
-- **`test_worktrees.py`:** runs real git in a temporary folder. A ticket's worktree is cut from `origin/master` whatever the clone has checked out, its branch tracks nothing (so a bare `git push` can't aim at master), and `tools/agbcc` is linked. Asking again leaves an existing worktree alone but puts back a missing agbcc link, and a branch left by a deleted worktree is checked out again. It also checks branch names.
+- **`test_worktrees.py`:** runs real git in a temporary folder. A ticket's worktree is cut from `origin/master` whatever the clone has checked out, its branch tracks nothing (so a bare `git push` can't aim at master), and `tools/agbcc` is linked. Asking again leaves an existing worktree alone but puts back a missing agbcc link. A branch left by a deleted worktree is checked out again, and one that only GitHub has is checked out from there. Removing deletes the folder and its local branch and is safe to repeat. It also checks branch names and listing which tickets have a worktree.
 - **`test_issue_tool.py`:** checks `bin/issue.py`'s rules:
   - untrusted authors' text is withheld, and comments get the marker
   - a ticket must name its parent, and it is created without labels and linked as a sub-issue
-  - a PR comes only from the ticket's own branch, into master, with Fixes #<T> and an @mention of you outside code
+  - a PR comes only from the ticket's own branch, into master, with Fixes #<T> and an @mention of you outside code, and closes no other issue
+  - a merge is a merge commit of the tested commit, refused while master has commits the branch lacks, and a reply on the PR names the comment it handled
   - each role may use only its own commands
-- **`test_github.py`:** checks what the dispatcher accepts as a finished session's work. For a grill: only the bot's comment with the design marker, and only open issues whose `## Parent` names the parent, with their blockers checked. For a ticket: only the bot's open PR from that ticket's branch in this repo. It also covers deleting session files older than 30 days.
+- **`test_github.py`:** checks what the dispatcher accepts as a finished session's work. For a grill: only the bot's comment with the design marker, and only open issues whose `## Parent` names the parent, with their blockers checked. For a ticket: only the bot's open PR from that ticket's branch in this repo. For a merge: whether the PR merged, and whether the bot replied naming that `/merge`. It also reads a PR's comments, reviews and inline comments in time order, and covers deleting session files older than 30 days.
 - **Failures:** if one of a tick's actions fails, the tick logs it and skips the rest of that issue's actions, but carries on with the others.

@@ -42,7 +42,8 @@ class Registry:
                 session_id=record["session_id"], running=running,
                 result=None if running else sessions.read_result(record["log"]),
                 ended_by=None if running else _ended_by(record["log"]),
-                cwd=sessions.working_directory(self.config, role, issue)))
+                cwd=sessions.working_directory(self.config, role, issue),
+                pr=record.get("pr"), handled_through=record.get("handled_through")))
         return found
 
     # systemd's ActiveState for a unit that is still under way. A unit that
@@ -57,7 +58,7 @@ class Registry:
                          capture_output=True, text=True).stdout.strip()
         return state in self.RUNNING_STATES
 
-    def start(self, role, issue, prompt):
+    def start(self, role, issue, prompt, pr=None, handled_through=None):
         os.makedirs(self.config.state_dir, exist_ok=True)
         os.makedirs(self.config.log_dir, exist_ok=True)
         session_id = str(uuid.uuid4())
@@ -65,11 +66,15 @@ class Registry:
         log = os.path.join(self.config.log_dir, "%s-%d-%s.jsonl" % (role, issue, stamp))
         record = {"role": role, "issue": issue, "session_id": session_id,
                   "log": log, "started": stamp}
+        if pr is not None:      # a merge session's PR and the /merge it answers
+            record.update(pr=pr, handled_through=handled_through)
         with open(self._record_path(role, issue), "w") as f:
             json.dump(record, f, indent=2)
         try:
             self.run(sessions.launch_command(self.config, role, issue, session_id,
-                                             log, prompt), check=True)
+                                             log, prompt, pr=pr,
+                                             handled_through=handled_through),
+                     check=True)
         except Exception:
             os.remove(self._record_path(role, issue))
             raise

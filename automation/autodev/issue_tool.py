@@ -10,8 +10,10 @@ trust") in code, not just in instructions:
   - A session only changes its own issue (AUTODEV_ISSUE, set by the
     dispatcher), with the commands its role needs (AUTODEV_ROLE): a grill
     session its parent and the tickets it creates under it, a ticket
-    session its ticket and the PR it opens for it. It can't add labels,
-    close issues, merge, or touch the board.
+    session its ticket and the PR it opens for it, a merge session its
+    ticket's PR. Only a merge session merges, and only with a merge commit
+    of the commit it tested. No session can add labels, close issues, or
+    touch the board.
 """
 
 import re
@@ -29,6 +31,7 @@ class Refused(Exception):
 COMMANDS = {
     "grill": {"read", "comment", "set-body", "create-ticket"},
     "ticket": {"read", "comment", "open-pr"},
+    "merge": {"read", "pr-comment", "merge-pr"},
 }
 
 
@@ -92,6 +95,11 @@ def create_ticket(gh, config, parent, title, body):
     return created["number"]
 
 
+# GitHub's closing keywords: "close", "fixes", "Resolved: owner/repo#12"...
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+"
+                     r"(?:[\w.-]+/[\w.-]+)?#(\d+)", re.IGNORECASE)
+
+
 def open_pr(gh, config, ticket, title, head, body):
     """Open the PR for `ticket` from its own branch into master. Returns
     GitHub's record of the new PR."""
@@ -107,5 +115,38 @@ def open_pr(gh, config, ticket, title, head, body):
         raise Refused("the PR body must say \"Fixes #%d\" (not in code)" % ticket)
     if not re.search(r"@%s(?![\w-])" % re.escape(config.owner), prose):
         raise Refused("the PR body must @mention @%s (not in code)" % config.owner)
+    # Merging closes every issue a closing keyword names. Checked in the
+    # whole body, code included, to be safe.
+    others = sorted({int(n) for n in CLOSING.findall(body)} - {ticket})
+    if others:
+        raise Refused("the PR body may close only #%d, but a closing keyword "
+                      "also names %s; reword it (e.g. \"see #N\")" % (
+                          ticket, ", ".join("#%d" % n for n in others)))
     return gh.rest("POST", "repos/%s/pulls" % config.repo, title=title,
                    head=head, base="master", body=body)
+
+
+def pr_comment(gh, config, pr, handled_through, body):
+    """Reply on the session's PR. The reply ends with a marker naming the
+    newest of the owner's comments the session dealt with, so the
+    dispatcher treats only later ones as new (#48, "PR comment
+    bookkeeping"). The marker also marks the reply as autodev's."""
+    marker = "<!-- autodev handled-through: %d -->" % handled_through
+    gh.rest("POST", "%s/%d/comments" % (_issues(config), pr),
+            body=body.rstrip() + "\n\n" + marker)
+
+
+def merge_pr(gh, config, pr, head):
+    """Merge the PR with a merge commit (never squash or rebase), pinned to
+    `head`, the commit the session built and tested."""
+    # The merge commit's tree is `head`'s only if the branch already holds
+    # all of master. If master has moved on, GitHub would mix in commits
+    # nobody tested.
+    behind = gh.rest("GET", "repos/%s/compare/%s...master" % (config.repo, head))["ahead_by"]
+    if behind:
+        raise Refused("master has %d commit%s your branch doesn't: merge master "
+                      "in again, re-test, push, and try again" % (
+                          behind, "" if behind == 1 else "s"))
+    # With `sha`, GitHub refuses if the PR's head is no longer `head`.
+    return gh.rest("PUT", "repos/%s/pulls/%d/merge" % (config.repo, pr),
+                   merge_method="merge", sha=head)

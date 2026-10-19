@@ -46,6 +46,21 @@ def path(clone, number):
     return os.path.join(clone + "-worktrees", "issue-%d" % number)
 
 
+def tickets(clone):
+    """The ticket numbers that have a worktree."""
+    try:
+        names = os.listdir(clone + "-worktrees")
+    except FileNotFoundError:
+        return set()
+    return {int(n[len("issue-"):]) for n in names
+            if re.fullmatch(r"issue-\d+", n)}
+
+
+def _git(clone, *args, check=True):
+    return subprocess.run(["git", "-C", clone, *args], check=check,
+                          capture_output=True, text=True, timeout=120)
+
+
 def make(clone, number, branch):
     """Make sure ticket `number` has its worktree on `branch`, with agbcc
     linked, and return its path. Safe to repeat: an earlier tick may have
@@ -53,30 +68,50 @@ def make(clone, number, branch):
     where = path(clone, number)
 
     def git(*args, check=True):
-        return subprocess.run(["git", "-C", clone, *args], check=check,
-                              capture_output=True, text=True, timeout=120)
+        return _git(clone, *args, check=check)
+
+    def has(ref):
+        return git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0
 
     if not os.path.isdir(where):
         # git still lists a worktree whose folder was deleted, and won't
         # check its branch out again until it forgets that one.
         git("worktree", "prune")
-        if git("rev-parse", "--verify", "--quiet", "refs/heads/" + branch,
-               check=False).returncode == 0:
+        if has("refs/heads/" + branch):
             # The folder went (by hand, or when the ticket closed) but the
             # branch, with any earlier work on it, is still here.
             git("worktree", "add", "--quiet", where, branch)
         else:
-            # origin/master, not whatever the clone has checked out: while a
-            # branch of autodev itself is being tried out live, the clone
-            # sits on that.
-            git("fetch", "--quiet", "origin", "master")
-            # --no-track: a branch cut from origin/master would otherwise
-            # track it, and a plain `git push` could then aim at master.
-            git("worktree", "add", "--quiet", "--no-track", "-b", branch,
-                where, "origin/master")
+            git("fetch", "--quiet", "origin")
+            if has("refs/remotes/origin/" + branch):
+                # Only GitHub has it (a merge session for a ticket whose
+                # worktree is gone): check out the ticket's work from there.
+                git("worktree", "add", "--quiet", "--track", "-b", branch,
+                    where, "origin/" + branch)
+            else:
+                # A new ticket starts from origin/master, not whatever the
+                # clone has checked out: while a branch of autodev itself
+                # is tried out live, the clone sits on that. --no-track: a
+                # branch cut from origin/master would otherwise track it,
+                # and a plain `git push` could then aim at master.
+                git("worktree", "add", "--quiet", "--no-track", "-b", branch,
+                    where, "origin/master")
     # agbcc, the game's compiler, isn't in git (CLAUDE.md, step 6): link the
     # one the clone uses, which is itself a link to the owner's checkout.
     link = os.path.join(where, "tools", "agbcc")
     if not os.path.lexists(link):
         os.symlink(os.path.realpath(os.path.join(clone, "tools", "agbcc")), link)
     return where
+
+
+def remove(clone, number):
+    """Delete ticket `number`'s worktree and its local branch, once the
+    ticket is closed. The branch on GitHub stays. Safe to repeat."""
+    where = path(clone, number)
+    if os.path.isdir(where):
+        branch = _git(where, "branch", "--show-current").stdout.strip()
+        # --force: whatever is left in it is no longer wanted.
+        _git(clone, "worktree", "remove", "--force", where)
+        if branch:
+            _git(clone, "branch", "-D", branch)
+    _git(clone, "worktree", "prune")
