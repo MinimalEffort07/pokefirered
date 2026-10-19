@@ -1,6 +1,6 @@
 # Pokémon FireRed and LeafGreen
 
-This is a fork of the PRET project with custom features. Development is AI-assisted (Claude Code) with human review and direction; [Autodev](#autodev) takes issues all the way to a PR that waits for approval by itself.
+This is a fork of the PRET project with custom features. Development is AI-assisted (Claude Code) with human review and direction; [Autodev](#autodev) turns issues into PRs by itself, and each one waits for approval.
 
 ## Added Features
 
@@ -91,16 +91,16 @@ bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA
 
 ## Autodev
 
-Autodev takes an issue from the board to a merged PR with nobody at the keyboard. It runs this repo's GitHub Issue Workflow (CLAUDE.md, steps 1–13) with headless Claude Code sessions that act as a bot account, and nothing reaches master until you comment `/merge`. The design is on [#48](https://github.com/MinimalEffort07/pokefirered/issues/48), and [automation/README.md](automation/README.md) has every detail. **The demo is the canary, [#83](https://github.com/MinimalEffort07/pokefirered/issues/83):** a throwaway issue that went all the way from grilling to merge with nobody steering it.
+Autodev takes an issue from the board to a PR that is ready to merge, with nobody at the keyboard. It runs this repo's GitHub Issue Workflow (CLAUDE.md, steps 1–13) with headless Claude Code sessions (Claude running without a terminal, unattended) that act as a bot account. Nothing reaches master until you comment `/merge` on the PR. The design is on [#48](https://github.com/MinimalEffort07/pokefirered/issues/48), and [automation/README.md](automation/README.md) has every detail.
 
-**What it does.** Add one of your issues to the **pokefirered autodev** board. A dispatcher, started every 2 minutes by a systemd user timer, moves it on:
+**What it does.** Add one of your issues to the **pokefirered autodev** board. Every 2 minutes a systemd user timer runs one *tick* of the dispatcher, which looks at the board and moves each card on:
 
-1. A grill session designs it by itself, taking every recommended answer, posts the design on the issue, and breaks it into tickets.
-2. Each ticket whose blockers are all closed gets its own worktree and a ticket session: TDD, a clean build, `run_suite.sh`, a recording if the game changes, the README, a code review, then a PR that @mentions you.
-3. Your feedback on the PR starts a fix-up session. Your `/merge` starts a merge session, which merges master in, tests that exact tree again, and merges with a merge commit.
+1. A grill session designs the issue by itself, taking every recommended answer, posts the design on the issue, and breaks it into tickets.
+2. Each ticket whose blockers are all closed gets its own worktree (a separate checkout of the repo on the ticket's own branch) and a ticket session: TDD, a clean build, `run_suite.sh`, a recording if the game changes, the README, a code review, then a PR that @mentions you.
+3. Your feedback on the PR starts a fix-up session. Your `/merge` starts a merge session, which merges master in, tests that exact tree again, and merges with a merge commit. If merging master in conflicts, it resolves the conflict, explains how on the PR, and waits for a fresh `/merge` from you instead of merging.
 4. Once every ticket of the issue is closed, the issue is closed too.
 
-At most 2 sessions run at once. Only your issues, and the tickets the bot writes for them, are run, and only your text and the bot's ever reaches a session: anyone else's issue is parked, and their comments are withheld. A usage limit pauses everything until it resets, and a crashed session is run once more before it is parked.
+At most 2 sessions run at once. Only your issues, and the tickets the bot writes for them, are run, and only your text and the bot's ever reaches a session: anyone else's issue is parked, and their comments are withheld. When a session hits the Claude usage limit, nothing starts until shortly after the limit resets; a crashed session is run once more before it is parked.
 
 **Setup.** Run two scripts, both safe to run again:
 
@@ -118,26 +118,28 @@ bash automation/setup.sh    # the rest: the board, the bot's access, the master 
 | `Blocked` | A ticket is waiting for an issue under its `## Blocked by` heading to close. |
 | `In progress` | A parent's tickets are in flight, or a session is running for a ticket. |
 | `In review` | A ticket's PR is waiting for your `/merge` or your feedback. |
-| `Needs human` | Parked after a failure. The bot's latest comment says why. |
+| `Needs human` | Parked, after a failure or because someone else wrote the issue. The bot's latest comment says why. |
 | `Paused` | Your stop switch for that card. |
 | `Done` | Closed. |
 
 **What you do:**
 
-- **Approve a merge:** comment exactly `/merge` on the PR. It counts only while it is your newest comment there.
+- **Approve a merge:** comment exactly `/merge` on the PR. It counts only while it is the last thing you've said there. After a merge session resolves a conflict, check its explanation and comment `/merge` again.
 - **Give feedback:** leave any other comment, review or inline comment on the PR. A fix-up session deals with everything you've said, pushes, and replies; then the PR waits for you again. Feedback after a `/merge` cancels it.
-- **Pause one item:** set its card, or its parent's, to `Paused`. Nothing new starts for it, and a session already running finishes its run. Move the card back to `Todo` to carry on.
-- **Stop everything:** `systemctl --user stop autodev.timer` stops the ticks; sessions already running carry on (`systemctl --user list-units 'autodev-*'` lists them). `systemctl --user start autodev.timer` starts it again.
+- **Pause one item:** set its card, or its parent's, to `Paused`. Nothing new starts for it, and a session already running finishes its run. Move the card back to `Todo` to carry on. To end a running session early, pause its card first, then `systemctl --user stop autodev-<role>-<issue>` (e.g. `autodev-ticket-68`); a stop on its own counts as a crash, so the work would run once more.
+- **Stop everything:** `systemctl --user stop autodev.timer` stops the ticks until the next restart; `systemctl --user disable --now autodev.timer` stops them for good, and `enable --now` starts them again. Sessions already running carry on: `systemctl --user list-units 'autodev-*'` lists them.
 
 **Logs.** Each tick logs what it saw and did to the journal: `journalctl --user -u autodev-dispatcher -f`. Each session's full log is `~/autodev/logs/<role>-<issue>-<time>.jsonl`, kept for 30 days.
 
-**Resuming a parked session.** A `Needs human` comment @mentions you, says what went wrong, and ends with a command that reopens the session interactively, exactly where it stopped:
+**Resuming a parked session.** When a session fails, its `Needs human` comment @mentions you, says what went wrong, and ends with a command that reopens the session interactively, exactly where it stopped:
 
 ```bash
 cd ~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-68 && CLAUDE_CONFIG_DIR=~/.claude-personal claude --resume <session-id>
 ```
 
 Once it's sorted, move the card back to `Todo`. Autodev carries on from where things stand: a parent that already has tickets isn't grilled again, and a ticket whose PR is open goes back to `In review`.
+
+**Demo.** The demo is the canary, [#83](https://github.com/MinimalEffort07/pokefirered/issues/83), a throwaway issue that runs the whole flow on the live board: it is grilled into tickets, implemented in a PR, fixed up after one comment from you, and merged after your `/merge`.
 
 ## Mt. Moon generator
 
