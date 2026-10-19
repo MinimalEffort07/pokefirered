@@ -66,12 +66,6 @@ local function inject_pokemon(base, species, level)
     emu:write8(base + 0x59, 0)
 end
 
-local results = {}
-local function check(name, cond)
-    results[#results + 1] = {name = name, pass = cond}
-    fw.log((cond and "[PASS] " or "[FAIL] ") .. name)
-end
-
 fw.run(function()
     fw.log("=== PC Anywhere Test ===")
 
@@ -113,8 +107,11 @@ fw.run(function()
     end
     fw.wait_frames(60)  -- settle after state load
 
+    -- Both parts compare against this count, so check the fixture really
+    -- holds the two injected Bulbasaurs: with an empty party, Part A's
+    -- "unchanged" would hold without the PC ever being opened.
     local party_count = fw.read8(ADDR.gPlayerPartyCount)
-    fw.log(string.format("Fixture party count: %d", party_count))
+    fw.assert_eq(party_count, 2, "fixture party holds the 2 injected Bulbasaurs")
 
     -- ------------------------------------------------------------------ --
     -- Part A: Quick Select -> BILL'S PC -> SEE YA!
@@ -148,8 +145,8 @@ fw.run(function()
     fw.wait_frames(90)
 
     local count_after_pc = fw.read8(ADDR.gPlayerPartyCount)
-    check("Part A: party count unchanged after Quick Select PC visit",
-          count_after_pc == party_count)
+    fw.assert_true(count_after_pc == party_count,
+        "Part A: party count unchanged after Quick Select PC visit")
 
     -- ------------------------------------------------------------------ --
     -- Part B: Party menu -> MOVE TO PC
@@ -200,8 +197,8 @@ fw.run(function()
     local party_count_after = fw.read8(ADDR.gPlayerPartyCount)
     fw.log(string.format("Party count after MOVE TO PC: %d", party_count_after))
 
-    check("Part B: party count decreased by 1 after MOVE TO PC",
-          party_count_after == party_count - 1)
+    fw.assert_true(party_count_after == party_count - 1,
+        "Part B: party count decreased by 1 after MOVE TO PC")
 
     -- Exit menus
     fw.press("B")
@@ -209,10 +206,5 @@ fw.run(function()
     fw.press("B")
     fw.wait_frames(30)
 
-    local passed = 0
-    for _, r in ipairs(results) do
-        if r.pass then passed = passed + 1 end
-    end
-    fw.log(string.format("Results: %d/%d passed", passed, #results))
     fw.finish()
 end)

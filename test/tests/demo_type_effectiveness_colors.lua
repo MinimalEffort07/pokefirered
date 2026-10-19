@@ -18,6 +18,7 @@ local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
 local project_dir = script_dir .. "../../"
 
 local fw   = dofile(project_dir .. "test/lib/framework.lua")
+fw.allow_no_assertions("demo: plays the double battle slowly for the type colours recording")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local r14  = dofile(project_dir .. "test/lib/route14_battle.lua")
 

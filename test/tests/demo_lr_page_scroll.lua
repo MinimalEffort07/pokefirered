@@ -21,6 +21,7 @@ local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
 local project_dir = script_dir .. "../../"
 
 local fw   = dofile(project_dir .. "test/lib/framework.lua")
+fw.allow_no_assertions("demo: captures Bag frames for the L/R page scroll GIF")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local cs   = dofile(project_dir .. "test/lib/character_select.lua")
 

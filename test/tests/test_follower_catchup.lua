@@ -136,8 +136,8 @@ fw.run(function()
         -- Verify follower spawned (objEventId must be a valid slot index < 16).
         local _, _, foeid = read_follower_pos()
         fw.log(string.format("Follower objEventId after WALK: %d", foeid))
-        if foeid >= ADDR.OBJECT_EVENTS_COUNT then
-            fw.log_error("Follower sprite did not spawn after selecting WALK")
+        if not fw.assert_true(foeid < ADDR.OBJECT_EVENTS_COUNT,
+                "fixture: follower sprite spawned after selecting WALK") then
             fw.finish()
             return
         end
@@ -162,8 +162,8 @@ fw.run(function()
     local _, _, foeid = read_follower_pos()
     fw.log(string.format("Follower objEventId: %d", foeid))
 
-    if foeid >= ADDR.OBJECT_EVENTS_COUNT then
-        fw.log_error("Follower not active in fixture state")
+    if not fw.assert_true(foeid < ADDR.OBJECT_EVENTS_COUNT,
+            "follower active after the warp to Pallet Town") then
         fw.finish()
         return
     end
