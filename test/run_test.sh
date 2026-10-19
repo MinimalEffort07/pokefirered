@@ -22,6 +22,9 @@
 # PER-RUN OUTPUT:
 #   Every run gets its own fresh directory, /tmp/mgba-test.XXXXXX, made with
 #   mktemp -d and passed to Lua in the MGBA_TEST_DIR environment variable.
+#   (It is made in $TMPDIR instead of /tmp when that variable is set, as
+#   most Unix tools do; test/tests/test_run_suite.lua uses this to give a
+#   suite run a folder of its own.)
 #   Everything a test writes goes there: the results JSON, the exit-code
 #   file and screenshots (test/lib/framework.lua's fw.out_path). So any
 #   number of tests can run at the same time, from one checkout or from
@@ -35,8 +38,10 @@
 #   Continue tests, and is gone when the run ends.
 #
 # EXIT CODES:
-#   0 = all tests passed
-#   1 = one or more tests failed, or the test timed out
+#   0   = all tests passed
+#   1   = one or more tests failed, or the test crashed before writing results
+#   124 = the test timed out: it was still running after MGBA_TEST_TIMEOUT
+#         seconds (124 is the exit code `timeout` gives in that case)
 #
 # REQUIREMENTS:
 #   - mgba-headless built at /home/min/projects/minimalefforts/mgba/build/
@@ -59,27 +64,9 @@ ROM="$PROJECT_DIR/pokefirered.gba"
 # The test script to run. Defaults to the basic player sprite test.
 TEST_SCRIPT="${1:-$PROJECT_DIR/test/tests/test_player_sprite.lua}"
 
-# This run's private output directory (see PER-RUN OUTPUT above). The file
-# names inside it are the ones every test used directly in /tmp before.
-RUN_DIR="$(mktemp -d /tmp/mgba-test.XXXXXX)"
-export MGBA_TEST_DIR="$RUN_DIR"
-RESULTS_FILE="$RUN_DIR/mgba-test-results.json"
-EXITCODE_FILE="$RUN_DIR/mgba-test-exitcode"
-SCREENSHOT_FILE="$RUN_DIR/mgba-test-screenshot.png"
-
-# Longest a test may run, in seconds. Most tests finish in under 15 s; long
-# sweeps (e.g. the Mt. Moon property test) raise it:
-#   MGBA_TEST_TIMEOUT=900 bash test/run_test.sh test/tests/<long_test>.lua
-TIMEOUT_SECONDS="${MGBA_TEST_TIMEOUT:-60}"
-
-# The game's save file. mgba-headless never loads or writes one (see
-# PER-RUN OUTPUT), so a pokefirered.sav next to the ROM (e.g. the user's own,
-# from the GUI) is never read or changed. In case a test ever asks mGBA to
-# load one (emu:autoloadSave()), its save directory still points at this
-# run's directory, which starts empty.
-SAVE_OPTION="savegamePath=$RUN_DIR"
-
 # --- Prerequisite checks ---
+# (Before the run's directory is made, so a run that can't start leaves no
+# empty directory behind.)
 
 if [ ! -x "$MGBA_HEADLESS" ]; then
     echo "ERROR: mgba-headless not found at $MGBA_HEADLESS"
@@ -97,6 +84,26 @@ if [ ! -f "$TEST_SCRIPT" ]; then
     echo "ERROR: Test script not found: $TEST_SCRIPT"
     exit 1
 fi
+
+# This run's private output directory (see PER-RUN OUTPUT above). The file
+# names inside it are the ones every test used directly in /tmp before.
+RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mgba-test.XXXXXX")"
+export MGBA_TEST_DIR="$RUN_DIR"
+RESULTS_FILE="$RUN_DIR/mgba-test-results.json"
+EXITCODE_FILE="$RUN_DIR/mgba-test-exitcode"
+SCREENSHOT_FILE="$RUN_DIR/mgba-test-screenshot.png"
+
+# Longest a test may run, in seconds. Most tests finish in under 15 s; long
+# sweeps (e.g. the Mt. Moon property test) raise it:
+#   MGBA_TEST_TIMEOUT=900 bash test/run_test.sh test/tests/<long_test>.lua
+TIMEOUT_SECONDS="${MGBA_TEST_TIMEOUT:-60}"
+
+# The game's save file. mgba-headless never loads or writes one (see
+# PER-RUN OUTPUT), so a pokefirered.sav next to the ROM (e.g. the user's own,
+# from the GUI) is never read or changed. In case a test ever asks mGBA to
+# load one (emu:autoloadSave()), its save directory still points at this
+# run's directory, which starts empty.
+SAVE_OPTION="savegamePath=$RUN_DIR"
 
 echo "=== mGBA Test Runner ==="
 echo "ROM:    $ROM"
@@ -117,12 +124,20 @@ echo ""
 # its stdout buffer is flushed. grep --line-buffered ensures the pipeline
 # from grep onward is also line-buffered.
 #
+# TMPDIR="$RUN_DIR": the stdbuf on this machine (uutils coreutils, written
+# in Rust) leaves an empty .tmpXXXXXX folder in $TMPDIR every time it runs.
+# Pointing TMPDIR at this run's own folder puts that leftover there, so it
+# is deleted along with the folder instead of piling up in /tmp. The setting
+# also reaches mgba-headless and everything the test itself starts: a test
+# that runs other tests (test_framework_rules.lua) gets their run folders
+# made inside its own.
+#
 # timeout prevents runaway tests from hanging forever. The Seel test
 # takes about 10 seconds in headless mode; the default 60 seconds is a
 # generous limit (override with MGBA_TEST_TIMEOUT, see above).
 cd "$PROJECT_DIR"
 set +e
-stdbuf -oL -eL timeout "$TIMEOUT_SECONDS" "$MGBA_HEADLESS" -C "$SAVE_OPTION" "$ROM" --script "$TEST_SCRIPT" 2>&1 \
+TMPDIR="$RUN_DIR" stdbuf -oL -eL timeout "$TIMEOUT_SECONDS" "$MGBA_HEADLESS" -C "$SAVE_OPTION" "$ROM" --script "$TEST_SCRIPT" 2>&1 \
     | grep --line-buffered -E "^Scripting:"
 MGBA_EXIT=${PIPESTATUS[0]}
 set -e
@@ -133,12 +148,18 @@ echo ""
 
 # The Lua test framework writes results to a JSON file before exiting.
 # If the file doesn't exist, the test crashed or timed out before finishing.
+#
+# A timeout exits with 124, the code `timeout` itself gives when its time
+# limit stops the command, so a caller such as test/run_suite.sh can tell a
+# test that ran out of time from one that failed. The code says what
+# happened; elapsed time could not, because the PC may sleep mid-run, and
+# time asleep shows on the clock but doesn't count towards the limit.
 if [ ! -f "$RESULTS_FILE" ]; then
     if [ "$MGBA_EXIT" -eq 124 ]; then
         echo "ERROR: Test timed out after $TIMEOUT_SECONDS seconds"
-    else
-        echo "ERROR: Test did not produce results (mGBA exit code: $MGBA_EXIT)"
+        exit 124
     fi
+    echo "ERROR: Test did not produce results (mGBA exit code: $MGBA_EXIT)"
     exit 1
 fi
 

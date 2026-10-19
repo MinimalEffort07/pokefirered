@@ -1,0 +1,2 @@
+# Exclusion list for test/tests/test_run_suite.lua's checks that run every
+# fixture they name: it leaves nothing out.

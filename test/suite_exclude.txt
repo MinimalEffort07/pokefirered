@@ -1,0 +1,22 @@
+# Tests that test/run_suite.sh leaves out of the whole-suite run.
+#
+# One test per line: its file name in test/tests/ without ".lua", then, after
+# spaces, a one-line reason. Every exclusion needs a reason: run_suite.sh
+# refuses a line without one, and a line naming a test that doesn't exist
+# (so remove a test's line when the test is renamed or deleted). The suite's
+# summary lists each excluded test as SKIPPED with its reason, so every run
+# shows what it did not check.
+#
+# Leave a test out only when running it in the suite can't prove anything:
+# it needs something a person has to make by hand, or it makes no assertions
+# (a demo or probe that declares fw.allow_no_assertions). A test that fails
+# is not a reason to exclude it; fix it instead.
+
+test_roaming_route1             needs a savestate fixture made by hand (test/tools/save_route1_state.lua)
+demo_lr_page_scroll             demo: only captures frames for the L/R page scroll GIF; makes no assertions
+demo_pc_anywhere                demo: only captures frames for the PC Anywhere GIF; makes no assertions
+demo_pp_items_in_marts          demo: only captures mart frames for the PP items GIF; makes no assertions
+demo_slaveless_hm               demo: only captures frames for the slaveless HM GIF; makes no assertions
+demo_type_effectiveness_colors  demo: only plays a battle slowly for a recording; makes no assertions
+test_char_midwalk_screenshot    probe: only takes two screenshots for a person to compare; makes no assertions
+test_fast_forward_gui           GUI-only: under mgba-headless it skips itself and makes no assertions

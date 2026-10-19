@@ -66,15 +66,25 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 Every test is a Lua script in `test/tests/` that boots the ROM in mGBA's headless emulator and plays the game by pressing buttons and reading memory (`test/lib/framework.lua` explains how). Build first with `make -j$(nproc) firered`; the tests run `pokefirered.gba`.
 
 ```bash
-bash test/run_test.sh test/tests/test_pc_anywhere.lua     # exit code 0 = pass, 1 = fail
+bash test/run_suite.sh                                    # the whole suite: exit code 0 = every test passed
+bash test/run_test.sh test/tests/test_pc_anywhere.lua     # one test: exit code 0 = pass, 1 = fail, 124 = timed out
 bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA window, recorded to video
 ```
+
+**The whole suite.** `test/run_suite.sh` is the check a change must pass before it is merged:
+
+- It runs every top-level `test/tests/*.lua` file through `run_test.sh`, 4 at a time, each with a time limit of 1500 seconds (`MGBA_TEST_TIMEOUT=1500`), and leaves out the tests listed in `test/suite_exclude.txt`. The whole run takes about 10 minutes.
+- It ends with a summary: each test's result (`PASS`, `FAIL`, `TIMEOUT` or `SKIPPED`) and seconds, the totals, and the wall-clock time. It exits 0 only if every test it ran passed. A timeout is recognised by the exit code of `timeout` (124), not by how long the test took, because the PC may sleep in the middle of a run.
+- Every test run gets its own `mgba-test.XXXXXX` folder in `/tmp` (or in `$TMPDIR`, if set). The suite deletes the folders of passing runs. It keeps the folder of each failing or timed-out run and prints its path in the summary; everything `run_test.sh` printed for that run is saved inside it as `run_test.log`.
+- To run only some tests, name their files: `bash test/run_suite.sh test/tests/test_a.lua test/tests/test_b.lua`. The exclusion list still applies. `--help` lists the options for the time limit and the exclusion list.
+- **Every exclusion needs a reason.** Each line of `test/suite_exclude.txt` is a test name (its file name without `.lua`), then a one-line reason. A line with no reason, or one naming a test that doesn't exist, stops the suite before it runs anything. The summary lists every excluded test as `SKIPPED` with its reason. Exclude a test only when running it in the suite can't prove anything: it needs a fixture made by hand (`test_roaming_route1` needs a Route 1 savestate), or it makes no assertions (the demos and probes below). A failing test is not a reason to exclude it.
+- `test/tests/test_run_suite.lua` checks the runner itself: it runs `run_suite.sh` on the small scripts in `test/tests/suite_fixtures/` and checks the exit code, the summary and which folders are left.
 
 **A test can only pass by proving something:**
 
 - A test passes only if it made at least one assertion (`fw.assert_true`, `fw.assert_eq`, `fw.assert_neq`) and none of them failed. A test that reaches `fw.finish()` with zero assertions fails with "0 assertions", so a test whose checks were all skipped, or only logged, can't pass.
 - If booting a new game to character select fails, the test fails with "boot to character select failed", even when it gives up before its first assertion. To check a test's failure path in about a second, fake that failure: `MGBA_TEST_FAKE_BOOT_FAILURE=1 bash test/run_test.sh test/tests/<test>.lua`.
-- Demos and probes only make frames, screenshots or logs for a person to look at, so they assert nothing. Each one says so with `fw.allow_no_assertions(reason)` and then passes with zero assertions; a failed assertion, a crash or a failed boot still fails it. In `test/tests/` they are `demo_lr_page_scroll`, `demo_pc_anywhere`, `demo_pp_items_in_marts`, `demo_slaveless_hm`, `demo_type_effectiveness_colors` and `test_char_midwalk_screenshot`, plus `test_fast_forward_gui` when it skips itself under the headless emulator (in the mGBA window it asserts). In `test/tools/` they are `explore_route1`, `probe_route1_fixture` and `test_route1_movement`. Run them on their own, or record them with `record_test.sh`.
+- Demos and probes only make frames, screenshots or logs for a person to look at, so they assert nothing. Each one says so with `fw.allow_no_assertions(reason)` and then passes with zero assertions; a failed assertion, a crash or a failed boot still fails it. In `test/tests/` they are `demo_lr_page_scroll`, `demo_pc_anywhere`, `demo_pp_items_in_marts`, `demo_slaveless_hm`, `demo_type_effectiveness_colors` and `test_char_midwalk_screenshot`, plus `test_fast_forward_gui` when it skips itself under the headless emulator (in the mGBA window it asserts). In `test/tools/` they are `explore_route1`, `probe_route1_fixture` and `test_route1_movement`. The whole-suite run leaves the ones in `test/tests/` out (`test/suite_exclude.txt`); run them on their own, or record them with `record_test.sh`.
 - `test/tests/test_framework_rules.lua` checks these rules: it runs the small scripts in `test/tests/framework_fixtures/` through `run_test.sh` and checks each exit code and message.
 
 ## Mt. Moon generator

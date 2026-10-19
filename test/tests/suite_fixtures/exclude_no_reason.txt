@@ -1,0 +1,3 @@
+# Exclusion list for test/tests/test_run_suite.lua's check NO-REASON: the
+# line below names a test but gives no reason, which run_suite.sh refuses.
+fails

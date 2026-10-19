@@ -1,0 +1,4 @@
+# Exclusion list for test/tests/test_run_suite.lua's check STALE: the line
+# below names a test that doesn't exist (as if it had been renamed or
+# deleted), which run_suite.sh refuses.
+no_such_test    fixture: names a test that doesn't exist

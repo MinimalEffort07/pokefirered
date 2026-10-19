@@ -1,0 +1,3 @@
+# Exclusion list for test/tests/test_run_suite.lua's check A4, in the same
+# format as test/suite_exclude.txt: it leaves out fails.lua.
+fails    fixture: would fail the suite if it ran
