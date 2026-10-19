@@ -139,7 +139,7 @@ cd ~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-68 && CLAUDE_CON
 
 Once it's sorted, move the card back to `Todo`. Autodev carries on from where things stand: a parent that already has tickets isn't grilled again, and a ticket whose PR is open goes back to `In review`.
 
-**Demo.** The demo is the canary, [#83](https://github.com/MinimalEffort07/pokefirered/issues/83), a throwaway issue that runs the whole flow on the live board: it is grilled into tickets, implemented in a PR, fixed up after one comment from you, and merged after your `/merge`.
+**Demo.** The demo is the canary, [#83](https://github.com/MinimalEffort07/pokefirered/issues/83), a throwaway issue that runs the whole flow on the live board: it is grilled into tickets, implemented in a PR, fixed up after one comment from you, and merged after your `/merge`. The canary passed: it went through the whole flow, from grilling to merge, with nobody steering it.
 
 ## Mt. Moon generator
 
