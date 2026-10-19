@@ -101,7 +101,6 @@ class ParentIssues(unittest.TestCase):
             [Launch("grill", 61), SetStatus(61, "Grilling")])
 
 
-
 class Tickets(unittest.TestCase):
     def test_D3_a_todo_ticket_with_every_blocker_closed_is_launched(self):
         # The worktree comes first: the session runs inside it. The branch
@@ -260,6 +259,7 @@ class FinishedGrills(unittest.TestCase):
                     needs_human(reason),
                     Finish("grill", 61),
                 ])
+
 
 def finished_ticket(result, ended_by="success"):
     return Session("ticket", 68, "sid-68", running=False, result=result,

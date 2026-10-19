@@ -138,7 +138,13 @@ class OpeningPRs(unittest.TestCase):
                      PR_BODY.replace("Fixes #68", "Fixes #680"),
                      PR_BODY.replace("@MinimalEffort07", "the owner"),
                      # Mentioning the bot isn't mentioning the owner.
-                     PR_BODY.replace("@MinimalEffort07", "@MinimalEffort07-Autodev")):
+                     PR_BODY.replace("@MinimalEffort07", "@MinimalEffort07-Autodev"),
+                     # GitHub ignores both inside code: no notification, and
+                     # the ticket wouldn't close.
+                     PR_BODY.replace("@MinimalEffort07", "`@MinimalEffort07`"),
+                     PR_BODY.replace("Fixes #68", "`Fixes #68`"),
+                     PR_BODY.replace("@MinimalEffort07",
+                                     "```\n@MinimalEffort07\n```")):
             with self.subTest(body=body):
                 gh = FakeRest({})
                 with self.assertRaises(issue_tool.Refused):

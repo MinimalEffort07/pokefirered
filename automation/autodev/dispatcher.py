@@ -11,9 +11,9 @@ journal (`journalctl --user -u autodev-dispatcher`).
 import os
 
 from autodev import board, worktrees
-from autodev.decide import (BLOCKED, TODO, Comment, Finish, Launch,
-                            LinkSubIssue, MakeWorktree, PlaceOnBoard,
-                            SetStatus, State, plan)
+from autodev.decide import (Comment, Finish, Launch, LinkSubIssue,
+                            MakeWorktree, PlaceOnBoard, SetStatus, State,
+                            is_waiting_ticket, plan)
 from autodev.github import GitHub
 from autodev.gh import GhError
 from autodev.registry import Registry
@@ -91,8 +91,7 @@ def read_state(github, config, snapshot, registry, log):
             code = 1
     closed = set()
     on_board = {item.number: item for item in snapshot.items}
-    blockers = {b for item in snapshot.items
-                if item.has_parent and item.status in (TODO, BLOCKED)
+    blockers = {b for item in snapshot.items if is_waiting_ticket(item)
                 for b in item.blocked_by}
     for number in sorted(blockers):
         if number in on_board:

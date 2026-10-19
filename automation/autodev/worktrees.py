@@ -12,13 +12,27 @@ import re
 import subprocess
 
 
+def branch_prefix(number):
+    """What every branch of ticket `number` starts with. open-pr and the
+    dispatcher's PR check (github.ticket_outcome) both rely on it."""
+    return "issue-%d-" % number
+
+
 def branch_name(number, title):
-    """issue-<number>-<first words of the title>, e.g. "issue-68-note-the-
-    grill-paths-live". Apostrophes are dropped so "path's" stays one word."""
-    words = re.split(r"[^a-z0-9]+", title.lower().replace("'", ""))
-    slug = "-".join(w for w in words if w)
-    slug = "-".join(slug.split("-")[:5])[:40].rstrip("-")
-    return "issue-%d-%s" % (number, slug) if slug else "issue-%d" % number
+    """issue-<number>-<slug>: the slug is the title's first five words,
+    stopping early rather than going over 40 characters, e.g. "issue-68-
+    note-the-grill-paths-live". Apostrophes are dropped so "path's" stays
+    one word; a title with no letters or digits gives "ticket"."""
+    words = [w for w in re.split(r"[^a-z0-9]+", title.lower().replace("'", "")) if w]
+    slug = ""
+    for word in words[:5]:
+        longer = slug + "-" + word if slug else word
+        if len(longer) > 40:
+            break
+        slug = longer
+    if not slug:
+        slug = words[0][:40] if words else "ticket"
+    return branch_prefix(number) + slug
 
 
 def path(clone, number):
@@ -26,25 +40,36 @@ def path(clone, number):
 
 
 def make(clone, number, branch):
-    """Create ticket `number`'s worktree on a new `branch` cut from master,
-    unless it already exists. Returns the worktree's path."""
+    """Make sure ticket `number` has its worktree on `branch`, with agbcc
+    linked, and return its path. Safe to repeat: an earlier tick may have
+    made part of it before failing."""
     where = path(clone, number)
-    if os.path.isdir(where):
-        return where    # an earlier tick made it (and maybe its launch failed)
 
-    def git(*args):
-        subprocess.run(["git", "-C", clone, *args], check=True,
-                       capture_output=True, text=True, timeout=120)
+    def git(*args, check=True):
+        return subprocess.run(["git", "-C", clone, *args], check=check,
+                              capture_output=True, text=True, timeout=120)
 
-    # origin/master, not whatever the clone has checked out: while a branch
-    # of autodev itself is being tried out live, the clone sits on that.
-    git("fetch", "--quiet", "origin", "master")
-    # --no-track: a branch cut from origin/master would otherwise track it,
-    # and a plain `git push` from the session could then aim at master.
-    git("worktree", "add", "--quiet", "--no-track", "-b", branch, where,
-        "origin/master")
+    if not os.path.isdir(where):
+        # git still lists a worktree whose folder was deleted, and won't
+        # check its branch out again until it forgets that one.
+        git("worktree", "prune")
+        if git("rev-parse", "--verify", "--quiet", "refs/heads/" + branch,
+               check=False).returncode == 0:
+            # The folder went (by hand, or when the ticket closed) but the
+            # branch, with any earlier work on it, is still here.
+            git("worktree", "add", "--quiet", where, branch)
+        else:
+            # origin/master, not whatever the clone has checked out: while a
+            # branch of autodev itself is being tried out live, the clone
+            # sits on that.
+            git("fetch", "--quiet", "origin", "master")
+            # --no-track: a branch cut from origin/master would otherwise
+            # track it, and a plain `git push` could then aim at master.
+            git("worktree", "add", "--quiet", "--no-track", "-b", branch,
+                where, "origin/master")
     # agbcc, the game's compiler, isn't in git (CLAUDE.md, step 6): link the
     # one the clone uses, which is itself a link to the owner's checkout.
-    os.symlink(os.path.realpath(os.path.join(clone, "tools", "agbcc")),
-               os.path.join(where, "tools", "agbcc"))
+    link = os.path.join(where, "tools", "agbcc")
+    if not os.path.lexists(link):
+        os.symlink(os.path.realpath(os.path.join(clone, "tools", "agbcc")), link)
     return where

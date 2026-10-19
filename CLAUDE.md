@@ -270,9 +270,9 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - **GitHub access:** only through autodev's own copy of `automation/bin/issue.py`, in its clone. Your prompt gives its full path. Don't run your worktree's copy: it's your branch's version. Plain `gh` is denied, and the tool shows only text by the owner or the bot.
   - `read <number>` shows an issue or PR and its comments. Read the ticket, its parent and the parent's design comment, including the owner's comments on the ticket, before starting.
   - `comment` comments on your ticket.
-  - `open-pr --title "Fix #<T>: …"` opens your PR into master from the branch checked out here, with the body on stdin. It refuses a body without `Fixes #<T>` or `@MinimalEffort07`.
+  - `open-pr --title "Fix #<T>: …"` opens your PR into master from the branch checked out here, with the body on stdin. It refuses a body without Fixes #<T> and @MinimalEffort07 written as plain text: GitHub ignores both inside code, so the ticket wouldn't close and the owner wouldn't be notified.
 - Run `bash test/run_suite.sh` before opening the PR. `record_test.sh` waits for any other recording on the machine to finish (it takes a machine-wide lock itself), so a recording may start late.
-- The PR body carries `Fixes #<T>`, `Part of #<parent>`, a summary, the tests run with the suite result, the "Recordings available at…" and "Branch README" lines (or "No recording: no in-game behaviour changes."), and an @mention of `@MinimalEffort07`.
+- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the tests run with the suite result, the "Recordings available at…" and "Branch README" lines (or "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
 - Push only your own branch: `git push -u origin issue-<T>-<slug>`. Never push to master, force-push or merge.
 - If you can't finish, push the unfinished branch before reporting `failed`.
 

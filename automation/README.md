@@ -23,12 +23,12 @@ Autodev runs this repo's GitHub Issue Workflow (CLAUDE.md steps 1–13) on its o
 An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions write them, as the bot; you can write one too. A ticket written by anyone else goes to `Needs human`, like a parent.
 
 1. **It waits for its blockers.** On every tick, a ticket in `Todo` with an open issue under its `## Blocked by` heading moves to `Blocked`. Once all of them are closed, it moves back to `Todo`. A closed issue counts as done whether a PR closed it or you did, so closing a ticket is how you skip it.
-2. **A ticket in `Todo` with nothing open blocking it** gets its own worktree, `.worktrees/issue-<T>` in the clone. The worktree is on a new branch, `issue-<T>-<first five words of the title>`, cut from master, with `tools/agbcc` linked. A ticket session starts in it, and the card moves to `In progress`.
+2. **A ticket in `Todo` with nothing open blocking it** gets its own worktree, `.worktrees/issue-<T>` in the clone. The worktree is on a new branch, `issue-<T>-<slug>`, cut from master, with `tools/agbcc` linked. The slug is the title's first five words, or fewer if five would go over 40 characters. If the folder is gone but the branch is still there, the worktree is made again on that branch. A ticket session starts in it, and the card moves to `In progress`.
 3. **The ticket session** follows CLAUDE.md's "Autonomous mode" for the ticket role, steps 7–11:
    - TDD, a clean build and `bash test/run_suite.sh`
    - a recording if anything changes in the game (recordings take turns: see "How it runs")
    - the README, then a code review against master
-   - finally `python3 automation/bin/issue.py open-pr`, which only opens a PR from the ticket's own `issue-<T>-*` branch, and only with `Fixes #<T>` and an @mention of you in the body
+   - finally `issue.py open-pr`, which only opens a PR from the ticket's own `issue-<T>-*` branch, and only when the body has Fixes #<T> and an @mention of you written outside code (GitHub ignores both inside code)
 
    It has 3 hours.
 4. **On the first tick after it ends**, the dispatcher looks on GitHub for the bot's open PR from an `issue-<T>-*` branch of this repo. A PR from a fork doesn't count.
@@ -46,7 +46,7 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
 | `autodev-dispatcher.service` | One dispatcher tick: `git pull` the clone, then `python3 -m autodev tick` (code in `automation/autodev/`). |
 | `autodev-<role>-<issue>.service` | One Claude session, e.g. `autodev-grill-67` or `autodev-ticket-68`. It's a transient unit that the dispatcher starts with `systemd-run`, and systemd forgets it once it ends. It runs `claude -p` as the bot (the env file), with your Claude login and plugins (`CLAUDE_CONFIG_DIR=~/.claude-personal`), the role's permissions and the role's time limit (grill 60 minutes, ticket 3 hours). A grill session runs in the clone; a ticket session runs in the ticket's worktree. |
 | `.worktrees/issue-<T>` | Each ticket's worktree in the clone, on its branch `issue-<T>-<slug>`. The ticket's later fix-up and merge sessions (#57, #59) reuse it. |
-| `automation/settings/<role>.json` | Each role's permissions. A session always uses the clone's copy, never its worktree's, because it could edit the one in its worktree. The grill role is read-only. The ticket and fix-up roles may edit, build, test, commit and push, but they can't use `gh`, push to master, force-push, delete branches or touch `pret/pokefirered`. In auto mode an allow rule only skips the safety classifier, so every limit is a deny rule. The master rulesets are the backstop. |
+| `automation/settings/<role>.json` | Each role's permissions. A session always uses the clone's copy, never its worktree's, because it could edit the one in its worktree. The grill role is read-only. The ticket and fix-up roles may edit, build, test, commit and push, but they can't use `gh`, push to master, force-push, delete branches, run their worktree's own `issue.py`, or touch `pret/pokefirered` or the `upstream` remote. In auto mode an allow rule only skips the safety classifier, so every limit is a deny rule. The master rulesets are the backstop. |
 | `automation/bin/issue.py` | A session's only way to reach GitHub; its settings deny plain `gh`. Sessions run the clone's copy (a ticket session by its full path), never their worktree's. It shows only text written by you or the bot, and it changes only the session's own issue (`AUTODEV_ISSUE`, set by the dispatcher). Each role gets only its own commands (`AUTODEV_ROLE`): a grill session may comment, rewrite its parent's body and create tickets; a ticket session may comment and open its PR. No labels, no closing, no merging, no board. |
 | `~/autodev/logs/` | Each session's full stream-json log (`<role>-<issue>-<time>.jsonl`, with stderr in `.err`). The last `result` event holds what the session reported. When the unit ends, systemd writes how it ended into `.exit` (`success`, `exit-code`, or `timeout` at the time limit). The tick deletes logs older than 30 days. |
 | `/tmp/autodev-record.lock` | The machine-wide lock `test/record_test.sh` takes, because a recording films the whole virtual display. Sessions recording at the same time take turns. |
@@ -116,11 +116,11 @@ What they cover:
   - pins down the session unit's command line for a grill and for a ticket: the bot's identity, your Claude login, the working folder, the time limit, the role's permissions, the session's issue and role, and the record of how the unit ended
   - checks what counts as "still running", and how a session's result, end reason and folder are read back
   - checks that each role keeps its deny rules (D25) and has no plain `gh` access
-- **`test_worktrees.py`:** runs real git in a temporary folder. A ticket's worktree is cut from `origin/master` whatever the clone has checked out, its branch tracks nothing (so a bare `git push` can't aim at master), `tools/agbcc` is linked, and asking again leaves an existing worktree alone.
+- **`test_worktrees.py`:** runs real git in a temporary folder. A ticket's worktree is cut from `origin/master` whatever the clone has checked out, its branch tracks nothing (so a bare `git push` can't aim at master), and `tools/agbcc` is linked. Asking again leaves an existing worktree alone but puts back a missing agbcc link, and a branch left by a deleted worktree is checked out again. It also checks branch names.
 - **`test_issue_tool.py`:** checks `bin/issue.py`'s rules:
   - untrusted authors' text is withheld, and comments get the marker
   - a ticket must name its parent, and it is created without labels and linked as a sub-issue
-  - a PR comes only from the ticket's own branch, into master, with `Fixes #<T>` and an @mention of you
+  - a PR comes only from the ticket's own branch, into master, with Fixes #<T> and an @mention of you outside code
   - each role may use only its own commands
 - **`test_github.py`:** checks what the dispatcher accepts as a finished session's work. For a grill: only the bot's comment with the design marker, and only open issues whose `## Parent` names the parent, with their blockers checked. For a ticket: only the bot's open PR from that ticket's branch in this repo. It also covers deleting session files older than 30 days.
 - **Failures:** if one of a tick's actions fails, the tick logs it and skips the rest of that issue's actions, but carries on with the others.

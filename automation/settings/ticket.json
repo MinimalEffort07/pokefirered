@@ -20,12 +20,15 @@
       "WebFetch", "WebSearch",
       "Bash(gh:*)",
       "Bash(curl:*)", "Bash(wget:*)",
-      "Bash(git push* master*)", "Bash(git push*:master*)",
+      "Bash(git push* master*)", "Bash(git push*:master*)", "Bash(git push*/master*)",
+      "Bash(git -C*)", "Bash(git -c*)",
       "Bash(git push*--force*)", "Bash(git push* -f*)", "Bash(git push*+*)",
       "Bash(git push*--delete*)", "Bash(git push* -d*)", "Bash(git push* :*)",
       "Bash(git push*--mirror*)", "Bash(git push*--all*)",
       "Bash(git remote:*)", "Bash(git config:*)",
-      "Bash(*pret/pokefirered*)",
+      "Bash(*pret/pokefirered*)", "Bash(git* upstream*)",
+      "Bash(python3 automation/bin/issue.py*)", "Bash(python3 ./automation/bin/issue.py*)",
+      "Bash(*python3 bin/issue.py*)", "Bash(*.worktrees/*issue.py*)",
       "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)", "Bash(rm -rf $HOME*)"
     ]
   }

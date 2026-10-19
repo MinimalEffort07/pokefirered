@@ -199,6 +199,7 @@ class RolePermissions(unittest.TestCase):
             "Bash(git commit:*)", "Bash(git push:*)",  # no commits or pushes
             "Bash(git checkout:*)", "Bash(git reset:*)", "Bash(git clean:*)",
             "Bash(*pret/pokefirered*)",                # never the upstream repo
+            "Bash(git* upstream*)",                    # or its remote
             "Bash(git remote:*)",
             "WebFetch", "WebSearch",                   # no untrusted web text
         ]:
@@ -213,8 +214,12 @@ class RolePermissions(unittest.TestCase):
             for rule in [
                 "Bash(gh:*)",                   # incl. gh pr merge; use issue.py
                 "Bash(curl:*)", "Bash(wget:*)", "WebFetch", "WebSearch",
-                # master: `git push origin master`, `... HEAD:master`
+                # master: `git push origin master`, `... HEAD:master`,
+                # `... HEAD:refs/heads/master`
                 "Bash(git push* master*)", "Bash(git push*:master*)",
+                "Bash(git push*/master*)",
+                # `git -C . push --force` would slip past every rule above
+                "Bash(git -C*)", "Bash(git -c*)",
                 # force: --force(-with-lease), -f, a "+branch" refspec
                 "Bash(git push*--force*)", "Bash(git push* -f*)",
                 "Bash(git push*+*)",
@@ -224,6 +229,13 @@ class RolePermissions(unittest.TestCase):
                 "Bash(git push*--mirror*)", "Bash(git push*--all*)",
                 "Bash(git remote:*)", "Bash(git config:*)",
                 "Bash(*pret/pokefirered*)",     # never the upstream repo
+                "Bash(git* upstream*)",         # or its remote
+                # The worktree's issue.py is the ticket branch's, which the
+                # session can edit: only the clone's copy guards GitHub.
+                "Bash(python3 automation/bin/issue.py*)",
+                "Bash(python3 ./automation/bin/issue.py*)",
+                "Bash(*python3 bin/issue.py*)",
+                "Bash(*.worktrees/*issue.py*)",
                 # rm -rf only inside its own worktree
                 "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)",
                 "Bash(rm -rf $HOME*)",

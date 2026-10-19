@@ -7,6 +7,7 @@ GH_TOKEN, and gh uses it for every call.
 
 from autodev.board import issue_numbers, section
 from autodev.decide import GrillOutcome, Ticket, TicketOutcome
+from autodev.worktrees import branch_prefix
 
 # The grill session marks its design comment with this hidden tag
 # (CLAUDE.md, "Autonomous mode"), which is how the dispatcher finds it.
@@ -112,7 +113,7 @@ class GitHub:
         """The bot's open PR for ticket `number`, if GitHub shows one. Anyone
         can open a PR from a fork with any branch name, so only a branch in
         this repo, pushed and opened by the bot, counts."""
-        prefix = "issue-%d-" % number
+        prefix = branch_prefix(number)
         for pr in self.gh.rest_list("repos/%s/pulls?state=open" % self.config.repo):
             head = pr["head"]
             if (head["ref"].startswith(prefix)

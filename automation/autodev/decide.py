@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from autodev.sessions import TIME_LIMITS
-from autodev.worktrees import branch_name
+from autodev.worktrees import branch_name, branch_prefix
 
 # Board Status options (the board's own names, set up by setup.sh).
 TODO = "Todo"
@@ -146,7 +146,7 @@ def plan(state):
         # A closed issue is resolved, whatever its card still says.
         if item.number in has_session or not item.is_open:
             continue
-        if item.has_parent and item.status in (TODO, BLOCKED):
+        if is_waiting_ticket(item):
             new = _waiting_ticket(state, item)
         elif item.status == TODO:
             new = _new_parent(state, item)
@@ -187,6 +187,12 @@ def _new_parent(state, item):
     # Launch first: if the Status update then fails, the session record
     # still stops a second launch on the next tick.
     return [Launch("grill", item.number), SetStatus(item.number, GRILLING)]
+
+
+def is_waiting_ticket(item):
+    """A ticket whose card says it hasn't started: its blockers decide
+    what happens next."""
+    return item.has_parent and item.status in (TODO, BLOCKED)
 
 
 def _open_blockers(state, item):
@@ -271,7 +277,7 @@ def _ticket_done(session, outcome):
     """(problem, actions): what a ticket that says it's done leads to."""
     if outcome.pr is None:
         return ("the ticket session said it was done, but GitHub shows no "
-                "open PR from an `issue-%d-*` branch" % session.issue), []
+                "open PR from an `%s*` branch" % branch_prefix(session.issue)), []
     return None, [SetStatus(session.issue, IN_REVIEW)]
 
 

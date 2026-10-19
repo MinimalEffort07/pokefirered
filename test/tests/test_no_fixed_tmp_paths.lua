@@ -32,6 +32,8 @@
 -- THE ONLY FIXED PATHS ALLOWED:
 --   The two hand-made savestate fixtures (see ALLOWED). The tests only read
 --   them; the test/tools/ scripts that make them are run by hand, once.
+--   And record_test.sh's lock file, which is shared on purpose: it is how
+--   recordings from any worktree know about each other and take turns.
 --   Three more /tmp names are allowed because no file in them is used under
 --   the same name by two runs: mktemp templates, record_test.sh's video
 --   folder (each video gets a timestamped name), and fw.out_path's fallback
@@ -62,6 +64,10 @@ local ALLOWED = {
       why = "tall-grass fixture read by test_shiny_chaining and "
          .. "test/demos/demo_shiny_chaining; made by hand with "
          .. "test/tools/warp_to_route1_grass.lua or explore_route1.lua" },
+    -- Fixed on purpose: one lock for the whole machine.
+    { path = "/tmp/autodev-record.lock", file = "test/record_test.sh",
+      why = "machine-wide flock so recordings from any worktree take turns; "
+         .. "nothing is ever written to it" },
 
     -- Not fixed for a run (mktemp templates are allowed by a rule in
     -- is_allowed, since their names differ from script to script).

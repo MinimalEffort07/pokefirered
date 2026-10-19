@@ -6,6 +6,7 @@ starts from, whether it tracks anything, and what a second call does.
 """
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -73,6 +74,25 @@ class Worktree(unittest.TestCase):
         self.assertEqual(worktrees.make(self.clone, 68, "issue-68-note"), path)
         self.assertTrue(os.path.exists(os.path.join(path, "work-in-progress")))
 
+    def test_a_missing_agbcc_link_is_put_back(self):
+        # The worktree was made but linking agbcc failed on that tick.
+        path = worktrees.make(self.clone, 68, "issue-68-note")
+        os.remove(os.path.join(path, "tools", "agbcc"))
+        worktrees.make(self.clone, 68, "issue-68-note")
+        self.assertEqual(os.readlink(os.path.join(path, "tools", "agbcc")),
+                         self.agbcc)
+
+    def test_a_branch_left_by_a_deleted_worktree_is_checked_out_again(self):
+        # Its folder was deleted (by hand, or when the ticket closed) and the
+        # ticket is back in Todo. The branch still holds the earlier work.
+        path = worktrees.make(self.clone, 68, "issue-68-note")
+        git("commit", "-q", "--allow-empty", "-m", "earlier work", cwd=path)
+        work = git("rev-parse", "HEAD", cwd=path)
+        shutil.rmtree(path)
+        path = worktrees.make(self.clone, 68, "issue-68-note")
+        self.assertEqual(git("branch", "--show-current", cwd=path), "issue-68-note")
+        self.assertEqual(git("rev-parse", "HEAD", cwd=path), work)
+
 
 class BranchNames(unittest.TestCase):
     def test_the_number_and_the_first_five_words_of_the_title(self):
@@ -80,7 +100,12 @@ class BranchNames(unittest.TestCase):
             ("Note the grill path's live check at the end of automation/README.md",
              "issue-68-note-the-grill-paths-live"),
             ("PC Anywhere", "issue-68-pc-anywhere"),
-            ("!!!", "issue-68"),
+            ("Supercalifragilisticexpialidocious extraordinarily long words",
+             "issue-68-supercalifragilisticexpialidocious"),
+            # Every branch must start "issue-68-": open-pr and the
+            # dispatcher's PR check both look for that prefix.
+            ("!!!", "issue-68-ticket"),
+            ("Ünïcødé", "issue-68-n-c-d"),
         ]:
             with self.subTest(title=title):
                 self.assertEqual(worktrees.branch_name(68, title), expected)

@@ -18,6 +18,7 @@ import re
 
 from autodev.board import issue_numbers, section
 from autodev.decide import MARKER
+from autodev.worktrees import branch_prefix
 
 
 class Refused(Exception):
@@ -94,14 +95,17 @@ def create_ticket(gh, config, parent, title, body):
 def open_pr(gh, config, ticket, title, head, body):
     """Open the PR for `ticket` from its own branch into master. Returns
     GitHub's record of the new PR."""
-    if not head.startswith("issue-%d-" % ticket):
-        raise Refused("a PR for #%d must come from its own issue-%d-* branch, "
-                      "not %s" % (ticket, ticket, head))
+    if not head.startswith(branch_prefix(ticket)):
+        raise Refused("a PR for #%d must come from its own %s* branch, not %s"
+                      % (ticket, branch_prefix(ticket), head))
     # "Fixes #T" closes the ticket when the PR merges (#57). The @mention
     # is how the owner hears that the PR is ready (#48, "Notifications").
-    if not re.search(r"\bFixes #%d\b" % ticket, body):
-        raise Refused("the PR body must say \"Fixes #%d\"" % ticket)
-    if not re.search(r"@%s(?![\w-])" % re.escape(config.owner), body):
-        raise Refused("the PR body must @mention @%s" % config.owner)
+    # GitHub ignores both inside code, so fenced blocks and `spans` don't
+    # count.
+    prose = re.sub(r"```.*?```|`[^`]*`", "", body, flags=re.DOTALL)
+    if not re.search(r"\bFixes #%d\b" % ticket, prose):
+        raise Refused("the PR body must say \"Fixes #%d\" (not in code)" % ticket)
+    if not re.search(r"@%s(?![\w-])" % re.escape(config.owner), prose):
+        raise Refused("the PR body must @mention @%s (not in code)" % config.owner)
     return gh.rest("POST", "repos/%s/pulls" % config.repo, title=title,
                    head=head, base="master", body=body)
