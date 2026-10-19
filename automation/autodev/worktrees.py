@@ -85,8 +85,9 @@ def make(clone, number, branch):
         else:
             git("fetch", "--quiet", "origin")
             if has("refs/remotes/origin/" + branch):
-                # Only GitHub has it (a merge session for a ticket whose
-                # worktree is gone): check out the ticket's work from there.
+                # Only GitHub has it (a merge or fix-up session for a ticket
+                # whose worktree is gone): check out the ticket's work from
+                # there.
                 git("worktree", "add", "--quiet", "--track", "-b", branch,
                     where, "origin/" + branch)
             else:

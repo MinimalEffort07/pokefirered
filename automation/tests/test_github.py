@@ -16,7 +16,7 @@ from autodev.decide import FixupOutcome, MergeOutcome, PrComment
 from autodev.github import GitHub
 from autodev.registry import Registry
 from autodev.sessions import SessionConfig
-from tests.test_issue_tool import FakeRest, comment, issue
+from tests.test_issue_tool import FakeRest, comment, issue, timeline
 
 CONFIG = Config(owner="MinimalEffort07", repo="MinimalEffort07/pokefirered",
                 board_title="pokefirered autodev", bot="MinimalEffort07-Autodev")
@@ -110,9 +110,9 @@ def remark(id, author, body, at, when="created_at", **more):
 
 
 def inline(id, author, body, at, path="automation/README.md", line=12,
-           original_line=12):
+           original_line=12, **more):
     return remark(id, author, body, at, path=path, line=line,
-                  original_line=original_line)
+                  original_line=original_line, **more)
 
 
 class TicketPRTimeline(unittest.TestCase):
@@ -147,6 +147,19 @@ class TicketPRTimeline(unittest.TestCase):
             PrComment(1, "MinimalEffort07", "/merge", "2026-10-19T06:05:00Z"),
         ))
 
+    def test_an_inline_comment_counts_from_when_its_review_was_submitted(self):
+        # Until then only the owner could see it, and it keeps the time it
+        # was drafted: it would sort before a comment a reply has handled
+        # since, and never be acted on.
+        gets = {PULLS: [pr(73, "issue-68-note")], **timeline(
+            reviews=[remark(7, "MinimalEffort07", "", "2026-10-19T06:30:00Z",
+                            when="submitted_at")],
+            inline_comments=[inline(5, "MinimalEffort07", "Typo",
+                                    "2026-10-19T06:01:00Z",
+                                    pull_request_review_id=7)])}
+        found = GitHub(FakeRest(gets), CONFIG, BOARD).ticket_pr(68)
+        self.assertEqual([c.at for c in found.comments], ["2026-10-19T06:30:00Z"])
+
     def test_a_ticket_with_no_pr_of_the_bots_has_none(self):
         github = GitHub(FakeRest({PULLS: [pr(93, "issue-680-other")]}), CONFIG, BOARD)
         self.assertIsNone(github.ticket_pr(68))
@@ -155,20 +168,16 @@ class TicketPRTimeline(unittest.TestCase):
 MERGE = remark(501, "MinimalEffort07", "/merge", "2026-10-19T06:10:00Z")
 
 
-def pr_said(comments=(), reviews=(), inline_comments=()):
-    """The three lists GitHub keeps for what was said on PR #73."""
-    return {ISSUES + "/73/comments": list(comments),
-            PR73 + "/reviews": list(reviews),
-            PR73 + "/comments": list(inline_comments)}
-
-
 class MergeOutcomes(unittest.TestCase):
     """D21 and the conflict path: what a finished merge session left."""
 
-    def outcome(self, merged, comments, **said):
+    def outcome(self, merged, comments, merge=MERGE, **said):
         gets = {PR73: {"number": 73, "merged": merged},
-                **pr_said([MERGE] + comments, **said)}
+                **timeline(([merge] if merge else []) + comments, **said)}
         return GitHub(FakeRest(gets), CONFIG, BOARD).merge_outcome(73, 501)
+
+    def test_a_deleted_merge_no_longer_stands(self):
+        self.assertTrue(self.outcome(False, [], merge=None).superseded)
 
     def test_merged_is_read_from_the_pr(self):
         self.assertEqual(self.outcome(True, []), MergeOutcome(merged=True, replied=False))
@@ -210,7 +219,7 @@ class FixupOutcomes(unittest.TestCase):
     """D15 for fix-ups: the reply naming the comment it was started for."""
 
     def outcome(self, comments):
-        gets = pr_said(comments)
+        gets = timeline(comments)
         return GitHub(FakeRest(gets), CONFIG, BOARD).fixup_outcome(73, 9001)
 
     def test_only_the_bots_reply_naming_that_comment_counts(self):

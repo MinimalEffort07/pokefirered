@@ -250,6 +250,15 @@ class MergingPRs(unittest.TestCase):
         self.assertIn("inline comment 12", str(refused.exception))
         self.assertEqual(gh.writes, [])
 
+    def test_it_refuses_once_the_merge_has_been_deleted(self):
+        # The owner took their approval back.
+        gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0},
+                       **timeline([])})
+        with self.assertRaises(issue_tool.Refused) as refused:
+            issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
+        self.assertIn("deleted", str(refused.exception))
+        self.assertEqual(gh.writes, [])
+
     def test_only_the_tickets_own_pr_can_be_merged_or_answered(self):
         # AUTODEV_PR comes from the session's environment, which a command
         # could override, so the PR itself is checked.

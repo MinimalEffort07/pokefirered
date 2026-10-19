@@ -77,7 +77,7 @@ class MergeOutcome:
     """What GitHub shows for a ticket's PR after its merge session ended."""
     merged: bool
     replied: bool   # the bot's reply naming the /merge it handled is there
-    # The owner said more after that /merge, which cancels it (D14), so
+    # The owner withdrew that /merge (merge_cancelled says how), so
     # issue.py's merge-pr refused to merge.
     superseded: bool = False
 
@@ -224,7 +224,7 @@ def plan(state):
     so one broken issue can't stall the whole board."""
     groups = []
     for session in state.sessions:
-        if not session.running and session.role in _DONE_CHECKS:
+        if not session.running and session.role in DONE_CHECKS:
             groups.append(_keep_paused(state, session.issue,
                                        _finished(state, session)))
     free = state.max_sessions - sum(1 for s in state.sessions if s.running)
@@ -369,14 +369,24 @@ def _newest_unhandled(state, pr):
     return left[-1] if left else None
 
 
-def feedback_since(owner, comments, merge_id):
-    """The owner's comments on a PR after their /merge `merge_id` that
-    aren't another /merge: feedback, which cancels that /merge (D14)."""
+def is_merge(comment):
+    """Whether a comment is the owner's approval: exactly "/merge"."""
+    return comment.body.strip() == "/merge"
+
+
+def merge_cancelled(owner, comments, merge_id):
+    """Why the owner's /merge `merge_id` on a PR no longer stands, or None:
+    they deleted it, or they have said more since that isn't another
+    /merge, which cancels it (D14)."""
     merge = next((c for c in comments if c.id == merge_id), None)
     if merge is None:
-        return []
-    return [c for c in comments if c.author == owner and c.at > merge.at
-            and c.body.strip() != "/merge"]
+        return "the /merge (comment %d) was deleted" % merge_id
+    later = [c for c in comments
+             if c.author == owner and c.at > merge.at and not is_merge(c)]
+    if later:
+        return "@%s has said more since the /merge (%s)" % (
+            owner, ", ".join("%s %d" % (c.kind, c.id) for c in later))
+    return None
 
 
 def _parent_in_progress(state, item):
@@ -420,7 +430,7 @@ def _in_review(state, item):
     newest = _newest_unhandled(state, pr)
     if newest is None:
         return []
-    role = "merge" if newest.body.strip() == "/merge" else "fixup"
+    role = "merge" if is_merge(newest) else "fixup"
     return [MakeWorktree(item.number, pr.head),
             Launch(role, item.number, pr=pr.number, handled_through=newest.id),
             SetStatus(item.number, IN_PROGRESS)]
@@ -446,9 +456,9 @@ def _finished(state, session):
         # time before it could say so.
         return _merged(state, issue) + [Finish(session.role, issue)]
     if session.role == "merge" and outcome.superseded:
-        # The owner said more after their /merge, which cancels it (D14), so
-        # merge-pr refused. Whatever the session then reported, the card goes
-        # back to review, where a fix-up picks the new comments up.
+        # The owner withdrew their /merge, usually by saying more after it
+        # (D14), so merge-pr refused. Whatever the session then reported, the
+        # card goes back to review, where a fix-up picks new comments up.
         return _limit_pause(session) + [SetStatus(issue, IN_REVIEW),
                                         Finish(session.role, issue)]
     result = session.result
@@ -456,7 +466,7 @@ def _finished(state, session):
         # It reported nothing, but its work may be on GitHub anyway: the
         # ticket session opened its PR, or the merge or fix-up session
         # posted its reply, before it crashed or ran out of usage.
-        problem, actions = _DONE_CHECKS[session.role](state, session, outcome)
+        problem, actions = DONE_CHECKS[session.role](state, session, outcome)
         if problem is None:
             return _limit_pause(session) + actions + [Finish(session.role, issue)]
     if result is None and session.limit_reset is not None:
@@ -470,7 +480,7 @@ def _finished(state, session):
                                      result.get("reason", ""))
     else:
         # A session's own "done" is only believed once GitHub shows the work.
-        problem, actions = _DONE_CHECKS[session.role](state, session, outcome)
+        problem, actions = DONE_CHECKS[session.role](state, session, outcome)
         if problem is None:
             return actions + [Finish(session.role, issue)]
     return [SetStatus(issue, NEEDS_HUMAN),
@@ -611,7 +621,7 @@ def _fixup_done(state, session, outcome):
 
 
 # How each role's "done" is checked against what GitHub shows.
-_DONE_CHECKS = {"grill": _grill_done, "ticket": _ticket_done,
+DONE_CHECKS = {"grill": _grill_done, "ticket": _ticket_done,
                 "merge": _merge_done, "fixup": _fixup_done}
 
 

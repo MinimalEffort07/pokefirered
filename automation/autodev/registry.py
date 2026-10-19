@@ -5,7 +5,7 @@ small JSON files (one per session) in the state directory. A session's
 systemd unit says whether it is still running; once it has ended, its log
 holds its result. `finish()` moves the record into done/ so the session
 is handled exactly once; a crashed one is marked there, because a second
-crash parks the work (D20). A usage-limit pause (D18) is kept in the file
+crash in a row parks the work (D20). A usage-limit pause (D18) is kept in the file
 `paused-until`, so it lasts across ticks and reboots.
 """
 
@@ -110,31 +110,47 @@ class Registry:
             role, issue, _stamp(), record["session_id"][:8])))
 
     def _done_records(self):
-        """Every finished session's record, oldest first."""
+        """(path, record) for every finished session, oldest first. A file
+        that isn't a record autodev wrote is skipped."""
         done = os.path.join(self.config.state_dir, "done")
         if not os.path.isdir(done):
             return []
         records = []
         for name in os.listdir(done):
-            with open(os.path.join(done, name)) as f:
-                records.append(json.load(f))
+            path = os.path.join(done, name)
+            try:
+                with open(path) as f:
+                    records.append((path, json.load(f)))
+            except ValueError:
+                continue
         # Records from before #58 have no "finished" time; they go first.
-        return sorted(records, key=lambda r: r.get("finished", 0))
+        return sorted(records, key=lambda r: r[1].get("finished", 0))
+
+    def _crash_streaks(self):
+        """{(role, issue): the records of its crashes in a row lately}. A run
+        that ends any other way (done or parked) starts the count again: a PR
+        gets a fresh fix-up or merge session for each comment, and one
+        crashing long after another isn't the same work crashing twice. A
+        usage-limit re-queue neither counts nor resets it."""
+        streaks = {}
+        for path, record in self._done_records():
+            key = (record["role"], record["issue"])
+            if record.get("crashed"):
+                streaks.setdefault(key, []).append(path)
+            elif not record.get("requeued"):
+                streaks.pop(key, None)
+        return streaks
 
     def crashes(self):
-        """How many finished sessions of each (role, issue) crashed."""
-        counts = {}
-        for record in self._done_records():
-            if record.get("crashed"):
-                key = (record["role"], record["issue"])
-                counts[key] = counts.get(key, 0) + 1
-        return counts
+        """How many sessions of each (role, issue) crashed in a row lately
+        (a second parks the work, D20)."""
+        return {key: len(paths) for key, paths in self._crash_streaks().items()}
 
     def requeued(self):
         """The (role, issue) pairs whose last session's work was re-queued
         and hasn't run again since."""
         last = {}
-        for record in self._done_records():
+        for _, record in self._done_records():
             last[(record["role"], record["issue"])] = record.get("requeued", False)
         return {key for key, requeued in last.items() if requeued}
 
@@ -161,6 +177,9 @@ class Registry:
         """Delete session logs and handled records older than `days`
         (#48 keeps logs for 30 days). Returns how many files went."""
         cutoff = (now if now is not None else time.time()) - days * 24 * 3600
+        # A crash still counts however old it is, until a later run of that
+        # role and issue finishes (D20).
+        counting = {p for paths in self._crash_streaks().values() for p in paths}
         removed = 0
         for folder in (self.config.log_dir, os.path.join(self.config.state_dir, "done")):
             if not os.path.isdir(folder):
@@ -168,22 +187,10 @@ class Registry:
             for name in os.listdir(folder):
                 path = os.path.join(folder, name)
                 if (os.path.isfile(path) and os.path.getmtime(path) < cutoff
-                        and not _crashed(path)):
+                        and path not in counting):
                     os.remove(path)
                     removed += 1
         return removed
-
-
-def _crashed(path):
-    """A done/ record of a crashed session: kept for good, because crashes
-    count for all time (D20)."""
-    if not path.endswith(".json") or os.path.basename(os.path.dirname(path)) != "done":
-        return False
-    try:
-        with open(path) as f:
-            return bool(json.load(f).get("crashed"))
-    except ValueError:
-        return False        # not a record autodev wrote
 
 
 def _ended_at(log, now):

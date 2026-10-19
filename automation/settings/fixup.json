@@ -31,7 +31,7 @@
       "Bash(python3 automation/bin/issue.py*)", "Bash(python3 ./automation/bin/issue.py*)",
       "Bash(*python3 bin/issue.py*)", "Bash(*-worktrees/*issue.py*)",
       "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)", "Bash(rm -rf $HOME*)",
-      "Bash(git rebase:*)"
+      "Bash(git rebase:*)", "Bash(git merge *master*)", "Bash(git pull *master*)"
     ]
   }
 }

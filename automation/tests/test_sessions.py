@@ -12,7 +12,7 @@ import tempfile
 import time
 import unittest
 
-from autodev import dispatcher, registry, sessions
+from autodev import decide, dispatcher, issue_tool, registry, sessions
 from autodev.decide import Session
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -162,6 +162,10 @@ class LaunchCommand(unittest.TestCase):
                     self.assertTrue(os.path.isfile(os.path.join(AUTOMATION, *path)))
             with self.subTest(role=role):
                 self.assertIn(role, dispatcher.OUTCOMES)
+        # Each table keyed by role: a role missing from one is half wired.
+        for table in (decide.RANKS, decide.REQUEUE, decide.DONE_CHECKS,
+                      dispatcher.OUTCOMES, issue_tool.COMMANDS):
+            self.assertEqual(set(table), set(sessions.TIME_LIMITS))
 
     def test_the_result_schema_asks_for_an_outcome_and_a_reason(self):
         schema = json.loads(sessions.RESULT_SCHEMA)
@@ -257,12 +261,21 @@ class Remembering(unittest.TestCase):
             stdout = "inactive\n"
         self.registry = registry.Registry(self.config, run=lambda *a, **k: Ended())
 
-    def test_crashes_are_counted_per_role_and_issue(self):
-        for role, crashed in (("ticket", True), ("ticket", False), ("merge", True),
-                              ("ticket", True)):
+    def finished(self, *runs):
+        for role, how in runs:
             self.registry.start(role, 68, "PROMPT")
-            self.registry.finish(role, 68, crashed=crashed)
-        self.assertEqual(self.registry.crashes(), {("ticket", 68): 2, ("merge", 68): 1})
+            self.registry.finish(role, 68, crashed=how == "crashed",
+                                 requeued=how in ("crashed", "limit"))
+
+    def test_crashes_in_a_row_are_counted_per_role_and_issue(self):
+        # D20 parks the work on its second crash in a row. A PR gets a fresh
+        # fix-up for each piece of feedback, so a run that ends any other
+        # way starts the count again; a usage-limit re-queue doesn't.
+        self.finished(("fixup", "crashed"), ("fixup", "done"), ("merge", "crashed"),
+                      ("fixup", "crashed"), ("fixup", "limit"), ("fixup", "crashed"))
+        self.assertEqual(self.registry.crashes(), {("fixup", 68): 2, ("merge", 68): 1})
+        self.finished(("fixup", "done"))
+        self.assertEqual(self.registry.crashes(), {("merge", 68): 1})
 
     def test_a_pause_is_kept_on_disk_and_only_ever_lengthened(self):
         self.assertEqual(self.registry.paused_until(), 0.0)
@@ -279,17 +292,24 @@ class Remembering(unittest.TestCase):
         self.registry.finish("grill", 67)
         self.assertEqual(self.registry.requeued(), set())
 
-    def test_crash_records_outlive_the_30_day_clean_up(self):
-        # Crashes count for all time (D20).
-        for crashed in (True, False):
-            self.registry.start("ticket", 68, "PROMPT")
-            self.registry.finish("ticket", 68, crashed=crashed)
+    def test_a_crash_outlives_the_30_day_clean_up_while_it_still_counts(self):
+        # However long ago it was, a crash counts until a later run of that
+        # role and issue finishes.
         done = os.path.join(self.config.state_dir, "done")
-        for name in os.listdir(done):
-            os.utime(os.path.join(done, name), (0, 0))
-        self.registry.prune()
+
+        def age_and_prune():
+            for name in os.listdir(done):
+                os.utime(os.path.join(done, name), (0, 0))
+            self.registry.prune()
+
+        self.finished(("ticket", "crashed"))
+        age_and_prune()
         self.assertEqual(self.registry.crashes(), {("ticket", 68): 1})
         self.assertEqual(len(os.listdir(done)), 1)
+        self.finished(("ticket", "done"))
+        age_and_prune()
+        self.assertEqual(self.registry.crashes(), {})
+        self.assertEqual(os.listdir(done), [])
 
     def test_an_unreadable_pause_file_is_no_pause(self):
         os.makedirs(self.config.state_dir)
@@ -537,8 +557,12 @@ class RolePermissions(unittest.TestCase):
         # The owner may have pushed to the branch since the ticket session.
         fixup = self.rules("fixup")
         self.assertLessEqual(set(self.rules("ticket")["deny"]), set(fixup["deny"]))
-        self.assertIn("Bash(git rebase:*)", fixup["deny"])
         self.assertIn("Bash(git pull --ff-only:*)", fixup["allow"])
+        # Merging master in is the merge session's job.
+        for rule in ("Bash(git rebase:*)", "Bash(git merge *master*)",
+                     "Bash(git pull *master*)"):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, fixup["deny"])
 
     def test_ticket_and_fixup_roles_reach_github_only_through_issue_py(self):
         # They run the clone's copy by its full path (prompts/ticket.md):

@@ -19,7 +19,7 @@ trust") in code, not just in instructions:
 import re
 
 from autodev.board import issue_numbers, section
-from autodev.decide import MARKER, feedback_since, handled_marker, unhandled
+from autodev.decide import MARKER, handled_marker, merge_cancelled, unhandled
 from autodev.github import pr_timeline
 from autodev.worktrees import branch_prefix
 
@@ -188,15 +188,13 @@ def merge_pr(gh, config, ticket, pr, head, handled_through):
     pinned to `head`, the commit the session built and tested, on the
     owner's /merge `handled_through`."""
     _check_own_pr(gh, config, ticket, pr)
-    # Feedback after the /merge cancels it (D14), even one posted while
-    # this session was already running.
-    later = feedback_since(config.owner, pr_timeline(gh, config.repo, pr),
-                           handled_through)
-    if later:
-        raise Refused("@%s has said more on the PR since the /merge you answer "
-                      "(%s), which cancels it: don't merge. Report \"failed\"; "
-                      "autodev starts a fix-up for it" % (config.owner, ", ".join(
-                          "%s %d" % (c.kind, c.id) for c in later)))
+    # Feedback after the /merge cancels it (D14), even feedback posted while
+    # this session was already running; so does deleting the /merge.
+    cancelled = merge_cancelled(config.owner, pr_timeline(gh, config.repo, pr),
+                                handled_through)
+    if cancelled:
+        raise Refused("%s, which cancels it: don't merge. Report \"failed\"; "
+                      "autodev sends the PR back to review" % cancelled)
     # The merge commit's tree is `head`'s only if the branch already holds
     # all of master. If master has moved on, GitHub would mix in commits
     # nobody tested.

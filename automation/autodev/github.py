@@ -8,7 +8,7 @@ GH_TOKEN, and gh uses it for every call.
 from autodev.board import issue_numbers, section
 from autodev.decide import (HANDLED_THROUGH, FixupOutcome, GrillOutcome,
                             MergeOutcome, PrComment, PullRequest, Ticket,
-                            TicketOutcome, feedback_since)
+                            TicketOutcome, merge_cancelled)
 from autodev.worktrees import branch_prefix
 
 # The grill session marks its design comment with this hidden tag
@@ -151,13 +151,14 @@ class GitHub:
     def merge_outcome(self, pr, handled_through):
         """Whether the PR is merged, whether the bot replied on it naming
         the /merge comment the merge session answered, and whether the
-        owner said more after that /merge."""
+        owner has withdrawn that /merge since."""
         repo = self.config.repo
         merged = self.gh.rest("GET", "repos/%s/pulls/%d" % (repo, pr))["merged"]
         said = pr_timeline(self.gh, repo, pr)
         return MergeOutcome(
             merged=merged, replied=self._replied(said, handled_through),
-            superseded=bool(feedback_since(self.config.owner, said, handled_through)))
+            superseded=merge_cancelled(self.config.owner, said,
+                                       handled_through) is not None)
 
     def fixup_outcome(self, pr, handled_through):
         """Whether the bot replied on the PR naming the comment the fix-up
@@ -176,17 +177,22 @@ def pr_timeline(gh, repo, pr):
     three apart, and a review is dated by when it was submitted."""
     said = [PrComment(c["id"], c["user"]["login"], c["body"] or "", c["created_at"])
             for c in gh.rest_list("repos/%s/issues/%d/comments" % (repo, pr))]
-    # An inline comment on a line a later push changed has no `line` any
-    # more; `original_line` is where it was made.
-    said += [PrComment(c["id"], c["user"]["login"], c["body"] or "", c["created_at"],
+    reviews = gh.rest_list("repos/%s/pulls/%d/reviews" % (repo, pr))
+    submitted = {r["id"]: r["submitted_at"] or "" for r in reviews}
+    # An inline comment made in a review keeps the time it was drafted, but
+    # nobody else saw it until the review was submitted, so that's when it
+    # was said. One on a line a later push changed has no `line` any more;
+    # `original_line` is where it was made.
+    said += [PrComment(c["id"], c["user"]["login"], c["body"] or "",
+                       max(c["created_at"],
+                           submitted.get(c.get("pull_request_review_id"), "")),
                        kind="inline comment", where="%s line %s" % (
                            c["path"], c.get("line") or c.get("original_line")))
              for c in gh.rest_list("repos/%s/pulls/%d/comments" % (repo, pr))]
     # An approval with nothing written says nothing to act on.
     said += [PrComment(r["id"], r["user"]["login"], r["body"], r["submitted_at"],
                        kind="review")
-             for r in gh.rest_list("repos/%s/pulls/%d/reviews" % (repo, pr))
-             if r["body"]]
+             for r in reviews if r["body"]]
     return tuple(sorted(said, key=lambda c: c.at))
 
 
