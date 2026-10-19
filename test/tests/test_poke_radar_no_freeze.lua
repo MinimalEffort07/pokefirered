@@ -100,6 +100,10 @@ local function start(name)
         name .. ": the player has control after the warp")
     fw.assert_true(follower.clear_roamers(), name .. ": no roaming Pokemon nearby")
     local x, y = mm.player_tile()
+    -- In the mGBA window (test/record_test.sh), play the rest of the
+    -- scenario in real time so a recording shows it; scenario() speeds up
+    -- again. Headless, this does nothing.
+    fw.slow_down(name)
     return fw.assert_true(x == GRASS_X and y == GRASS_Y
             and follower.map_snapshot().behavior(x, y) == pr.MB_TALL_GRASS,
         string.format("%s: the player stands in tall grass at (%d,%d)", name, x or -1, y or -1))
@@ -109,6 +113,7 @@ end
 local function scenario(name, fn)
     local pass0, fail0 = results.pass, results.fail
     fn(name)
+    fw.speed_up()
     fw.log(string.format("[%s] %d passed, %d failed", name,
         results.pass - pass0, results.fail - fail0))
 end
