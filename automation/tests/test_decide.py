@@ -263,7 +263,7 @@ class FinishedGrills(unittest.TestCase):
 
 def finished_ticket(result, ended_by="success"):
     return Session("ticket", 68, "sid-68", running=False, result=result,
-                   ended_by=ended_by, cwd="/clone/.worktrees/issue-68")
+                   ended_by=ended_by, cwd="/clone-worktrees/issue-68")
 
 
 class FinishedTickets(unittest.TestCase):
@@ -279,7 +279,7 @@ class FinishedTickets(unittest.TestCase):
         return [SetStatus(68, "Needs human"), Comment(68, (
             "@MinimalEffort07 autodev parked this issue: %s\n\n"
             "To pick up where the ticket session stopped: "
-            "`cd /clone/.worktrees/issue-68 && claude --resume sid-68`"
+            "`cd /clone-worktrees/issue-68 && claude --resume sid-68`"
             "\n\n<!-- autodev -->") % reason), Finish("ticket", 68)]
 
     def test_D15_a_done_ticket_whose_pr_github_shows_goes_to_in_review(self):

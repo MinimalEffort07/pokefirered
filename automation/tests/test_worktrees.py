@@ -44,7 +44,10 @@ class Worktree(unittest.TestCase):
 
     def test_a_ticket_gets_its_branch_from_master_with_agbcc_linked(self):
         path = worktrees.make(self.clone, 68, "issue-68-note")
-        self.assertEqual(path, os.path.join(self.clone, ".worktrees", "issue-68"))
+        # Beside the clone, not inside it: Claude reads every CLAUDE.md in
+        # the folders above its working folder, so a worktree inside the
+        # clone would load the clone's CLAUDE.md as well as its own.
+        self.assertEqual(path, self.clone + "-worktrees/issue-68")
         self.assertEqual(git("branch", "--show-current", cwd=path), "issue-68-note")
         self.assertEqual(git("rev-parse", "HEAD", cwd=path), self.master)
         self.assertEqual(os.readlink(os.path.join(path, "tools", "agbcc")),

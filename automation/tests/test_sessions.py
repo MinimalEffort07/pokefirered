@@ -83,7 +83,7 @@ class LaunchCommand(unittest.TestCase):
             "-p", "EnvironmentFile=/home/min/.config/autodev/env",
             # The ticket's own worktree, made by the dispatcher just before.
             "-p", "WorkingDirectory=/home/min/projects/minimaleffort/pokefirered-autodev"
-                  "/.worktrees/issue-68",
+                  "-worktrees/issue-68",
             "-p", "StandardOutput=append:/home/min/autodev/logs/ticket-68.jsonl",
             "-p", "StandardError=append:/home/min/autodev/logs/ticket-68.err",
             "-p", "ExecStopPost=:/bin/sh -c 'echo \"$SERVICE_RESULT\" > "
@@ -156,7 +156,7 @@ class EndedSessions(unittest.TestCase):
             found = registry.Registry(config, run=lambda *a, **k: Ended()).load()
             self.assertEqual(found, [Session(
                 "ticket", 68, "sid-68", running=False, result=None,
-                ended_by="timeout", cwd="/clone/.worktrees/issue-68")])
+                ended_by="timeout", cwd="/clone-worktrees/issue-68")])
 
 
 class ReadingResults(unittest.TestCase):
@@ -235,7 +235,7 @@ class RolePermissions(unittest.TestCase):
                 "Bash(python3 automation/bin/issue.py*)",
                 "Bash(python3 ./automation/bin/issue.py*)",
                 "Bash(*python3 bin/issue.py*)",
-                "Bash(*.worktrees/*issue.py*)",
+                "Bash(*-worktrees/*issue.py*)",
                 # rm -rf only inside its own worktree
                 "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)",
                 "Bash(rm -rf $HOME*)",

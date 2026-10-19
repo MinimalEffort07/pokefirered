@@ -1,10 +1,16 @@
 """Each ticket's own git worktree in autodev's clone.
 
 A worktree is a second working folder of the same repository, checked out
-on its own branch. Every ticket gets one at .worktrees/issue-<T> on branch
-issue-<T>-<slug> (CLAUDE.md step 6), so ticket sessions running at the
-same time never share a working tree. Its fix-up and merge sessions reuse
-it later.
+on its own branch. Every ticket gets one at <clone>-worktrees/issue-<T>
+on branch issue-<T>-<slug> (CLAUDE.md step 6), so ticket sessions running
+at the same time never share a working tree. Its fix-up and merge
+sessions reuse it later.
+
+The worktrees sit beside the clone, not inside it. Claude reads every
+CLAUDE.md in the folders above its working folder, so a session in a
+worktree inside the clone would load the clone's CLAUDE.md as well as the
+worktree's own, and the two differ whenever the ticket edits CLAUDE.md or
+master moves on.
 """
 
 import os
@@ -36,7 +42,8 @@ def branch_name(number, title):
 
 
 def path(clone, number):
-    return os.path.join(clone, ".worktrees", "issue-%d" % number)
+    """e.g. ~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-68"""
+    return os.path.join(clone + "-worktrees", "issue-%d" % number)
 
 
 def make(clone, number, branch):

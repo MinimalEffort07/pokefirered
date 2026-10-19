@@ -28,7 +28,7 @@
       "Bash(git remote:*)", "Bash(git config:*)",
       "Bash(*pret/pokefirered*)", "Bash(git* upstream*)",
       "Bash(python3 automation/bin/issue.py*)", "Bash(python3 ./automation/bin/issue.py*)",
-      "Bash(*python3 bin/issue.py*)", "Bash(*.worktrees/*issue.py*)",
+      "Bash(*python3 bin/issue.py*)", "Bash(*-worktrees/*issue.py*)",
       "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)", "Bash(rm -rf $HOME*)"
     ]
   }
