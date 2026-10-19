@@ -453,37 +453,11 @@ end
 -- below it (12,25) and to its right (13,24) are walkable tall grass.
 local ROUTE1_GRASS_X, ROUTE1_GRASS_Y = 12, 24
 local MTB_TALL_GRASS = 0x02          -- MB_TALL_GRASS
-local FLDEFF_UNUSED_GRASS = 19       -- the radar's shaking-grass field effect
-local SPRITE_OFF_DATA0 = 0x2E        -- struct Sprite: s16 data[8] starts here
 
 -- Where the game's main loop is (gMain.callback2): the bag menu runs
 -- CB2_BagMenuRun and the overworld CB2_Overworld.
 local function main_callback_is(name)
     return sym.is_func(fw.read32(sym.addr("gMain") + 4), name)
-end
-
--- Is sprite `id` a live shaking-grass patch? The radar keeps each patch's
--- sprite id in its struct, but an id alone proves nothing: before the radar
--- runs those slots hold 0 (a live sprite, usually the player's) or whatever
--- Test B wrote. FldEff_UnusedGrass marks its sprites by storing the field
--- effect number in data[0], so check the sprite is in use and marked so.
-local function is_live_grass_patch(id)
-    if id >= ADDR.MAX_SPRITES then return false end
-    local sprite = sym.addr("gSprites") + id * ADDR.SPRITE_STRUCT_SIZE
-    local in_use = (fw.read8(sprite + ADDR.SPRITE_OFF_FLAGS_3E) & 1) ~= 0
-    return in_use and fw.read16(sprite + SPRITE_OFF_DATA0) == FLDEFF_UNUSED_GRASS
-end
-
--- Is (x, y) one of the four patch tiles? The radar stores them in the same
--- coordinates as the player's ObjectEvent (PlayerGetDestCoords), so they
--- compare directly with snapshot_player_tile().
-local function is_patch_tile(x, y)
-    for i = 0, pr.PATCH_COUNT - 1 do
-        if pr.get_patch_x(i) == x and pr.get_patch_y(i) == y then
-            return true
-        end
-    end
-    return false
 end
 
 local function test_use_from_bag_in_grass()
@@ -535,7 +509,7 @@ local function test_use_from_bag_in_grass()
         "recharge started (stepsUntilCharge = POKE_RADAR_RECHARGE_STEPS)")
     for i = 0, pr.PATCH_COUNT - 1 do
         local id = pr.get_patch_sprite_id(i)
-        fw.assert_true(is_live_grass_patch(id),
+        fw.assert_true(pr.is_live_patch(id),
             string.format("patch %d is a live shaking-grass sprite (id %d)", i, id))
     end
 
@@ -547,7 +521,7 @@ local function test_use_from_bag_in_grass()
     -- until the item's field-use callback releases them, as the BICYCLE's
     -- and the ITEMFINDER's do. If it doesn't, the player is frozen here.
     local dx, dy = 0, 1
-    if is_patch_tile(x0, y0 + 1) then dx, dy = 1, 0 end
+    if pr.is_patch_tile(ROUTE1_GRASS_X, ROUTE1_GRASS_Y + 1) then dx, dy = 1, 0 end
     fw.assert_true(walk.step_onto(ROUTE1_GRASS_X + dx, ROUTE1_GRASS_Y + dy),
         string.format("player can walk after USE (onto %d,%d)",
             ROUTE1_GRASS_X + dx, ROUTE1_GRASS_Y + dy))
