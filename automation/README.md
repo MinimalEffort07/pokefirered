@@ -148,3 +148,5 @@ What they cover:
   - each role may use only its own commands
 - **`test_github.py`:** checks what the dispatcher accepts as a finished session's work. For a grill: only the bot's comment with the design marker, and only open issues whose `## Parent` names the parent, with their blockers checked. For a ticket: only the bot's open PR from that ticket's branch in this repo. For a merge: whether the PR merged, and whether the bot replied naming that `/merge`. It also reads a PR's comments, reviews and inline comments in time order, and covers deleting session files older than 30 days.
 - **Failures:** if one of a tick's actions fails, the tick logs it and skips the rest of that issue's actions, but carries on with the others.
+
+**Live check:** the grill path (#55) was checked live on 2026-10-19, on issue #67: autodev grilled it and broke it into tickets with nobody watching.
