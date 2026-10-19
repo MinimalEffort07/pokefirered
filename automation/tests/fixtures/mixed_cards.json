@@ -1,0 +1,90 @@
+{
+  "FindBoard": {
+    "data": {
+      "user": {
+        "projectsV2": {
+          "nodes": [
+            {
+              "number": 7,
+              "title": "pokefirered autodev"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "BoardItems": {
+    "": {
+      "data": {
+        "user": {
+          "projectV2": {
+            "items": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": "Y3Vyc29yOjE="
+              },
+              "nodes": [
+                {
+                  "id": "PVTI_d",
+                  "type": "DRAFT_ISSUE",
+                  "status": null,
+                  "content": {
+                    "__typename": "DraftIssue"
+                  }
+                },
+                {
+                  "id": "PVTI_p",
+                  "type": "PULL_REQUEST",
+                  "status": {
+                    "name": "In review"
+                  },
+                  "content": {
+                    "__typename": "PullRequest"
+                  }
+                },
+                {
+                  "id": "PVTI_o",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 5,
+                    "title": "Issue 5",
+                    "body": "Elsewhere",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "pret/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_s",
+                  "type": "ISSUE",
+                  "status": null,
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 64,
+                    "title": "Issue 64",
+                    "body": "Please add trading",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "someone-else"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

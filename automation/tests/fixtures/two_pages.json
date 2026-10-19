@@ -1,0 +1,90 @@
+{
+  "FindBoard": {
+    "data": {
+      "user": {
+        "projectsV2": {
+          "nodes": [
+            {
+              "number": 7,
+              "title": "pokefirered autodev"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "BoardItems": {
+    "": {
+      "data": {
+        "user": {
+          "projectV2": {
+            "items": {
+              "pageInfo": {
+                "hasNextPage": true,
+                "endCursor": "Y3Vyc29yOjE="
+              },
+              "nodes": [
+                {
+                  "id": "PVTI_a",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Blocked"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 63,
+                    "title": "Issue 63",
+                    "body": "## Parent\n\n#61\n\n## What to build\n\nThe Mart stocks it.\n\n## Blocked by\n\n- #62\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "Y3Vyc29yOjE=": {
+      "data": {
+        "user": {
+          "projectV2": {
+            "items": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": "Y3Vyc29yOjI="
+              },
+              "nodes": [
+                {
+                  "id": "PVTI_b",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Grilling"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 61,
+                    "title": "Issue 61",
+                    "body": "Sell it.\n\nParent company: Silph",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

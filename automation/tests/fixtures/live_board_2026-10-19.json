@@ -1,0 +1,294 @@
+{
+  "FindBoard": {
+    "data": {
+      "user": {
+        "projectsV2": {
+          "nodes": [
+            {
+              "number": 3,
+              "title": "pokefirered autodev"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "BoardItems": {
+    "": {
+      "data": {
+        "user": {
+          "projectV2": {
+            "items": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": "Y3Vyc29yOnYyOpK5MDAwMDAwMDAuMDc2OTIzMDc2OTIzMDc2Oc4QbXbl"
+              },
+              "nodes": [
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdqs",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 48,
+                    "title": "Autodev: board-driven autonomous grilling, ticketing and implementation",
+                    "body": "## Summary\n\nAutomate this repo's GitHub Issue Workflow (CLAUDE.md steps 1\u201313). Adding an issue to the **pokefirered autodev** Projects board starts a headless Claude Code session. That session grills the issue by itself, taking every recommended answer round after round until no questions remain. It then records the design on the issue and breaks it into tickets. Ticket sessions pick up the frontier and implement each ticket through CLAUDE.md steps 6\u201311. Tickets are never grilled again. Merges still wait for the owner, who approves one by commenting `/merge` on the PR.\n\n## Scope\n\n- A dispatcher that a systemd user timer runs every 2 minutes, from a dedicated clone on the owner's WSL machine.\n- Four session roles: grill, ticket, fix-up and merge. Each session runs `claude -p` as its own transient systemd unit, with a permissions file for its role.\n- A bot machine user that makes every write the automation does on GitHub.\n- A user-owned Projects board whose Status options are `Todo`, `Grilling`, `Blocked`, `In progress`, `In review`, `Needs human`, `Paused` and `Done`.\n- A merge gate: a whole-suite test runner with an explicit exclusion list. The ticket session runs it before opening the PR, and the merge session runs it again on the exact merged tree.\n- Prerequisites that make the gate meaningful:\n  - tests can no longer pass silently\n  - no test uses a fixed `/tmp` path\n  - master passes again (the `demo_mt_moon` seed constants and the Pok\u00e9Radar item entry)\n- An \"Autonomous mode\" subsection in CLAUDE.md, an \"Autodev\" section in the README, a setup script, and a wizard for the steps only a human can do.\n\n## Out of scope\n\n- `.github/workflows/build.yml`. It is pret's CI, which requires a byte-identical retail build (`COMPARE`), and it has never run on this fork.\n- Cloud runs, and any repo other than this one.\n- Changing how the workflow runs by hand in an interactive session.\n- The open issues #45 and #23, unless the owner adds them to the board.\n\nThe design comment below holds the agreed design, the test scenarios and the pass/fail criteria.\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdrE",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 49,
+                    "title": "Tests fail when they assert nothing or cannot boot",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nA test can only pass by proving something.\n\nToday there are two ways a test passes without checking anything:\n- `fw.finish()` reports a pass when the test made zero assertions.\n- Many tests return early through `fw.finish()` when booting to character select fails, so a broken boot passes silently.\n\nAfter this ticket:\n- A test that makes zero assertions fails.\n- A failed boot fails with a clear message.\n- `test_pc_anywhere` asserts through the framework instead of only logging.\n\nDemo and probe files produce frames and make no assertions. They declare that explicitly, which keeps them runnable on their own for recordings and lets the suite runner (#54) list them as excluded.\n\n## Acceptance criteria\n\n- [ ] **A1:** a test that makes zero assertions makes `run_test.sh` exit 1 and log \"0 assertions\".\n- [ ] **A2:** when booting to character select fails (simulated by a stub), the test exits 1 with \"boot to character select failed\". This applies to every test that currently returns early through `fw.finish()` when character select isn't found.\n- [ ] **A3:** `test_pc_anywhere` uses `fw.assert_true`. With one of its checks made to fail on purpose it exits 1, and its real run passes with more than 0 assertions.\n- [ ] The demo and probe files that make no assertions opt out explicitly, still pass when run alone, and still record with `record_test.sh`. The files are `demo_lr_page_scroll`, `demo_pc_anywhere`, `demo_pp_items_in_marts`, `demo_slaveless_hm`, `demo_type_effectiveness_colors`, `test_char_midwalk_screenshot` and `test_fast_forward_gui`.\n- [ ] Every other top-level test still passes, apart from the known master failures: `demo_mt_moon` (#51), `test_shiny_chaining` (#52) and `test_roaming_route1` (needs a savestate made by hand).\n- [ ] `make -j$(nproc) firered` builds cleanly, and the README's test documentation states the zero-assertion rule.\n\n## Blocked by\n\nNone (can start immediately)\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdrQ",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 50,
+                    "title": "Demos write their frames into the per-run test folder",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nParallel worktrees must not trample each other's test output.\n\nThree demos write frames into fixed `/tmp/*_demo_frames` folders, and each deletes what's already there first. Two worktrees running them at once corrupt each other's frames. The demos are `demo_lr_page_scroll`, `demo_pc_anywhere` and `demo_pp_items_in_marts`.\n\nThey move their frame output into the per-run folder `run_test.sh` already gives each run (`MGBA_TEST_DIR`), and they log where the frames went. Turning the frames into a GIF still works.\n\nCorrection to the design comment on #48: the fixed `/tmp` paths in `test_roaming_route1` and `test_shiny_chaining` are savestate fixtures that someone makes by hand and the tests only read. They can't collide, so they stay where they are.\n\n## Acceptance criteria\n\n- [ ] **A6:** two worktrees run the three demos at the same time.\n  - Neither run writes to a fixed `/tmp` path.\n  - Both runs produce the same number of frames as a single run on its own.\n- [ ] Searching `test/` for writes to fixed `/tmp` paths finds nothing. The only fixed paths left are the two documented read-only fixture inputs.\n- [ ] Each demo logs the folder its frames went to. Any README or demo instructions that turn frames into GIFs point at the new location.\n- [ ] The three demos still produce complete frame sets, and `make -j$(nproc) firered` builds cleanly.\n\n## Blocked by\n\nNone (can start immediately)\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdrg",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 51,
+                    "title": "demo_mt_moon rolls its demo caves again",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nThe Mt. Moon demo walks the same three short caves on every run again.\n\nIts `DEMO.rng` constants were captured before the follower PRs (#20, #21, #47) added `Random()` calls. Because of those extra calls, B1F and B2F now roll different seeds: 49321 instead of 59111, and 2868 instead of 25844. The walk through the wrong caves takes 88 s, which fails the demo's 45 s GIF length check.\n\nThe fix is to refresh the constants with the values the demo logs, as its header comment describes.\n\n## Acceptance criteria\n\n- [ ] **A7:** `demo_mt_moon` passes under `run_test.sh`.\n  - Every floor rolls its intended demo seed.\n  - The GIF length check reports 45 s or less.\n- [ ] A `record_test.sh` recording of the demo shows all three floors, and is moved to `~/recordings/`.\n- [ ] The README's Mt. Moon GIF is regenerated only if the new run differs from it.\n- [ ] The Mt. Moon property tests and scenario tests still pass, and `make -j$(nproc) firered` builds cleanly.\n\n## Blocked by\n\nNone (can start immediately)\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdrw",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 52,
+                    "title": "Pok\u00e9Radar is in the Key Items pocket again",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nThe README advertises Shiny Chaining, with the Pok\u00e9Radar given to the player at game start. On master the player never gets it.\n\nThe cause:\n- WIP commit c94c09746 defined `ITEM_POKE_RADAR = 375` but gave it no entry in the item data.\n- So `gItems[375]` reads past the end of the item table.\n- So `AddBagItem` fails silently.\n\nAdd the item's data entry:\n- Key Items pocket, price 0\n- a name, and a description modelled on the later games\n- wired to the radar's existing field use, so that using it in tall grass works as the README GIF shows\n\n## Acceptance criteria\n\n- [ ] **A8:** `test_shiny_chaining` passes. After starting a new game, `ITEM_POKE_RADAR` is in the Key Items pocket.\n- [ ] The item table has exactly one entry per item ID up to `ITEMS_COUNT`, so no item ID reads past its end.\n- [ ] A `record_test.sh` recording of `test_shiny_chaining` is moved to `~/recordings/`.\n- [ ] The README's Shiny Chaining GIF is redone only if it no longer matches the game.\n- [ ] Other tests still pass, and `make -j$(nproc) firered` builds cleanly.\n\n## Blocked by\n\nNone (can start immediately)\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdr4",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 53,
+                    "title": "Autodev foundation: bot, board, clone and a ticking dispatcher",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nEverything the dispatcher stands on, ending with a dispatcher that wakes every 2 minutes, reads the board as the bot, and logs what it sees **without acting on anything**.\n\nThe dispatcher is stdlib-only Python under `automation/`. It polls the board with `gh` GraphQL queries.\n\n**A setup script** that is safe to run again does every step that can be scripted:\n- creates the **\"pokefirered autodev\"** board with exactly the 8 Status options from #48, linked to this repo\n- creates the dedicated clone at `~/projects/minimaleffort/pokefirered-autodev`:\n  - `tools/agbcc` is a symlink to the main checkout's\n  - pushes go over HTTPS through the `gh auth git-credential` helper, with the bot's token\n  - the bot is the git author\n- installs the systemd user units: the dispatcher service, its 2-minute timer, and a `serve_recordings` service\n- enables linger, so user units keep running when no terminal is open\n- creates the master ruleset: blocks force-pushes and branch deletion, and requires a PR from anyone except admins (the owner bypasses as an admin)\n\n**A wizard** (built with the `mattpocock-skills:wizard` skill) walks the owner through the human-only steps:\n1. Create the bot machine user and its classic token with the `repo` and `project` scopes. The token is stored in `~/.config/autodev/env` with permissions 600, and the bot is invited to the repo and the board.\n2. Run `gh auth refresh -s project` for the owner.\n3. Add the Windows Task Scheduler entry that keeps WSL running.\n4. Create the ruleset by hand, if the API refuses.\n\n## Acceptance criteria\n\n- [ ] Running the setup script a second time changes nothing.\n- [ ] The board exists, linked to the repo, with Status options exactly `Todo`, `Grilling`, `Blocked`, `In progress`, `In review`, `Needs human`, `Paused` and `Done`. The bot is an editor on it.\n- [ ] The timer is listed by `systemctl --user list-timers`.\n- [ ] The journal shows two consecutive ticks about 2 minutes apart.\n  - Each tick logs a snapshot with each board item's number, author, Status (no Status shown as `Todo`), and whether its body has a `## Parent` section.\n  - An issue added to the board appears in the next tick's snapshot.\n  - The dispatcher takes no action on GitHub.\n- [ ] As the bot, from the clone:\n  - pushing a throwaway branch over HTTPS works, and so does deleting it\n  - a force-push to master is rejected\n  - deleting master is rejected\n- [ ] The recordings server runs as a user service and can be reached at the recordings URL after a restart.\n- [ ] After a Windows logon with no terminal opened, the timer still ticks.\n- [ ] The token file has mode 600 and lives outside the repo. Nothing under `automation/` contains a secret.\n- [ ] The snapshot parsing is unit-tested against recorded GraphQL JSON fixtures, and `python3 -m unittest` passes.\n- [ ] The setup script and the wizard are documented.\n\n## Blocked by\n\nNone (can start immediately)\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdsM",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 54,
+                    "title": "Whole-suite test runner, with master passing it",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nOne command runs the whole test suite and reports pass or fail. This is autodev's merge gate.\n\n`run_suite.sh` runs every top-level test with `MGBA_TEST_TIMEOUT=1500`, 4 at a time, and skips each test listed in `suite_exclude.txt`. Each line of that file is one test plus a one-line reason. At the end it:\n- prints a summary with each test's name, result and seconds\n- detects timeouts from `timeout`'s exit code (124), not from elapsed time, because the PC may sleep mid-run\n- deletes the run folders of passing tests and keeps those of failing ones\n\nThe exclusion list starts with:\n- `test_roaming_route1`: needs a savestate fixture made by hand\n- the seven demo and probe files from #49, which make no assertions\n\nThe ticket finishes with a full green run on master.\n\n## Acceptance criteria\n\n- [ ] **A4:** with one test listed in `suite_exclude.txt`, that test isn't run, and the summary lists it with its reason.\n- [ ] **A5:** with one test failing, `run_suite.sh`:\n  - exits non-zero\n  - names the failing test\n  - keeps the failing run's folder\n  - deletes the passing runs' folders\n- [ ] A test that hits its timeout is reported as a timeout.\n- [ ] **A9:** with #49\u2013#52 merged, `run_suite.sh` on master exits 0 and reports the total wall-clock time (expected about 10 minutes).\n- [ ] CLAUDE.md's test section and the README describe `run_suite.sh` and the exclusion rule: every exclusion needs a reason.\n\n## Blocked by\n\n- #49\n- #50\n- #51\n- #52\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdsc",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 55,
+                    "title": "Autodev: board \u2192 grill \u2192 tickets",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nAdding a parent issue to the board gets it grilled and broken into tickets, with nobody watching. The dispatcher gains:\n\n- **Decisions:** the pure decision function (snapshot \u2192 list of actions), and the adapter that carries the actions out through `gh` and `systemd-run`.\n- **Session units:** each session runs as a transient systemd unit named `autodev-<role>-<N>`, with a `RuntimeMaxSec` time limit. Each gets a session ID picked in advance and a `stream-json` log in `~/autodev/logs/`, kept for 30 days. The model comes from the dispatcher's config.\n- **Results:** every session ends with a structured result (`--json-schema`), which the dispatcher checks against GitHub before believing it.\n- **The grill role:**\n  - a settings file: `--permission-mode auto --permission-prompts none`, a narrow allowlist, and deny rules that keep it read-only on the repo (it may only comment on issues, create issues, and edit the parent's body)\n  - a thin prompt\n- **Trust:** only text written by the owner or the bot reaches a prompt. Someone else's issue on the board goes to `Needs human` and gets the explanatory comment.\n- **Rules:** CLAUDE.md's \"Autonomous mode\" subsection, listing every difference from the manual flow for every role, so the later tickets only have to implement it.\n- **Notifications:** bot comments @mention the owner where #48 says.\n\n## Acceptance criteria\n\n- [ ] Unit tests (`unittest`, fake GitHub): each check is \"given this snapshot, exactly this list of actions\".\n  - **D1:** the owner's parent issue, with no Status or in `Todo` \u2192 launch grill; Status \u2192 `Grilling`.\n  - **D2:** someone else's issue on the board \u2192 `Needs human` and a comment; nothing launched.\n  - **D15 for grill:** the session reports `done` and GitHub shows the design comment and at least one ticket \u2192 the parent goes to `In progress`.\n  - **D16:** the session reports `done` but GitHub disagrees \u2192 `Needs human`, with a comment containing `claude --resume <id>` and an @mention.\n  - **D24:** after a grill, every ticket is on the board as `Blocked` or `Todo` and linked as a sub-issue.\n  - **D25 for grill:** the grill role's settings file contains its deny rules (checked statically).\n- [ ] Live check: the owner adds a small parent issue to the board. Within 60 minutes:\n  - the card has gone through `Grilling` to `In progress`\n  - the parent has a design comment, with a \"Least-confident defaults\" list and the rounds in `<details>`\n  - the parent's body has been edited into a scope summary\n  - at least one ticket exists, with `## Parent #N` and `## Blocked by`, on the board as `Todo` or `Blocked` and linked as a sub-issue\n  - no labels were added\n  - the session unit is gone and its log file exists\n\n  The tickets it creates stay in `Todo`, because the ticket role arrives in #56. #56's live check reuses them.\n- [ ] Board items the dispatcher has no role for yet are skipped without errors.\n- [ ] `python3 -m unittest` passes, and the \"Autonomous mode\" subsection is in CLAUDE.md.\n\n## Blocked by\n\n- #53\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtds4",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 56,
+                    "title": "Autodev: ticket \u2192 PR",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nA ticket whose blockers are all closed gets implemented and a PR opened, with nobody watching. The dispatcher gains:\n\n- **Blocker tracking:** tickets go to `Blocked` or `Todo` from their `## Blocked by` list. When a blocker closes, its dependents are unblocked.\n- **Cap and priority:** at most 2 sessions at once. Priority is merge, then fix-up, then ticket (oldest parent first, then lowest ticket number), then grill.\n- **Worktrees:** one per ticket at `.worktrees/issue-<T>` on branch `issue-<T>-<slug>`, with the `agbcc` symlink in place.\n- **The ticket role:**\n  - a settings file that allows pushing only to its own branch and denies `gh pr merge` and pushing to master\n  - a thin prompt that runs CLAUDE.md steps 6\u201311 in autonomous mode\n- **The fix-up role's settings file:** it has the same limits; #59 uses it.\n- **Recording lock:** a machine-wide lock around `record_test.sh`, because it can't run in parallel.\n- **The PR body:** `Fixes #T`, `Part of #<parent>`, a summary, the tests run (including the `run_suite.sh` result), the \"Recordings available at\u2026\" and \"Branch README\" lines, and an @mention of the owner.\n- **Status changes:** the card goes to `In review` once the PR is open, and a session that hits its time limit sends it to `Needs human`.\n\n## Acceptance criteria\n\n- [ ] Unit tests (`unittest`, fake GitHub):\n  - **D3:** a ticket in `Todo` with every blocker closed \u2192 launch ticket; Status \u2192 `In progress`.\n  - **D4:** a ticket with an open blocker \u2192 `Blocked`; nothing launched.\n  - **D5:** a blocker closes \u2192 its dependents with no open blockers go to `Todo`.\n  - **D6:** 3 items ready and 2 slots free \u2192 the top 2 by priority are launched.\n  - **D15 for ticket:** the session reports `done` and GitHub shows the PR \u2192 `In review`.\n  - **D17:** the session hit its time limit \u2192 `Needs human`.\n  - **D25 for ticket and fix-up:** both roles' settings files contain their deny rules (checked statically).\n- [ ] Two `record_test.sh` runs started at the same time run one after the other, and both videos show the game, not a black screen.\n- [ ] Live check: the ticket left by #55's live check gets a PR within 3 hours.\n  - The PR body has everything listed above.\n  - `run_suite.sh` passes on the branch.\n  - The card is `In review`.\n  - The session unit is gone.\n\n## Blocked by\n\n- #54\n- #55\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdtI",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 57,
+                    "title": "Autodev: /merge \u2192 merged and closed",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nThe owner's `/merge` on a PR gets it merged safely, and closes the loop. The dispatcher gains:\n\n- **Comment tracking:** every bot reply ends with a hidden `<!-- autodev handled-through: <comment-id> -->` marker. `/merge` only counts when it is the owner's newest unhandled comment.\n- **The merge role:** the only role allowed `gh pr merge --merge`; it may not squash or rebase. It merges master into the branch, builds, and runs `run_suite.sh` on that exact tree. If everything passes, it merges.\n- **Conflicts:** when the merge conflicts, the merge session:\n  - resolves the conflict on the branch\n  - re-tests\n  - comments with how it resolved the conflict, @mentioning the owner\n  - returns the card to `In review` to wait for a fresh `/merge`\n- **After a merge:** the ticket is closed and marked `Done`, its worktree is removed, and its dependents are unblocked.\n- **Closing without a PR:** a ticket the owner closes without a merged PR counts as resolved.\n- **Parent completion:** once all of a parent's tickets are closed, the parent is closed and marked `Done`, with an @mention of the owner.\n\n## Acceptance criteria\n\n- [ ] Unit tests (`unittest`, fake GitHub):\n  - **D9:** the owner's newest unhandled PR comment is `/merge` \u2192 launch merge.\n  - **D10:** `/merge` from someone else, or from the bot \u2192 ignored.\n  - **D12:** all of the owner's comments are older than the last marker \u2192 nothing.\n  - **D21:** PR merged \u2192 ticket closed, `Done`, worktree removed.\n  - **D22:** ticket closed without a PR \u2192 counts as resolved; dependents unblocked.\n  - **D23:** every ticket of a parent closed \u2192 parent closed, `Done`, @mention.\n  - **D25 for merge:** the merge role's settings file contains its deny rules (checked statically).\n- [ ] The conflict path:\n  - a unit test of the decision: a conflict result \u2192 `In review` and a comment\n  - the merge prompt spells out the procedure: resolve on the branch, re-test, comment, wait for `/merge`\n- [ ] Live check: the owner comments `/merge` on #56's live PR.\n  - It is merged with a merge commit, not squashed.\n  - The ticket is closed and `Done`.\n  - The worktree is gone.\n  - If it was the parent's only ticket, the parent is closed with a `Done` comment.\n\n## Blocked by\n\n- #56\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdtY",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 58,
+                    "title": "Autodev: pause, usage limits and crashes",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nThe owner can stop and resume work, and the automation rides out usage limits and crashes.\n\n- **`Paused`:**\n  - on a parent, it stops all of its tickets from being picked up\n  - on a ticket, it stops that one ticket\n  - sessions already running finish their run\n  - moving the card back to `Todo` resumes it\n- **Usage limit:** a session that stops with \"You've hit your \u2026 limit \u00b7 resets <time>\" blocks every launch until that time plus 5 minutes. The interrupted item then relaunches and continues from its branch, and the bot comments \"paused until <time>\" with an @mention.\n- **Unexplained crash:** the session exits non-zero with no structured result and no limit message, or a reboot leaves a card `In progress` with no unit running. The work is re-queued once. The second time, the card goes to `Needs human`.\n\n## Acceptance criteria\n\n- [ ] Unit tests (`unittest`, fake GitHub):\n  - **D7:** parent `Paused` \u2192 none of its tickets launch; running units are left alone.\n  - **D8:** `Paused` \u2192 `Todo` \u2192 picked up on the next tick.\n  - **D18:** usage-limit message with a reset time \u2192 no launches until the reset plus 5 minutes, then the same item relaunches, plus the \"paused until\" comment.\n  - **D19:** unexplained crash, first time \u2192 re-queued.\n  - **D20:** unexplained crash a second time, or a reboot found `In progress` with no unit twice \u2192 `Needs human`.\n- [ ] Live check, pausing: pause a parent that has a `Todo` ticket. Nothing launches across two ticks. Moving it back to `Todo` launches the ticket on the next tick.\n- [ ] Live check, crashing: kill a running session unit. The work is re-queued once: the card goes back to `Todo` and is relaunched. Killing it again sends it to `Needs human`, with the resume command in the comment.\n\n## Blocked by\n\n- #56\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtdt4",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 59,
+                    "title": "Autodev: PR feedback \u2192 fix-up",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nThe owner's feedback on a PR gets addressed without an interactive session.\n\n- **What starts it:** the owner's unhandled comments or reviews that aren't `/merge`.\n- **What runs:** a fix-up session, using the fix-up role from #56, in the ticket's worktree. It addresses all the queued feedback together:\n  - TDD, build, `run_suite.sh`, and a new recording if the change is visible in-game\n  - pushes\n  - replies with a handled-through marker\n  - returns the card to `In review`\n- **A comment that arrives while a session is running** gets a follow-up session after that one ends.\n- **Feedback posted after `/merge`** cancels the `/merge`.\n\n## Acceptance criteria\n\n- [ ] Unit tests (`unittest`, fake GitHub):\n  - **D11:** the owner's unhandled comment or review that isn't `/merge` \u2192 launch fix-up.\n  - **D13:** the owner comments while a session for that PR is running \u2192 nothing now; a fix-up after that session ends.\n  - **D14:** feedback posted after `/merge` \u2192 fix-up, no merge.\n  - **D15 for fix-up:** the session reports `done` and GitHub shows new commits and a reply carrying the marker \u2192 `In review`.\n- [ ] Live check: on a PR that autodev opened for a small hand-written ticket, the owner asks for a change.\n  - Within 90 minutes there are new commits and a reply carrying the marker.\n  - The card is back in `In review`.\n  - A second comment posted while that fix-up runs gets its own follow-up session.\n\n## Blocked by\n\n- #57\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_lAHOBWPd2c4BnqwpzhBtduU",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 60,
+                    "title": "Autodev: live canary and README section",
+                    "body": "## Parent\n\n#48\n\n## What to build\n\nProve the full flow end to end on a throwaway parent issue, and document autodev for the owner.\n\nThe README gains an \"Autodev\" section that covers:\n- what autodev does, and how to set it up (setup script and wizard)\n- the board statuses\n- how to approve a merge (`/merge`), give feedback, pause one item, or stop everything\n- where the logs are, and how to resume a parked session\n\nThe section links to the canary issue as the demo. There is no in-game GIF, because nothing changes in the game.\n\n## Acceptance criteria\n\n- [ ] **E1:** the owner adds the parent issue \"Add one sentence to the README's Autodev section saying the canary passed\" to the board, and:\n  1. Within 60 minutes the parent has a design comment, with a \"Least-confident defaults\" list and the rounds in `<details>`, and at least one ticket containing `## Parent #N`.\n  2. The bot opens a PR within 3 hours. Its body includes the suite result and a \"no in-game behaviour\" note in place of a recording.\n  3. The owner comments \"reword it to \u2026\". A fix-up pushes the change and replies, and the reply carries a handled-through marker.\n  4. The owner comments `/merge`.\n     - The PR is merged with a merge commit, not squashed.\n     - The ticket and the parent are both closed and `Done` on the board.\n     - The worktree is gone.\n     - `systemctl --user list-units 'autodev-*'` shows no session units left.\n- [ ] The README \"Autodev\" section covers everything listed above and links to the canary issue.\n\n## Blocked by\n\n- #58\n- #59\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
