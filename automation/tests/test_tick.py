@@ -8,6 +8,7 @@ import io
 import unittest
 
 from autodev.config import Config
+from autodev.board import read_board
 from autodev.dispatcher import log_board
 from tests.fakes import FakeGh
 
@@ -69,6 +70,18 @@ class TickLogsTheBoard(unittest.TestCase):
             "#48 MinimalEffort07 Todo has_parent=no",
         ] + ["#%d MinimalEffort07 Todo has_parent=yes" % n for n in range(49, 61)])
         self.assertEqual(gh.mutations, [])
+
+    def test_a_tickets_parent_and_blockers_come_from_its_body(self):
+        # From the same recording: #56's body ends "## Blocked by\n\n- #54\n
+        # - #55"; #49's says "None (can start immediately)".
+        gh = FakeGh.from_fixture("live_board_2026-10-19.json")
+        items = {i.number: i for i in read_board(gh, CONFIG, 3).items}
+        self.assertEqual(
+            (items[56].title, items[56].parent, items[56].blocked_by,
+             items[56].is_open),
+            ("Autodev: ticket → PR", 48, (54, 55), True))
+        self.assertEqual((items[49].parent, items[49].blocked_by), (48, ()))
+        self.assertEqual((items[48].parent, items[48].blocked_by), (None, ()))
 
     def test_unusual_authors_and_parent_headings(self):
         # GitHub reports a deleted account's issues with no author; it

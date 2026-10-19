@@ -8,16 +8,33 @@ trust") in code, not just in instructions:
     repo is public, so anyone can comment, and a comment is the easiest
     way to slip instructions into an unattended agent.
   - A session only changes its own issue (AUTODEV_ISSUE, set by the
-    dispatcher) and the tickets it creates under it. It can't add labels,
-    close issues, or touch the board.
+    dispatcher), with the commands its role needs (AUTODEV_ROLE): a grill
+    session its parent and the tickets it creates under it, a ticket
+    session its ticket and the PR it opens for it. It can't add labels,
+    close issues, merge, or touch the board.
 """
+
+import re
 
 from autodev.board import issue_numbers, section
 from autodev.decide import MARKER
+from autodev.worktrees import branch_prefix
 
 
 class Refused(Exception):
     """The request breaks one of the rules above."""
+
+
+# The commands each role may use. Outside a session the tool only reads.
+COMMANDS = {
+    "grill": {"read", "comment", "set-body", "create-ticket"},
+    "ticket": {"read", "comment", "open-pr"},
+}
+
+
+def check_role(role, command):
+    if command not in COMMANDS.get(role, {"read"}):
+        raise Refused("a %s session can't use %s" % (role or "non-autodev", command))
 
 
 def _trusted(config, login):
@@ -73,3 +90,22 @@ def create_ticket(gh, config, parent, title, body):
     gh.rest("POST", "%s/%d/sub_issues" % (_issues(config), parent),
             sub_issue_id=created["id"])
     return created["number"]
+
+
+def open_pr(gh, config, ticket, title, head, body):
+    """Open the PR for `ticket` from its own branch into master. Returns
+    GitHub's record of the new PR."""
+    if not head.startswith(branch_prefix(ticket)):
+        raise Refused("a PR for #%d must come from its own %s* branch, not %s"
+                      % (ticket, branch_prefix(ticket), head))
+    # "Fixes #T" closes the ticket when the PR merges (#57). The @mention
+    # is how the owner hears that the PR is ready (#48, "Notifications").
+    # GitHub ignores both inside code, so fenced blocks and `spans` don't
+    # count.
+    prose = re.sub(r"```.*?```|`[^`]*`", "", body, flags=re.DOTALL)
+    if not re.search(r"\bFixes #%d\b" % ticket, prose):
+        raise Refused("the PR body must say \"Fixes #%d\" (not in code)" % ticket)
+    if not re.search(r"@%s(?![\w-])" % re.escape(config.owner), prose):
+        raise Refused("the PR body must @mention @%s (not in code)" % config.owner)
+    return gh.rest("POST", "repos/%s/pulls" % config.repo, title=title,
+                   head=head, base="master", body=body)

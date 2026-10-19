@@ -71,6 +71,36 @@ class Tickets(unittest.TestCase):
         ])
 
 
+PULLS = "repos/MinimalEffort07/pokefirered/pulls?state=open"
+
+
+def pr(number, ref, author="MinimalEffort07-Autodev",
+       repo="MinimalEffort07/pokefirered"):
+    return {"number": number, "user": {"login": author},
+            "head": {"ref": ref, "repo": {"full_name": repo} if repo else None}}
+
+
+class TicketPRs(unittest.TestCase):
+    """D15 for tickets: the session's PR, as GitHub shows it."""
+
+    def outcome(self, pulls):
+        return GitHub(FakeRest({PULLS: pulls}), CONFIG, BOARD).ticket_outcome(68)
+
+    def test_only_the_bots_pr_from_this_tickets_branch_in_this_repo_counts(self):
+        self.assertEqual(self.outcome([
+            # Anyone can open a PR from a fork, with any branch name.
+            pr(91, "issue-68-note", author="stranger", repo="stranger/pokefirered"),
+            # A deleted fork shows no head repo at all.
+            pr(92, "issue-68-note", author="stranger", repo=None),
+            pr(93, "issue-680-other"),          # another ticket's branch
+            pr(94, "issue-68-note", author="MinimalEffort07"),
+            pr(90, "issue-68-note-the-grill-paths-live"),
+        ]).pr, 90)
+
+    def test_no_matching_pr_means_none(self):
+        self.assertIsNone(self.outcome([pr(93, "issue-680-other")]).pr)
+
+
 class Pruning(unittest.TestCase):
     def test_session_files_older_than_30_days_are_deleted(self):
         with tempfile.TemporaryDirectory() as root:

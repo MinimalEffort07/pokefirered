@@ -1,12 +1,13 @@
 """Carrying out decide()'s actions on GitHub, and reading what a finished
-grill session left there.
+session left there.
 
 Everything here runs as the bot: the dispatcher's unit loads the bot's
 GH_TOKEN, and gh uses it for every call.
 """
 
 from autodev.board import issue_numbers, section
-from autodev.decide import GrillOutcome, Ticket
+from autodev.decide import GrillOutcome, Ticket, TicketOutcome
+from autodev.worktrees import branch_prefix
 
 # The grill session marks its design comment with this hidden tag
 # (CLAUDE.md, "Autonomous mode"), which is how the dispatcher finds it.
@@ -39,6 +40,9 @@ class GitHub:
 
     def _issue(self, number):
         return self.gh.rest("GET", "repos/%s/issues/%d" % (self.config.repo, number))
+
+    def is_open(self, number):
+        return self._issue(number)["state"] == "open"
 
     # ── actions ───────────────────────────────────────────────────────────
 
@@ -102,3 +106,18 @@ class GitHub:
                                   for b in blockers),
             ))
         return GrillOutcome(design_comment=design, tickets=tickets)
+
+    # ── reading a finished ticket ─────────────────────────────────────────
+
+    def ticket_outcome(self, number):
+        """The bot's open PR for ticket `number`, if GitHub shows one. Anyone
+        can open a PR from a fork with any branch name, so only a branch in
+        this repo, pushed and opened by the bot, counts."""
+        prefix = branch_prefix(number)
+        for pr in self.gh.rest_list("repos/%s/pulls?state=open" % self.config.repo):
+            head = pr["head"]
+            if (head["ref"].startswith(prefix)
+                    and (head["repo"] or {}).get("full_name") == self.config.repo
+                    and pr["user"]["login"] == self.config.bot):
+                return TicketOutcome(pr=pr["number"])
+        return TicketOutcome(pr=None)

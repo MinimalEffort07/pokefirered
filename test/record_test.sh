@@ -17,11 +17,15 @@
 # screenshots, the game's save file and this script's logs. Only the video
 # goes to the shared $RECORDINGS_DIR, under a timestamped name.
 #
-# NOT PARALLEL-SAFE: only one recording can run at a time on a machine, even
+# ONE AT A TIME: only one recording can run at a time on a machine, even
 # from different worktrees. It records the whole virtual display :1, which
 # it restarts if its size is wrong, and it kills every running mgba-qt
-# before starting. Headless runs (test/run_test.sh) don't touch :1 or
-# mgba-qt, so they can run alongside a recording.
+# before starting. So the script takes a machine-wide lock first
+# ($RECORD_LOCK, see below): a second recording started meanwhile prints
+# "Waiting for another recording..." and starts once the first is done.
+# Autodev runs ticket sessions side by side, and each may record. Headless
+# runs (test/run_test.sh) don't touch :1 or mgba-qt, so they can run
+# alongside a recording.
 #
 ###############################################################################
 set -uo pipefail
@@ -45,6 +49,18 @@ if [ ! -f "$TEST_SCRIPT" ]; then
     echo "ERROR: Test script not found: $TEST_SCRIPT"; exit 1
 fi
 
+# The machine-wide lock (see ONE AT A TIME above). flock(1) locks the file
+# open on descriptor 9 and the lock lasts until every process holding that
+# descriptor has exited. Background programs started below inherit open
+# descriptors, so each one closes 9 (`9>&-`): Xvfb and openbox outlive this
+# script and would otherwise hold the lock forever.
+RECORD_LOCK=/tmp/autodev-record.lock
+exec 9> "$RECORD_LOCK"
+if ! flock -n 9; then
+    echo "Waiting for another recording to finish (lock: $RECORD_LOCK)..."
+    flock 9
+fi
+
 # Virtual display: wide enough for game (480px) + scripting (843px) side by side.
 # Recording is cropped to 1324x640 then scaled to 1280-wide output.
 VIRT_W=1920
@@ -60,12 +76,12 @@ if [ "$CURRENT_GEOM" != "${VIRT_W}x${VIRT_H}" ]; then
     # Xvfb and openbox outlive this script. Detach their stdout/stderr so a
     # caller piping our output (e.g. `record_test.sh ... | tail`) isn't held
     # open forever by these background processes inheriting the pipe.
-    Xvfb :1 -screen 0 "${VIRT_W}x${VIRT_H}x24" > /dev/null 2>&1 &
+    Xvfb :1 -screen 0 "${VIRT_W}x${VIRT_H}x24" > /dev/null 2>&1 9>&- &
     sleep 1
 fi
 
 if ! DISPLAY=:1 pgrep -x openbox > /dev/null 2>&1; then
-    DISPLAY=:1 openbox > /dev/null 2>&1 &
+    DISPLAY=:1 openbox > /dev/null 2>&1 9>&- &
     sleep 1
 fi
 
@@ -131,7 +147,7 @@ ffmpeg -f x11grab -r 30 -s "${VIRT_W}x${VIRT_H}" -i :1 \
     -c:v libx264 -profile:v baseline -level 3.1 \
     -preset ultrafast -pix_fmt yuv420p \
     -movflags +faststart \
-    "$OUTPUT" > "$RUN_DIR/ffmpeg-record.log" 2>&1 &
+    "$OUTPUT" > "$RUN_DIR/ffmpeg-record.log" 2>&1 9>&- &
 FFMPEG_PID=$!
 
 # Step 2: launch mGBA with the private config dir.
@@ -142,7 +158,7 @@ FFMPEG_PID=$!
 # DISPLAY=:1 and ffmpeg's x11grab records a black screen.
 DISPLAY=:1 QT_QPA_PLATFORM=xcb XDG_CONFIG_HOME="$RECORDING_XDG" LD_LIBRARY_PATH="$MGBA_BUILD" \
     "$MGBA_BUILD/qt/mgba-qt" "${SAVE_OPTIONS[@]}" "$ROM" --script "$TEST_SCRIPT" \
-    > "$RUN_DIR/mgba-gui.log" 2>&1 &
+    > "$RUN_DIR/mgba-gui.log" 2>&1 9>&- &
 MGBA_PID=$!
 
 # Step 3: identify windows by title and move them into position.
