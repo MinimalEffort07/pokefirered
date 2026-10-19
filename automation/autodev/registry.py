@@ -78,7 +78,7 @@ class Registry:
         log = os.path.join(self.config.log_dir, "%s-%d-%s.jsonl" % (role, issue, stamp))
         record = {"role": role, "issue": issue, "session_id": session_id,
                   "log": log, "started": stamp}
-        if pr is not None:      # a merge session's PR and the /merge it answers
+        if pr is not None:      # a merge or fix-up's PR and the comment it answers
             record.update(pr=pr, handled_through=handled_through)
         with open(self._record_path(role, issue), "w") as f:
             json.dump(record, f, indent=2)

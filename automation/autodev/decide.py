@@ -40,8 +40,8 @@ class Session:
     # "timeout" (its time limit), "signal"... None while it runs.
     ended_by: Optional[str] = None
     cwd: str = ""           # the folder it ran in; `claude --resume` needs it
-    pr: Optional[int] = None                # a merge session's PR
-    handled_through: Optional[int] = None   # the comment a merge answers
+    pr: Optional[int] = None                # a merge or fix-up session's PR
+    handled_through: Optional[int] = None   # the newest comment it answers
     # When it stopped on the Claude usage limit: when the limit resets (as
     # seconds since 1970) and the CLI's message, as sessions.usage_limit
     # read them from its output.
@@ -77,6 +77,15 @@ class MergeOutcome:
     """What GitHub shows for a ticket's PR after its merge session ended."""
     merged: bool
     replied: bool   # the bot's reply naming the /merge it handled is there
+    # The owner said more after that /merge, which cancels it (D14), so
+    # issue.py's merge-pr refused to merge.
+    superseded: bool = False
+
+
+@dataclass(frozen=True)
+class FixupOutcome:
+    """What GitHub shows for a ticket's PR after its fix-up session ended."""
+    replied: bool   # the bot's reply naming the comment it handled is there
 
 
 @dataclass(frozen=True)
@@ -87,6 +96,8 @@ class PrComment:
     author: str
     body: str
     at: str                 # when, as GitHub's ISO time ("2026-10-19T06:01:00Z")
+    kind: str = "comment"   # "comment", "review" or "inline comment"
+    where: str = ""         # an inline comment's file and line
 
 
 @dataclass(frozen=True)
@@ -138,11 +149,12 @@ class SetStatus:
 
 @dataclass(frozen=True)
 class Launch:
-    role: str               # "grill", "ticket" or "merge"
+    role: str               # "grill", "ticket", "merge" or "fixup"
     issue: int
-    pr: Optional[int] = None        # a merge: the ticket's PR
-    # A merge: the owner's comment it answers. Its reply on the PR says so
-    # with a handled-through marker, and later comments are new work.
+    pr: Optional[int] = None        # a merge or fix-up: the ticket's PR
+    # A merge or fix-up: the owner's newest comment it answers. Its reply on
+    # the PR says so with a handled-through marker, and later comments are
+    # new work.
     handled_through: Optional[int] = None
 
 
@@ -259,7 +271,7 @@ def plan(state):
 
 
 # When there are more sessions to start than free slots, lower ranks go
-# first (#48, "Dispatcher"). Merge and fix-up sessions come with #57 and #59.
+# first (#48, "Dispatcher"): finishing work beats starting more.
 RANKS = {"merge": 0, "fixup": 1, "ticket": 2, "grill": 3}
 
 
@@ -339,20 +351,32 @@ def handled_marker(comment_id):
     return "<!-- autodev handled-through: %d -->" % comment_id
 
 
-def _newest_unhandled(state, pr):
-    """The owner's newest comment on the PR that came after everything a
-    bot reply says it handled, or None. Nobody else's comments count."""
+def unhandled(owner, bot, comments):
+    """The owner's comments on a PR (PrComment, oldest first) that came
+    after everything a bot reply says it handled. Nobody else's count."""
     handled_at = ""
-    for c in pr.comments:
-        match = HANDLED_THROUGH.search(c.body) if c.author == state.bot else None
+    for c in comments:
+        match = HANDLED_THROUGH.search(c.body) if c.author == bot else None
         if match:
             # The comment it names, or the reply itself if that's gone.
-            named = next((x for x in pr.comments
-                          if x.id == int(match.group(1))), c)
+            named = next((x for x in comments if x.id == int(match.group(1))), c)
             handled_at = max(handled_at, named.at)
-    unhandled = [c for c in pr.comments
-                 if c.author == state.owner and c.at > handled_at]
-    return unhandled[-1] if unhandled else None
+    return [c for c in comments if c.author == owner and c.at > handled_at]
+
+
+def _newest_unhandled(state, pr):
+    left = unhandled(state.owner, state.bot, pr.comments)
+    return left[-1] if left else None
+
+
+def feedback_since(owner, comments, merge_id):
+    """The owner's comments on a PR after their /merge `merge_id` that
+    aren't another /merge: feedback, which cancels that /merge (D14)."""
+    merge = next((c for c in comments if c.id == merge_id), None)
+    if merge is None:
+        return []
+    return [c for c in comments if c.author == owner and c.at > merge.at
+            and c.body.strip() != "/merge"]
 
 
 def _parent_in_progress(state, item):
@@ -386,17 +410,19 @@ def _closed_ticket(state, item):
 
 
 def _in_review(state, item):
-    """A ticket whose PR waits for the owner: their "/merge" starts a merge
-    session, as long as nothing they said after it is still unhandled."""
+    """A ticket whose PR waits for the owner. Their newest unhandled comment
+    decides: "/merge" starts a merge session, anything else is feedback and
+    starts a fix-up session, which handles every comment queued before it.
+    Feedback after a /merge therefore cancels it (D14)."""
     pr = state.prs.get(item.number)
     if pr is None:
         return []
     newest = _newest_unhandled(state, pr)
-    if newest is None or newest.body.strip() != "/merge":
-        return []   # feedback waits for the fix-up role (#59)
+    if newest is None:
+        return []
+    role = "merge" if newest.body.strip() == "/merge" else "fixup"
     return [MakeWorktree(item.number, pr.head),
-            Launch("merge", item.number, pr=pr.number,
-                   handled_through=newest.id),
+            Launch(role, item.number, pr=pr.number, handled_through=newest.id),
             SetStatus(item.number, IN_PROGRESS)]
 
 
@@ -419,16 +445,20 @@ def _finished(state, session):
         # Merged is merged, even if the session then failed or ran out of
         # time before it could say so.
         return _merged(state, issue) + [Finish(session.role, issue)]
+    if session.role == "merge" and outcome.superseded:
+        # The owner said more after their /merge, which cancels it (D14), so
+        # merge-pr refused. Whatever the session then reported, the card goes
+        # back to review, where a fix-up picks the new comments up.
+        return _limit_pause(session) + [SetStatus(issue, IN_REVIEW),
+                                        Finish(session.role, issue)]
     result = session.result
-    if result is None and session.role in ("ticket", "merge"):
+    if result is None and session.role in ("ticket", "merge", "fixup"):
         # It reported nothing, but its work may be on GitHub anyway: the
-        # ticket session opened its PR, or the merge session posted its
-        # conflict reply, before it crashed or ran out of usage.
+        # ticket session opened its PR, or the merge or fix-up session
+        # posted its reply, before it crashed or ran out of usage.
         problem, actions = _DONE_CHECKS[session.role](state, session, outcome)
         if problem is None:
-            limit = ([PauseLaunches(session.limit_reset + LIMIT_MARGIN)]
-                     if session.limit_reset is not None else [])
-            return limit + actions + [Finish(session.role, issue)]
+            return _limit_pause(session) + actions + [Finish(session.role, issue)]
     if result is None and session.limit_reset is not None:
         return _usage_limited(state, session)
     if result is None and session.ended_by != "timeout":
@@ -436,8 +466,8 @@ def _finished(state, session):
     if result is None:
         problem = _timed_out(session)
     elif result.get("outcome") != "done":
-        problem = "the %s session failed: %s" % (session.role,
-                                                 result.get("reason", ""))
+        problem = "%s failed: %s" % (_the_session(session.role),
+                                     result.get("reason", ""))
     else:
         # A session's own "done" is only believed once GitHub shows the work.
         problem, actions = _DONE_CHECKS[session.role](state, session, outcome)
@@ -448,12 +478,25 @@ def _finished(state, session):
             Finish(session.role, issue)]
 
 
-# Where re-queued work goes back to wait: a merge to review, where its
-# /merge is still the owner's newest unhandled comment.
-REQUEUE = {"grill": TODO, "ticket": TODO, "merge": IN_REVIEW}
+# Where re-queued work goes back to wait: a merge or fix-up to review,
+# where the comment it answers is still the owner's newest unhandled one.
+REQUEUE = {"grill": TODO, "ticket": TODO, "merge": IN_REVIEW, "fixup": IN_REVIEW}
 
 # How long after the limit resets sessions start again (#48).
 LIMIT_MARGIN = 5 * 60
+
+
+def _limit_pause(session):
+    """Holding every launch back until the usage limit the session hit is
+    over, if it hit one."""
+    if session.limit_reset is None:
+        return []
+    return [PauseLaunches(session.limit_reset + LIMIT_MARGIN)]
+
+
+def _the_session(role):
+    """How comments name a role's session: "the fix-up session"."""
+    return "the %s session" % {"fixup": "fix-up"}.get(role, role)
 
 
 def _requeue(state, session, says, crashed=False):
@@ -470,9 +513,10 @@ def _requeue(state, session, says, crashed=False):
 
 def _usage_limited(state, session):
     until = session.limit_reset + LIMIT_MARGIN
-    hit = ("@%s autodev hit the Claude usage limit (the %s session said: "
+    hit = ("@%s autodev hit the Claude usage limit (%s said: "
            "\u201c%s\u201d), so it is paused until %s." % (
-               state.owner, session.role, session.limit_note, state.show_time(until)))
+               state.owner, _the_session(session.role), session.limit_note,
+               state.show_time(until)))
     issue = session.issue
     return [PauseLaunches(until)] + _requeue(state, session, (
         "%s #%d goes back to %s and starts again then." % (
@@ -490,22 +534,23 @@ def _crashed(state, session):
     how = ("its unit vanished, e.g. in a reboot" if session.ended_by is None
            else "systemd says \u201c%s\u201d" % session.ended_by)
     if state.crashes.get((role, issue), 0) == 0:
-        ended = "The %s session ended without reporting a result (%s)" % (role, how)
+        ended = "%s ended without reporting a result (%s)" % (
+            _the_session(role).capitalize(), how)
         return _requeue(state, session, (
             "%s, so autodev will run it once more." % ended,
             "%s. #%d stays Paused; it runs once more when you move it back to "
             "Todo." % (ended, issue)), crashed=True)
     return [SetStatus(issue, NEEDS_HUMAN),
-            Comment(issue, _parked(state, session, "the %s session crashed a "
-                                   "second time (%s)" % (role, how))),
+            Comment(issue, _parked(state, session, "%s crashed a second time "
+                                   "(%s)" % (_the_session(role), how))),
             Finish(role, issue, crashed=True)]
 
 
 def _timed_out(session):
     """Why a session that reported nothing at its time limit needs a human
     (crashes and usage limits are handled before this)."""
-    return "the %s session hit its %s time limit" % (
-        session.role, _duration(TIME_LIMITS[session.role]))
+    return "%s hit its %s time limit" % (
+        _the_session(session.role), _duration(TIME_LIMITS[session.role]))
 
 
 def _duration(seconds):
@@ -554,9 +599,20 @@ def _merge_done(state, session, outcome):
             "neither merged nor answered about a conflict" % session.pr), []
 
 
+def _fixup_done(state, session, outcome):
+    """(problem, actions): what a fix-up that says it's done leads to. Its
+    reply is what the owner reads before their next /merge; commits are
+    optional, since a question needs only an answer."""
+    if outcome.replied:
+        return None, [SetStatus(session.issue, IN_REVIEW)]
+    return ("the fix-up session said it was done, but GitHub shows no reply "
+            "on PR #%d marked as handling comment %d" % (
+                session.pr, session.handled_through)), []
+
+
 # How each role's "done" is checked against what GitHub shows.
 _DONE_CHECKS = {"grill": _grill_done, "ticket": _ticket_done,
-                "merge": _merge_done}
+                "merge": _merge_done, "fixup": _fixup_done}
 
 
 def _place_tickets(parent, tickets):
@@ -575,8 +631,8 @@ def _place_tickets(parent, tickets):
 def _parked(state, session, problem):
     return _bot_comment(
         "@%s autodev parked this issue: %s\n\n"
-        "To pick up where the %s session stopped: `%s`" % (
-            state.owner, problem, session.role,
+        "To pick up where %s stopped: `%s`" % (
+            state.owner, problem, _the_session(session.role),
             state.resume_command.format(session_id=session.session_id,
                                         cwd=session.cwd)))
 

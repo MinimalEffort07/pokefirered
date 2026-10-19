@@ -12,7 +12,7 @@ import tempfile
 import time
 import unittest
 
-from autodev import registry, sessions
+from autodev import dispatcher, registry, sessions
 from autodev.decide import Session
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -134,6 +134,34 @@ class LaunchCommand(unittest.TestCase):
         ])
         self.assertIn("/home/min/projects/minimaleffort/pokefirered-autodev"
                       "/automation/settings/merge.json", cmd)
+
+    def test_a_fix_up_session_gets_90_minutes_its_pr_and_the_comment(self):
+        cmd = sessions.launch_command(
+            CONFIG, "fixup", 68, "sid-f68",
+            "/home/min/autodev/logs/fixup-68.jsonl", "PROMPT",
+            pr=73, handled_through=9001)
+        for expected in (["--unit", "autodev-fixup-68"],
+                         ["-p", "RuntimeMaxSec=5400"],
+                         ["-p", "WorkingDirectory=/home/min/projects/minimaleffort/"
+                                "pokefirered-autodev-worktrees/issue-68"],
+                         ["--setenv=AUTODEV_ROLE=fixup", "--setenv=AUTODEV_PR=73",
+                          "--setenv=AUTODEV_HANDLED_THROUGH=9001"]):
+            with self.subTest(expected=expected):
+                self.assertTrue(any(cmd[i:i + len(expected)] == expected
+                                    for i in range(len(cmd))))
+        self.assertIn("/home/min/projects/minimaleffort/pokefirered-autodev"
+                      "/automation/settings/fixup.json", cmd)
+
+    def test_every_role_has_its_prompt_settings_and_outcome(self):
+        # The dispatcher reads prompts/<role>.md at launch, the session runs
+        # under settings/<role>.json, and once it ends the dispatcher reads
+        # what it left on GitHub; without that its record is never handled.
+        for role in sessions.TIME_LIMITS:
+            for path in (("prompts", role + ".md"), ("settings", role + ".json")):
+                with self.subTest(role=role, path=path):
+                    self.assertTrue(os.path.isfile(os.path.join(AUTOMATION, *path)))
+            with self.subTest(role=role):
+                self.assertIn(role, dispatcher.OUTCOMES)
 
     def test_the_result_schema_asks_for_an_outcome_and_a_reason(self):
         schema = json.loads(sessions.RESULT_SCHEMA)
@@ -504,6 +532,13 @@ class RolePermissions(unittest.TestCase):
         self.assertIn("Bash(git rebase:*)", merge)
         self.assertIn("Bash(python3 *automation/bin/issue.py *)",
                       self.rules("merge")["allow"])
+
+    def test_D25_a_fix_up_may_bring_its_branch_up_to_date_but_never_rebase(self):
+        # The owner may have pushed to the branch since the ticket session.
+        fixup = self.rules("fixup")
+        self.assertLessEqual(set(self.rules("ticket")["deny"]), set(fixup["deny"]))
+        self.assertIn("Bash(git rebase:*)", fixup["deny"])
+        self.assertIn("Bash(git pull --ff-only:*)", fixup["allow"])
 
     def test_ticket_and_fixup_roles_reach_github_only_through_issue_py(self):
         # They run the clone's copy by its full path (prompts/ticket.md):

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """A Claude session's only way to read or change GitHub issues.
 
-  python3 automation/bin/issue.py read <number>          an issue and its comments,
-                                                          untrusted authors withheld
+  python3 automation/bin/issue.py read <number>          an issue and its comments
+                                                          (a PR's reviews and inline
+                                                          comments too, the unhandled
+                                                          ones marked), untrusted
+                                                          authors withheld
   python3 automation/bin/issue.py comment < body.md       comment on your own issue
   python3 automation/bin/issue.py set-body < body.md      replace your issue's body
   python3 automation/bin/issue.py create-ticket --title T < body.md
@@ -13,17 +16,20 @@
                                                           from the branch checked out
                                                           in the current folder
   python3 automation/bin/issue.py pr-comment < body.md   reply on your PR, marked as
-                                                          handling the /merge you answer
+                                                          handling the comment you answer
   python3 automation/bin/issue.py merge-pr               merge your PR with a merge
                                                           commit of the commit checked
                                                           out here (it must be pushed
-                                                          and hold all of master)
+                                                          and hold all of master, and
+                                                          the owner must have said
+                                                          nothing since the /merge)
 
 "Your issue" is AUTODEV_ISSUE, which the dispatcher sets for each session.
 Grill sessions may comment, set-body and create-ticket; ticket sessions
-may comment and open-pr; merge sessions may pr-comment and merge-pr
-(AUTODEV_ROLE). A merge session's PR and the comment it answers are
-AUTODEV_PR and AUTODEV_HANDLED_THROUGH. Every rule is enforced in
+may comment and open-pr; merge sessions may pr-comment and merge-pr;
+fix-up sessions may pr-comment (AUTODEV_ROLE). A merge or fix-up session's
+PR and the newest comment it answers are AUTODEV_PR and
+AUTODEV_HANDLED_THROUGH. Every rule is enforced in
 automation/autodev/issue_tool.py.
 """
 
@@ -61,7 +67,8 @@ def main():
         issue = _env("AUTODEV_ISSUE")
         if args.command == "merge-pr":
             issue_tool.merge_pr(gh, config, issue, _env("AUTODEV_PR"),
-                                _git("rev-parse", "HEAD"))
+                                _git("rev-parse", "HEAD"),
+                                _env("AUTODEV_HANDLED_THROUGH"))
             print("merged")
             return 0
         body = sys.stdin.read()

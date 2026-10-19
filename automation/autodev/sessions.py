@@ -29,7 +29,8 @@ from dataclasses import dataclass
 from autodev import worktrees
 
 # Time limits per role, in seconds (#48, Sessions).
-TIME_LIMITS = {"grill": 60 * 60, "ticket": 3 * 60 * 60, "merge": 45 * 60}
+TIME_LIMITS = {"grill": 60 * 60, "ticket": 3 * 60 * 60, "merge": 45 * 60,
+               "fixup": 90 * 60}
 
 # What every session must report when it ends. The dispatcher only
 # believes "done" after checking GitHub (decide.py).

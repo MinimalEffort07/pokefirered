@@ -14,7 +14,8 @@
       "Bash(git push -u origin issue-*)", "Bash(git push origin issue-*)",
       "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)",
       "Bash(grep:*)", "Bash(find:*)", "Bash(mkdir:*)",
-      "Bash(mv /tmp/mgba-recordings/*)", "Bash(ffmpeg:*)"
+      "Bash(mv /tmp/mgba-recordings/*)", "Bash(ffmpeg:*)",
+      "Bash(git pull --ff-only:*)"
     ],
     "deny": [
       "WebFetch", "WebSearch",
@@ -29,7 +30,8 @@
       "Bash(*pret/pokefirered*)", "Bash(git* upstream*)", "Bash(*AUTODEV_*)",
       "Bash(python3 automation/bin/issue.py*)", "Bash(python3 ./automation/bin/issue.py*)",
       "Bash(*python3 bin/issue.py*)", "Bash(*-worktrees/*issue.py*)",
-      "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)", "Bash(rm -rf $HOME*)"
+      "Bash(rm -rf /*)", "Bash(rm -rf ~*)", "Bash(rm -rf ..*)", "Bash(rm -rf $HOME*)",
+      "Bash(git rebase:*)"
     ]
   }
 }

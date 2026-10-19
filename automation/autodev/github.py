@@ -6,8 +6,9 @@ GH_TOKEN, and gh uses it for every call.
 """
 
 from autodev.board import issue_numbers, section
-from autodev.decide import (HANDLED_THROUGH, GrillOutcome, MergeOutcome,
-                            PrComment, PullRequest, Ticket, TicketOutcome)
+from autodev.decide import (HANDLED_THROUGH, FixupOutcome, GrillOutcome,
+                            MergeOutcome, PrComment, PullRequest, Ticket,
+                            TicketOutcome, feedback_since)
 from autodev.worktrees import branch_prefix
 
 # The grill session marks its design comment with this hidden tag
@@ -142,34 +143,51 @@ class GitHub:
         pr = self._find_ticket_pr(number)
         if pr is None:
             return None
-        return PullRequest(number=pr["number"], head=pr["head"]["ref"],
-                           comments=self._timeline(pr["number"]) if comments else ())
-
-    def _timeline(self, pr):
-        """Everything said on a PR, oldest first: comments in its
-        conversation, reviews, and inline review comments. GitHub keeps
-        the three apart, and a review is dated by when it was submitted."""
-        repo = self.config.repo
-        said = [PrComment(c["id"], c["user"]["login"], c["body"] or "", c["created_at"])
-                for path in ("repos/%s/issues/%d/comments" % (repo, pr),
-                             "repos/%s/pulls/%d/comments" % (repo, pr))
-                for c in self.gh.rest_list(path)]
-        # An approval with nothing written says nothing to act on.
-        said += [PrComment(r["id"], r["user"]["login"], r["body"], r["submitted_at"])
-                 for r in self.gh.rest_list("repos/%s/pulls/%d/reviews" % (repo, pr))
-                 if r["body"]]
-        return tuple(sorted(said, key=lambda c: c.at))
+        return PullRequest(
+            number=pr["number"], head=pr["head"]["ref"],
+            comments=pr_timeline(self.gh, self.config.repo, pr["number"])
+            if comments else ())
 
     def merge_outcome(self, pr, handled_through):
-        """Whether the PR is merged, and whether the bot replied on it
-        naming the /merge comment the merge session answered."""
+        """Whether the PR is merged, whether the bot replied on it naming
+        the /merge comment the merge session answered, and whether the
+        owner said more after that /merge."""
         repo = self.config.repo
         merged = self.gh.rest("GET", "repos/%s/pulls/%d" % (repo, pr))["merged"]
-        replied = any(
-            c["user"]["login"] == self.config.bot
-            and _handles(c["body"], handled_through)
-            for c in self.gh.rest_list("repos/%s/issues/%d/comments" % (repo, pr)))
-        return MergeOutcome(merged=merged, replied=replied)
+        said = pr_timeline(self.gh, repo, pr)
+        return MergeOutcome(
+            merged=merged, replied=self._replied(said, handled_through),
+            superseded=bool(feedback_since(self.config.owner, said, handled_through)))
+
+    def fixup_outcome(self, pr, handled_through):
+        """Whether the bot replied on the PR naming the comment the fix-up
+        session was started for."""
+        said = pr_timeline(self.gh, self.config.repo, pr)
+        return FixupOutcome(replied=self._replied(said, handled_through))
+
+    def _replied(self, said, comment_id):
+        return any(c.author == self.config.bot and _handles(c.body, comment_id)
+                   for c in said)
+
+
+def pr_timeline(gh, repo, pr):
+    """Everything said on a PR (PrComment), oldest first: comments in its
+    conversation, reviews, and inline review comments. GitHub keeps the
+    three apart, and a review is dated by when it was submitted."""
+    said = [PrComment(c["id"], c["user"]["login"], c["body"] or "", c["created_at"])
+            for c in gh.rest_list("repos/%s/issues/%d/comments" % (repo, pr))]
+    # An inline comment on a line a later push changed has no `line` any
+    # more; `original_line` is where it was made.
+    said += [PrComment(c["id"], c["user"]["login"], c["body"] or "", c["created_at"],
+                       kind="inline comment", where="%s line %s" % (
+                           c["path"], c.get("line") or c.get("original_line")))
+             for c in gh.rest_list("repos/%s/pulls/%d/comments" % (repo, pr))]
+    # An approval with nothing written says nothing to act on.
+    said += [PrComment(r["id"], r["user"]["login"], r["body"], r["submitted_at"],
+                       kind="review")
+             for r in gh.rest_list("repos/%s/pulls/%d/reviews" % (repo, pr))
+             if r["body"]]
+    return tuple(sorted(said, key=lambda c: c.at))
 
 
 def _handles(body, comment_id):

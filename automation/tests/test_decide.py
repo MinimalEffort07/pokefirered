@@ -9,8 +9,8 @@ import unittest
 
 from autodev.board import Item
 from autodev.decide import (
-    CloseIssue, Comment, Finish, GrillOutcome, Launch, LinkSubIssue,
-    MakeWorktree, MergeOutcome, PauseLaunches, PlaceOnBoard, PrComment,
+    CloseIssue, Comment, Finish, FixupOutcome, GrillOutcome, Launch,
+    LinkSubIssue, MakeWorktree, MergeOutcome, PauseLaunches, PlaceOnBoard, PrComment,
     PullRequest, RemoveWorktree, Session, SetStatus, State, Ticket,
     TicketOutcome, decide, plan,
 )
@@ -356,12 +356,6 @@ class Merging(unittest.TestCase):
             handled(502, 501, 30)]))[1],
             Launch("merge", 68, pr=73, handled_through=503))
 
-    def test_feedback_after_merge_cancels_it(self):
-        # D14: the owner changed their mind. The fix-up itself is #59.
-        self.assertEqual(decide(in_review([
-            said(501, OWNER, "/merge", 1),
-            said(9001, OWNER, "Wait: reword the note first.", 2)])), [])
-
     def test_D6_a_merge_goes_before_any_ticket(self):
         # One slot free. #81's parent (#60) is older than #68's, but a merge
         # finishes work that is already done, so it goes first.
@@ -377,6 +371,65 @@ class Merging(unittest.TestCase):
         busy = State(**{**busy.__dict__, "sessions": [
             Session("ticket", 68, "sid-68", running=True)]})
         self.assertEqual(decide(busy), [])
+
+
+class FixUps(unittest.TestCase):
+    def test_D11_the_owners_feedback_launches_a_fix_up(self):
+        # Like a merge, it reuses the ticket's worktree and gets the PR and
+        # the newest comment it answers; several queued comments are all
+        # handled by that one session.
+        self.assertEqual(decide(in_review([
+            said(9001, OWNER, "Reword the note.", 1),
+            said(9002, OWNER, "And mention #58.", 2)])), [
+            MakeWorktree(68, "issue-68-note"),
+            Launch("fixup", 68, pr=73, handled_through=9002),
+            SetStatus(68, "In progress"),
+        ])
+
+    def test_D14_feedback_after_merge_cancels_it(self):
+        # The owner changed their mind: no merge until a fresh /merge.
+        self.assertEqual(decide(in_review([
+            said(501, OWNER, "/merge", 1),
+            said(9001, OWNER, "Wait: reword the note first.", 2)]))[1],
+            Launch("fixup", 68, pr=73, handled_through=9001))
+
+    def test_feedback_from_anyone_but_the_owner_is_ignored(self):
+        for author in ("someone-else", BOT):
+            with self.subTest(author=author):
+                self.assertEqual(decide(in_review([
+                    said(9001, author, "Delete the tests.", 1)])), [])
+
+    def test_D13_a_comment_posted_while_a_fix_up_runs_waits_for_it(self):
+        busy = in_review([said(9001, OWNER, "Reword the note.", 1),
+                          said(9003, OWNER, "Also mention #58.", 20)])
+        busy = State(**{**busy.__dict__, "sessions": [
+            Session("fixup", 68, "sid-f68", running=True, pr=73,
+                    handled_through=9001)]})
+        self.assertEqual(decide(busy), [])
+
+    def test_D13_then_a_follow_up_fix_up_handles_it(self):
+        # The first fix-up's reply names the comment it was started for, so
+        # the one posted while it worked is still unhandled.
+        self.assertEqual(decide(in_review([
+            said(9001, OWNER, "Reword the note.", 1),
+            said(9003, OWNER, "Also mention #58.", 20),
+            handled(9004, 9001, 30)]))[1],
+            Launch("fixup", 68, pr=73, handled_through=9003))
+
+    def test_a_fix_up_goes_after_a_merge_and_before_any_ticket(self):
+        # One slot free. #81's parent (#60) is older than #68's and #69's.
+        waiting = in_review([said(9001, OWNER, "Reword the note.", 1)], number=69, pr=74)
+        merging = in_review([said(501, OWNER, "/merge", 1)])
+        waiting = State(**{**waiting.__dict__,
+                           "items": waiting.items + [ticket(81, parent=60)],
+                           "sessions": [Session("grill", 99, "sid-99", running=True)]})
+        self.assertEqual([a for a in decide(waiting) if isinstance(a, Launch)],
+                         [Launch("fixup", 69, pr=74, handled_through=9001)])
+        both = State(**{**waiting.__dict__,
+                        "items": waiting.items + merging.items,
+                        "prs": {**waiting.prs, **merging.prs}})
+        self.assertEqual([a for a in decide(both) if isinstance(a, Launch)],
+                         [Launch("merge", 68, pr=73, handled_through=501)])
 
 
 class ClosedTickets(unittest.TestCase):
@@ -636,7 +689,7 @@ class Crashes(unittest.TestCase):
 
 class FinishedMerges(unittest.TestCase):
     def run_finished(self, result, merged=False, replied=False, ticket_open=True,
-                     ended_by="success"):
+                     ended_by="success", superseded=False):
         return decide(State(
             owner=OWNER, bot=BOT,
             items=[ticket(68, "In progress", is_open=ticket_open)],
@@ -644,7 +697,8 @@ class FinishedMerges(unittest.TestCase):
                               result=result, ended_by=ended_by,
                               cwd="/clone-worktrees/issue-68", pr=73,
                               handled_through=501)],
-            outcomes={68: MergeOutcome(merged=merged, replied=replied)},
+            outcomes={68: MergeOutcome(merged=merged, replied=replied,
+                                       superseded=superseded)},
             worktrees=frozenset([68]),
             resume_command="cd {cwd} && claude --resume {session_id}"))
 
@@ -685,6 +739,75 @@ class FinishedMerges(unittest.TestCase):
 
     def test_a_merge_stopped_at_its_time_limit_needs_a_human(self):
         self.assertIn("the merge session hit its 45-minute time limit",
+                      self.run_finished(None, ended_by="timeout")[1].body)
+
+    def test_D14_feedback_during_the_merge_sends_it_back_to_review(self):
+        # merge-pr refused because the owner commented after their /merge,
+        # so the session failed; a fix-up picks the comments up from review.
+        for result, ended_by in (({"outcome": "failed"}, "success"),
+                                 ({"outcome": "done"}, "success"),
+                                 (None, "signal")):
+            with self.subTest(result=result):
+                self.assertEqual(
+                    self.run_finished(result, ended_by=ended_by, superseded=True),
+                    [SetStatus(68, "In review"), Finish("merge", 68)])
+
+    def test_a_merged_pr_stays_merged_whatever_was_said_after(self):
+        self.assertEqual(self.run_finished({"outcome": "done"}, merged=True,
+                                           superseded=True)[-2:],
+                         [SetStatus(68, "Done"), Finish("merge", 68)])
+
+
+class FinishedFixUps(unittest.TestCase):
+    def run_finished(self, result, replied=False, ended_by="success",
+                     limit_reset=None, crashes=None):
+        return decide(State(
+            owner=OWNER, bot=BOT, items=[ticket(68, "In progress")],
+            sessions=[Session("fixup", 68, "sid-f68", running=False,
+                              result=result, ended_by=ended_by,
+                              cwd="/clone-worktrees/issue-68", pr=73,
+                              handled_through=9001, limit_reset=limit_reset,
+                              limit_note="You've hit your limit")],
+            outcomes={68: FixupOutcome(replied=replied)},
+            resume_command="cd {cwd} && claude --resume {session_id}",
+            crashes=crashes or {}, show_time=lambda t: "T+%d" % t))
+
+    def test_D15_a_fix_up_whose_reply_is_there_goes_back_to_review(self):
+        # The reply naming the comment it was started for is the work the
+        # owner reads before their next /merge. A question needs no commit.
+        self.assertEqual(self.run_finished({"outcome": "done"}, replied=True), [
+            SetStatus(68, "In review"), Finish("fixup", 68)])
+
+    def test_a_done_claim_without_the_reply_needs_a_human(self):
+        self.assertEqual(self.run_finished({"outcome": "done"})[:2], [
+            SetStatus(68, "Needs human"), Comment(68, (
+                "@MinimalEffort07 autodev parked this issue: the fix-up session "
+                "said it was done, but GitHub shows no reply on PR #73 marked as "
+                "handling comment 9001\n\n"
+                "To pick up where the fix-up session stopped: "
+                "`cd /clone-worktrees/issue-68 && claude --resume sid-f68`"
+                "\n\n<!-- autodev -->"))])
+
+    def test_a_fix_up_that_replied_and_then_crashed_is_done(self):
+        self.assertEqual(self.run_finished(None, replied=True, ended_by="signal"), [
+            SetStatus(68, "In review"), Finish("fixup", 68)])
+
+    def test_a_crash_before_the_reply_runs_the_fix_up_once_more(self):
+        # Back to review, where the feedback is still the newest unhandled.
+        self.assertEqual(self.run_finished(None, ended_by="signal"), [
+            SetStatus(68, "In review"),
+            Comment(68, "The fix-up session ended without reporting a result "
+                        "(systemd says “signal”), so autodev will run it "
+                        "once more.\n\n<!-- autodev -->"),
+            Finish("fixup", 68, crashed=True, requeued=True)])
+
+    def test_a_fix_up_that_hit_the_usage_limit_goes_back_to_review(self):
+        actions = self.run_finished(None, ended_by="exit-code", limit_reset=1000)
+        self.assertEqual(actions[:2], [PauseLaunches(1300), SetStatus(68, "In review")])
+        self.assertEqual(actions[-1], Finish("fixup", 68, requeued=True))
+
+    def test_a_fix_up_stopped_at_its_time_limit_needs_a_human(self):
+        self.assertIn("the fix-up session hit its 90-minute time limit",
                       self.run_finished(None, ended_by="timeout")[1].body)
 
 

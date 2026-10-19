@@ -12,7 +12,7 @@ import unittest
 
 from autodev.board import Board, Item
 from autodev.config import Config
-from autodev.decide import MergeOutcome, PrComment
+from autodev.decide import FixupOutcome, MergeOutcome, PrComment
 from autodev.github import GitHub
 from autodev.registry import Registry
 from autodev.sessions import SessionConfig
@@ -105,8 +105,14 @@ class TicketPRs(unittest.TestCase):
 PR73 = "repos/MinimalEffort07/pokefirered/pulls/73"
 
 
-def remark(id, author, body, at, when="created_at"):
-    return {"id": id, "user": {"login": author}, "body": body, when: at}
+def remark(id, author, body, at, when="created_at", **more):
+    return {"id": id, "user": {"login": author}, "body": body, when: at, **more}
+
+
+def inline(id, author, body, at, path="automation/README.md", line=12,
+           original_line=12):
+    return remark(id, author, body, at, path=path, line=line,
+                  original_line=original_line)
 
 
 class TicketPRTimeline(unittest.TestCase):
@@ -124,13 +130,20 @@ class TicketPRTimeline(unittest.TestCase):
                 remark(3, "MinimalEffort07", "", "2026-10-19T06:04:00Z",
                        when="submitted_at")],
             PR73 + "/comments": [
-                remark(4, "stranger", "Inline nit", "2026-10-19T06:01:00Z")],
+                inline(4, "stranger", "Inline nit", "2026-10-19T06:01:00Z"),
+                # On a line a later push changed: GitHub keeps where it was.
+                inline(5, "MinimalEffort07", "Typo", "2026-10-19T06:02:00Z",
+                       line=None, original_line=7)],
         }
         found = GitHub(FakeRest(gets), CONFIG, BOARD).ticket_pr(68)
         self.assertEqual((found.number, found.head), (73, "issue-68-note"))
         self.assertEqual(found.comments, (
-            PrComment(4, "stranger", "Inline nit", "2026-10-19T06:01:00Z"),
-            PrComment(2, "MinimalEffort07", "Reword the note.", "2026-10-19T06:03:00Z"),
+            PrComment(4, "stranger", "Inline nit", "2026-10-19T06:01:00Z",
+                      kind="inline comment", where="automation/README.md line 12"),
+            PrComment(5, "MinimalEffort07", "Typo", "2026-10-19T06:02:00Z",
+                      kind="inline comment", where="automation/README.md line 7"),
+            PrComment(2, "MinimalEffort07", "Reword the note.", "2026-10-19T06:03:00Z",
+                      kind="review"),
             PrComment(1, "MinimalEffort07", "/merge", "2026-10-19T06:05:00Z"),
         ))
 
@@ -139,16 +152,46 @@ class TicketPRTimeline(unittest.TestCase):
         self.assertIsNone(github.ticket_pr(68))
 
 
+MERGE = remark(501, "MinimalEffort07", "/merge", "2026-10-19T06:10:00Z")
+
+
+def pr_said(comments=(), reviews=(), inline_comments=()):
+    """The three lists GitHub keeps for what was said on PR #73."""
+    return {ISSUES + "/73/comments": list(comments),
+            PR73 + "/reviews": list(reviews),
+            PR73 + "/comments": list(inline_comments)}
+
+
 class MergeOutcomes(unittest.TestCase):
     """D21 and the conflict path: what a finished merge session left."""
 
-    def outcome(self, merged, comments):
+    def outcome(self, merged, comments, **said):
         gets = {PR73: {"number": 73, "merged": merged},
-                ISSUES + "/73/comments": comments}
+                **pr_said([MERGE] + comments, **said)}
         return GitHub(FakeRest(gets), CONFIG, BOARD).merge_outcome(73, 501)
 
     def test_merged_is_read_from_the_pr(self):
         self.assertEqual(self.outcome(True, []), MergeOutcome(merged=True, replied=False))
+
+    def test_D14_the_owners_feedback_after_the_merge_supersedes_it(self):
+        # merge-pr refuses then, and the card goes back to review.
+        later, earlier = "2026-10-19T06:20:00Z", "2026-10-19T06:05:00Z"
+        for said, superseded in [
+            ({"comments": [remark(9, "MinimalEffort07", "Wait.", later)]}, True),
+            ({"reviews": [remark(9, "MinimalEffort07", "Wait.", later,
+                                 when="submitted_at")]}, True),
+            ({"inline_comments": [inline(9, "MinimalEffort07", "Wait.", later)]}, True),
+            # Nobody else can cancel the owner's /merge.
+            ({"comments": [remark(9, "stranger", "Wait.", later)]}, False),
+            # A second /merge only repeats the approval.
+            ({"comments": [remark(9, "MinimalEffort07", "/merge", later)]}, False),
+            # Feedback the /merge came after is what it approved.
+            ({"inline_comments": [inline(9, "MinimalEffort07", "Nit", earlier)]}, False),
+        ]:
+            with self.subTest(said=said):
+                comments = said.pop("comments", [])
+                self.assertEqual(self.outcome(False, comments, **said).superseded,
+                                 superseded)
 
     def test_only_the_bots_reply_naming_that_merge_counts_as_its_answer(self):
         marker = "Resolved.\n\n<!-- autodev handled-through: %d -->"
@@ -161,6 +204,25 @@ class MergeOutcomes(unittest.TestCase):
         ]:
             with self.subTest(comments=comments):
                 self.assertEqual(self.outcome(False, comments).replied, replied)
+
+
+class FixupOutcomes(unittest.TestCase):
+    """D15 for fix-ups: the reply naming the comment it was started for."""
+
+    def outcome(self, comments):
+        gets = pr_said(comments)
+        return GitHub(FakeRest(gets), CONFIG, BOARD).fixup_outcome(73, 9001)
+
+    def test_only_the_bots_reply_naming_that_comment_counts(self):
+        marker = "Reworded it.\n\n<!-- autodev handled-through: %d -->"
+        for comments, replied in [
+            ([remark(9, "MinimalEffort07-Autodev", marker % 9001, "t")], True),
+            ([remark(9, "MinimalEffort07-Autodev", marker % 400, "t")], False),
+            ([remark(9, "MinimalEffort07", marker % 9001, "t")], False),
+            ([], False),
+        ]:
+            with self.subTest(comments=comments):
+                self.assertEqual(self.outcome(comments), FixupOutcome(replied=replied))
 
 
 class Pruning(unittest.TestCase):
