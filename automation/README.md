@@ -94,3 +94,5 @@ What they cover:
 - **`test_issue_tool.py`:** checks `bin/issue.py`'s rules: untrusted authors' text is withheld, comments get the marker, and a ticket must name its parent and is created without labels and linked as a sub-issue.
 - **`test_github.py`:** checks what the dispatcher accepts as a finished grill's work: only the bot's comment with the design marker, and only open issues whose `## Parent` names the parent, with their blockers checked. It also covers deleting session files older than 30 days.
 - **Failures:** if one of a tick's actions fails, the tick logs it and skips the rest of that issue's actions, but carries on with the others.
+
+**Live check:** the grill path (#55) was checked live on 2026-10-19, on issue #67: autodev grilled it and broke it into tickets with nobody watching.
