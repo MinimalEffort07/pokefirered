@@ -169,6 +169,22 @@ python3 -I test/tools/render_cave.py /tmp/mgba-test.XXXXXX/MtMoon_B2F_64f4.txt -
 
 `run_test.sh` prints the run's output directory (`/tmp/mgba-test.XXXXXX`). With no settings, `dump_mtmoon_grid.lua` dumps the three "after" caves above. The demo GIF is `test/tests/demo_mt_moon.lua`, which is also a test of its own story (the arrival on every floor, the fossil, Miguel, under 45 seconds); its header has the commands that record it and turn it into the GIF.
 
+## Tests
+
+Every test is a Lua script in `test/tests/` that boots the ROM in mGBA's headless emulator and plays the game by pressing buttons and reading memory (`test/lib/framework.lua` explains how). Build first with `make -j$(nproc) firered`; the tests run `pokefirered.gba`.
+
+```bash
+bash test/run_test.sh test/tests/test_pc_anywhere.lua     # exit code 0 = pass, 1 = fail
+bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA window, recorded to video
+```
+
+**A test can only pass by proving something:**
+
+- A test passes only if it made at least one assertion (`fw.assert_true`, `fw.assert_eq`, `fw.assert_neq`) and none of them failed. A test that reaches `fw.finish()` with zero assertions fails with "0 assertions", so a test whose checks were all skipped, or only logged, can't pass.
+- If booting a new game to character select fails, the test fails with "boot to character select failed", even when it gives up before its first assertion. To check a test's failure path in about a second, fake that failure: `MGBA_TEST_FAKE_BOOT_FAILURE=1 bash test/run_test.sh test/tests/<test>.lua`.
+- Demos and probes that only make frames, screenshots or logs for a person to look at assert nothing. Each one says so at the top with `fw.allow_no_assertions(reason)` and then passes with zero assertions; a failed assertion, a crash or a failed boot still fails it. They are `demo_lr_page_scroll`, `demo_pc_anywhere`, `demo_pp_items_in_marts`, `demo_slaveless_hm`, `demo_type_effectiveness_colors`, `test_char_midwalk_screenshot` and `test_fast_forward_gui` (which can only check anything in the mGBA window). Run them on their own, or record them with `record_test.sh`.
+- `test/tests/test_framework_rules.lua` checks these rules: it runs the small scripts in `test/tests/framework_fixtures/` through `run_test.sh` and checks each exit code and message.
+
 This is a decompilation of English Pokémon FireRed and LeafGreen.
 
 It builds the following ROM images:
