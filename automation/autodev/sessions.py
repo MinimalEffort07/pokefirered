@@ -119,8 +119,13 @@ def launch_command(config, role, issue, session_id, log_path, prompt,
 
 
 def read_result(log_path):
-    """The session's structured result, or None if it never reported one
-    (it crashed, was stopped at its time limit, or is still running)."""
+    """The session's last structured result, or None if it never reported
+    one (it crashed, was stopped at its time limit, or is still running).
+
+    A session can log more than one "result" event: each turn of a `-p`
+    session ends with one, and a background job finishing after the
+    session reported wakes it for another turn. So the newest event that
+    carries a report wins, and later events without one are skipped."""
     try:
         with open(log_path) as f:
             lines = f.readlines()
@@ -131,8 +136,7 @@ def read_result(log_path):
             event = json.loads(line)
         except ValueError:
             continue
-        if event.get("type") == "result":
-            if event.get("is_error"):
-                return None
-            return event.get("structured_output")
+        if (event.get("type") == "result" and not event.get("is_error")
+                and event.get("structured_output") is not None):
+            return event["structured_output"]
     return None

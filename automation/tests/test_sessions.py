@@ -234,6 +234,27 @@ class ReadingResults(unittest.TestCase):
         finally:
             os.remove(tmp)
 
+    def test_the_last_report_counts_even_if_the_session_woke_again_after(self):
+        # Seen live on #73's merge: after reporting, a background job's
+        # notification woke the session once more, and that turn ended with
+        # a result event carrying no report. An earlier "failed" sent while
+        # a command was still running is overridden by the later "done".
+        events = [
+            {"type": "result", "subtype": "success", "is_error": False,
+             "structured_output": {"outcome": "failed", "reason": "too early"}},
+            {"type": "result", "subtype": "success", "is_error": False,
+             "structured_output": {"outcome": "done", "reason": "merged"}},
+            {"type": "result", "subtype": "success", "is_error": False,
+             "structured_output": None},
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write("\n".join(json.dumps(e) for e in events) + "\n")
+        try:
+            self.assertEqual(sessions.read_result(f.name),
+                             {"outcome": "done", "reason": "merged"})
+        finally:
+            os.remove(f.name)
+
     def test_a_missing_log_has_no_result(self):
         self.assertIsNone(sessions.read_result("/nonexistent/grill-61.jsonl"))
 
