@@ -2,7 +2,7 @@
 
 Autodev runs this repo's GitHub Issue Workflow (CLAUDE.md steps 1–13) on its own. You add an issue to the **pokefirered autodev** board. A headless Claude Code session grills it, taking every recommended answer, and breaks it into tickets. Other sessions implement the tickets and open PRs. Nothing reaches master until you comment `/merge` on the PR. The full design is on issue #48.
 
-> **Status:** grilling (#55), implementation (#56), merging (#57), pausing and failure handling (#58) and fix-ups (#59) work. An issue you add to the board gets grilled into a design and tickets. Each ticket is implemented in its own worktree as soon as nothing blocks it, ending in a PR that waits for you. Feedback on that PR gets a fix-up; your `/merge` gets it merged, and the ticket and, in the end, the parent are closed. `Paused` stops work; usage limits and crashes are ridden out. The live canary (#60) comes next.
+> **Status:** grilling (#55), implementation (#56), merging (#57), pausing and failure handling (#58) and fix-ups (#59) work. An issue you add to the board gets grilled into a design and tickets. Each ticket is implemented in its own worktree as soon as nothing blocks it, ending in a PR that waits for you. Feedback on that PR gets a fix-up; your `/merge` gets it merged, and the ticket and, in the end, the parent are closed. `Paused` stops work; usage limits and crashes are ridden out. The main README's "Autodev" section is the short guide, and its demo is the live canary (#83, from #60).
 
 ## What happens to an issue you add
 

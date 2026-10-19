@@ -1,6 +1,6 @@
 # Pokémon FireRed and LeafGreen
 
-This is a fork of the PRET project with custom features. Development is AI-assisted (Claude Code) with human review and direction.
+This is a fork of the PRET project with custom features. Development is AI-assisted (Claude Code) with human review and direction; [Autodev](#autodev) takes issues all the way to a PR that waits for approval by itself.
 
 ## Added Features
 
@@ -88,6 +88,56 @@ bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA
 - If booting a new game to character select fails, the test fails with "boot to character select failed", even when it gives up before its first assertion. To check a test's failure path in about a second, fake that failure: `MGBA_TEST_FAKE_BOOT_FAILURE=1 bash test/run_test.sh test/tests/<test>.lua`.
 - Demos and probes only make frames, screenshots or logs for a person to look at, so they assert nothing. Each one says so with `fw.allow_no_assertions(reason)` and then passes with zero assertions; a failed assertion, a crash or a failed boot still fails it. In `test/tests/` they are `demo_lr_page_scroll`, `demo_pc_anywhere`, `demo_pp_items_in_marts`, `demo_slaveless_hm`, `demo_type_effectiveness_colors` and `test_char_midwalk_screenshot`, plus `test_fast_forward_gui` when it skips itself under the headless emulator (in the mGBA window it asserts). In `test/tools/` they are `explore_route1`, `probe_route1_fixture` and `test_route1_movement`. The whole-suite run leaves the ones in `test/tests/` out (`test/suite_exclude.txt`); run them on their own, or record them with `record_test.sh`.
 - `test/tests/test_framework_rules.lua` checks these rules: it runs the small scripts in `test/tests/framework_fixtures/` through `run_test.sh` and checks each exit code and message.
+
+## Autodev
+
+Autodev takes an issue from the board to a merged PR with nobody at the keyboard. It runs this repo's GitHub Issue Workflow (CLAUDE.md, steps 1–13) with headless Claude Code sessions that act as a bot account, and nothing reaches master until you comment `/merge`. The design is on [#48](https://github.com/MinimalEffort07/pokefirered/issues/48), and [automation/README.md](automation/README.md) has every detail. **The demo is the canary, [#83](https://github.com/MinimalEffort07/pokefirered/issues/83):** a throwaway issue that went all the way from grilling to merge with nobody steering it.
+
+**What it does.** Add one of your issues to the **pokefirered autodev** board. A dispatcher, started every 2 minutes by a systemd user timer, moves it on:
+
+1. A grill session designs it by itself, taking every recommended answer, posts the design on the issue, and breaks it into tickets.
+2. Each ticket whose blockers are all closed gets its own worktree and a ticket session: TDD, a clean build, `run_suite.sh`, a recording if the game changes, the README, a code review, then a PR that @mentions you.
+3. Your feedback on the PR starts a fix-up session. Your `/merge` starts a merge session, which merges master in, tests that exact tree again, and merges with a merge commit.
+4. Once every ticket of the issue is closed, the issue is closed too.
+
+At most 2 sessions run at once. Only your issues, and the tickets the bot writes for them, are run, and only your text and the bot's ever reaches a session: anyone else's issue is parked, and their comments are withheld. A usage limit pauses everything until it resets, and a crashed session is run once more before it is parked.
+
+**Setup.** Run two scripts, both safe to run again:
+
+```bash
+bash automation/wizard.sh   # what only a person can do: the bot account and its token, gh's project scope, the Windows logon task
+bash automation/setup.sh    # the rest: the board, the bot's access, the master rulesets, autodev's own clone, the systemd units
+```
+
+**The board.** Each card's Status says where it is:
+
+| Status | Meaning |
+|---|---|
+| `Todo` | Waiting for the dispatcher. A card with no Status counts as `Todo`. |
+| `Grilling` | A parent issue is being grilled. |
+| `Blocked` | A ticket is waiting for an issue under its `## Blocked by` heading to close. |
+| `In progress` | A parent's tickets are in flight, or a session is running for a ticket. |
+| `In review` | A ticket's PR is waiting for your `/merge` or your feedback. |
+| `Needs human` | Parked after a failure. The bot's latest comment says why. |
+| `Paused` | Your stop switch for that card. |
+| `Done` | Closed. |
+
+**What you do:**
+
+- **Approve a merge:** comment exactly `/merge` on the PR. It counts only while it is your newest comment there.
+- **Give feedback:** leave any other comment, review or inline comment on the PR. A fix-up session deals with everything you've said, pushes, and replies; then the PR waits for you again. Feedback after a `/merge` cancels it.
+- **Pause one item:** set its card, or its parent's, to `Paused`. Nothing new starts for it, and a session already running finishes its run. Move the card back to `Todo` to carry on.
+- **Stop everything:** `systemctl --user stop autodev.timer` stops the ticks; sessions already running carry on (`systemctl --user list-units 'autodev-*'` lists them). `systemctl --user start autodev.timer` starts it again.
+
+**Logs.** Each tick logs what it saw and did to the journal: `journalctl --user -u autodev-dispatcher -f`. Each session's full log is `~/autodev/logs/<role>-<issue>-<time>.jsonl`, kept for 30 days.
+
+**Resuming a parked session.** A `Needs human` comment @mentions you, says what went wrong, and ends with a command that reopens the session interactively, exactly where it stopped:
+
+```bash
+cd ~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-68 && CLAUDE_CONFIG_DIR=~/.claude-personal claude --resume <session-id>
+```
+
+Once it's sorted, move the card back to `Todo`. Autodev carries on from where things stand: a parent that already has tickets isn't grilled again, and a ticket whose PR is open goes back to `In review`.
 
 ## Mt. Moon generator
 
