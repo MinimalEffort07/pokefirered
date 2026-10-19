@@ -12,9 +12,13 @@
 
 set -euo pipefail
 
-OWNER="MinimalEffort07"
-REPO="MinimalEffort07/pokefirered"
-BOARD_TITLE="pokefirered autodev"
+HERE=$(cd "$(dirname "$0")" && pwd)
+# Owner, repo and board title come from the dispatcher's own config, so
+# the two can't disagree.
+config() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$HERE/config.json" "$1"; }
+OWNER=$(config owner)
+REPO=$(config repo)
+BOARD_TITLE=$(config board_title)
 MAIN_CHECKOUT="$HOME/projects/minimaleffort/pokefirered"
 CLONE="$HOME/projects/minimaleffort/pokefirered-autodev"
 ENV_FILE="$HOME/.config/autodev/env"
@@ -46,7 +50,7 @@ echo "Checking prerequisites"
 [[ -f "$ENV_FILE" ]] || fail "$ENV_FILE is missing: run automation/wizard.sh first"
 [[ "$(stat -c %a "$ENV_FILE")" == 600 ]] || fail "$ENV_FILE must be mode 600 (chmod 600 it)"
 # The env file holds KEY='value' lines (also read by systemd's EnvironmentFile).
-BOT_TOKEN=$(env -i bash -c "set -a; . '$ENV_FILE'; printf %s \"\$GH_TOKEN\"")
+BOT_TOKEN=$(env -i bash -c 'set -a; . "$1"; printf %s "$GH_TOKEN"' _ "$ENV_FILE")
 BOT_LOGIN=$(bot_gh api user --jq .login 2>/dev/null) || fail "the bot's token doesn't work: re-run automation/wizard.sh"
 [[ "$BOT_LOGIN" != "$OWNER" ]] || fail "GH_TOKEN in $ENV_FILE belongs to $OWNER, not a bot"
 owner_gh project list --owner "$OWNER" --limit 1 >/dev/null 2>&1 \
@@ -61,14 +65,15 @@ else
   owner_gh api -X PUT "repos/$REPO/collaborators/$BOT_LOGIN" -f permission=push --silent
   # The invitation must be accepted by the invitee; we hold its token.
   invite=$(bot_gh api user/repository_invitations \
-    --jq ".[] | select(.repository.full_name == \"$REPO\") | .id")
-  [[ -n "$invite" ]] && bot_gh api -X PATCH "user/repository_invitations/$invite" --silent
-  changed "invited $BOT_LOGIN to $REPO with write access and accepted"
+    --jq "[.[] | select(.repository.full_name == \"$REPO\") | .id][0] // empty")
+  [[ -n "$invite" ]] || fail "invited $BOT_LOGIN, but found no invitation to accept: re-run setup"
+  bot_gh api -X PATCH "user/repository_invitations/$invite" --silent
+  changed "invited $BOT_LOGIN to $REPO with write access, and accepted as the bot"
 fi
 
 # ── Board ─────────────────────────────────────────────────────────────────
 echo "Board"
-BOARD=$(owner_gh project list --owner "$OWNER" --format json \
+BOARD=$(owner_gh project list --owner "$OWNER" --limit 100 --format json \
   --jq ".projects[] | select(.title == \"$BOARD_TITLE\") | .number")
 if [[ -n "$BOARD" ]]; then
   ok "board #$BOARD \"$BOARD_TITLE\" exists"
@@ -89,11 +94,14 @@ fi
 
 # Status field: replace its options with exactly STATUSES, in order. An
 # option that already exists keeps its id, so cards keep their Status.
-status_field=$(owner_gh project field-list "$BOARD" --owner "$OWNER" --format json \
-  --jq '.fields[] | select(.name == "Status")')
+# Name, colour and description are all compared, so editing STATUSES
+# above takes effect on the next run.
+status_field=$(owner_gh api graphql -f query='query($id:ID!){node(id:$id){... on ProjectV2{
+    field(name:"Status"){... on ProjectV2SingleSelectField{id options{id name color description}}}}}}' \
+  -f id="$BOARD_ID" --jq '.data.node.field')
 want_names=$(printf '%s\n' "${STATUSES[@]}" | cut -d'|' -f1)
-have_names=$(python3 -c 'import json,sys; [print(o["name"]) for o in json.load(sys.stdin)["options"]]' <<<"$status_field")
-if [[ "$have_names" == "$want_names" ]]; then
+have=$(python3 -c 'import json,sys; [print("|".join((o["name"], o["color"], o["description"]))) for o in json.load(sys.stdin)["options"]]' <<<"$status_field")
+if [[ "$have" == "$(printf '%s\n' "${STATUSES[@]}")" ]]; then
   ok "Status options are: $(paste -sd, <<<"$want_names")"
 else
   python3 - "$status_field" "${STATUSES[@]}" <<'PY' | owner_gh api graphql --input - --silent
@@ -134,16 +142,19 @@ fi
 #   "master via PR":  changes reach master only through a PR; admins (you)
 #                     bypass, the bot (write access) cannot.
 echo "Master rulesets"
-rulesets=$(owner_gh api "repos/$REPO/rulesets" --jq '.[].name')
+ruleset_fallback() {
+  printf '  ✗ could not create the master rulesets via the API (%s).\n' "$1" >&2
+  printf '    Run automation/wizard.sh again; its last stage creates them by hand.\n' >&2
+  exit 1
+}
+rulesets=$(owner_gh api "repos/$REPO/rulesets" --jq '.[].name' 2>&1) || ruleset_fallback "$rulesets"
 create_ruleset() {
   local name="$1" body="$2" err
   if grep -qxF "$name" <<<"$rulesets"; then ok "ruleset \"$name\" exists"; return; fi
   if err=$(owner_gh api -X POST "repos/$REPO/rulesets" --input - --silent <<<"$body" 2>&1); then
     changed "created ruleset \"$name\""
   else
-    printf '  ✗ could not create the master rulesets via the API (%s).\n' "$err" >&2
-    printf '    Run automation/wizard.sh again; its last stage creates them by hand.\n' >&2
-    exit 1
+    ruleset_fallback "$err"
   fi
 }
 create_ruleset "autodev: master history" '{
@@ -151,6 +162,8 @@ create_ruleset "autodev: master history" '{
   "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
   "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}],
   "bypass_actors": []}'
+# actor_id 5 with actor_type RepositoryRole is GitHub's fixed id for the
+# repository "Admin" role, so the bypass list means "admins of this repo".
 create_ruleset "autodev: master via PR" '{
   "name": "autodev: master via PR", "target": "branch", "enforcement": "active",
   "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
@@ -162,8 +175,10 @@ create_ruleset "autodev: master via PR" '{
 
 # ── Dedicated clone ───────────────────────────────────────────────────────
 # The automation never works in your own checkout. Its clone pushes over
-# HTTPS through gh's credential helper, so pushes use whichever token
-# GH_TOKEN holds: the bot's, inside the systemd units.
+# HTTPS, and git asks the credential helper below for a password. The
+# helper loads the bot's token from the env file itself, so a push from
+# this clone is always the bot's, even from a shell where GH_TOKEN is
+# unset (gh would otherwise fall back to your own login).
 echo "Dedicated clone"
 if [[ -d "$CLONE/.git" ]]; then
   ok "$CLONE exists"
@@ -181,18 +196,21 @@ set_git() {
 bot_id_num=$(bot_gh api user --jq .id)
 set_git remote.origin.url "https://github.com/$REPO.git"
 # An empty helper first clears any helper inherited from ~/.gitconfig.
-set_git credential.helper "$(printf '\n!gh auth git-credential')"
+# git appends the action ("get", "store", ...) as the helper's argument.
+set_git credential.helper "$(printf '\n%s' "!sh -c 'set -a; . \"$ENV_FILE\"; exec gh auth git-credential \"\$@\"' autodev-bot")"
 set_git user.name "$BOT_LOGIN"
 set_git user.email "$bot_id_num+$BOT_LOGIN@users.noreply.github.com"
 if [[ "$(readlink "$CLONE/tools/agbcc" 2>/dev/null)" != "$MAIN_CHECKOUT/tools/agbcc" ]]; then
   ln -sfn "$MAIN_CHECKOUT/tools/agbcc" "$CLONE/tools/agbcc"
   changed "clone: tools/agbcc → $MAIN_CHECKOUT/tools/agbcc"
 fi
-if ! grep -qxF ".worktrees/" "$CLONE/.git/info/exclude"; then
-  echo ".worktrees/" >> "$CLONE/.git/info/exclude"
-  changed "clone: .worktrees/ ignored"
-fi
 ok "clone configured (pushes as $BOT_LOGIN over HTTPS)"
+# The dispatcher runs whatever the clone has checked out. Setup never
+# switches branches itself (someone may be testing a branch there), but
+# it says so when the clone isn't on master.
+clone_branch=$(git -C "$CLONE" branch --show-current)
+[[ "$clone_branch" == master ]] \
+  || printf '  ! the clone is on branch %s, not master: the dispatcher runs that branch\n' "$clone_branch"
 
 # ── systemd user units ────────────────────────────────────────────────────
 echo "systemd units"
@@ -213,6 +231,9 @@ Description=Autodev dispatcher: one tick (see automation/README.md)
 
 [Service]
 Type=oneshot
+# A oneshot has no start time limit by default; a tick stuck on the network
+# would then block every later tick.
+TimeoutStartSec=5min
 EnvironmentFile=$ENV_FILE
 WorkingDirectory=$CLONE/automation
 # Bring the clone up to date first, so merged dispatcher changes take
@@ -223,6 +244,9 @@ install_unit autodev.timer "[Unit]
 Description=Run the autodev dispatcher every 2 minutes
 
 [Timer]
+# First tick a minute after the user's systemd starts, then every 2 minutes.
+# systemd may otherwise shift a timer by up to a minute to batch wakeups;
+# 10 s keeps ticks close to 2 minutes apart.
 OnBootSec=1min
 OnUnitActiveSec=2min
 AccuracySec=10s

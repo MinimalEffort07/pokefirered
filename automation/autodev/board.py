@@ -14,8 +14,14 @@ from dataclasses import dataclass
 DEFAULT_STATUS = "Todo"
 
 # Tickets are recognised by a "## Parent" heading in their body (the
-# to-tickets format); every other issue is a parent to be grilled.
-_PARENT_HEADING = re.compile(r"^##\s+Parent\s*$", re.MULTILINE)
+# to-tickets format); every other issue is a parent to be grilled. The
+# heading may carry the parent's number on the same line ("## Parent #48"),
+# but "## Parenting" is a different heading.
+_PARENT_HEADING = re.compile(r"^##\s+Parent\b", re.MULTILINE)
+
+# GitHub reports no author for an issue whose account was deleted, and
+# shows such issues as written by "ghost".
+DELETED_AUTHOR = "ghost"
 
 FIND_BOARD = """
 query FindBoard($owner: String!, $title: String!) {
@@ -87,11 +93,11 @@ def read_board(gh, config, number):
     while True:
         data = gh.graphql(BOARD_ITEMS, owner=config.owner, number=number,
                           cursor=cursor)
-        items = data["data"]["user"]["projectV2"]["items"]
-        nodes.extend(items["nodes"])
-        if not items["pageInfo"]["hasNextPage"]:
+        page = data["data"]["user"]["projectV2"]["items"]
+        nodes.extend(page["nodes"])
+        if not page["pageInfo"]["hasNextPage"]:
             break
-        cursor = items["pageInfo"]["endCursor"]
+        cursor = page["pageInfo"]["endCursor"]
     items = [_parse_item(node) for node in nodes
              if _is_repo_issue(node, config.repo)]
     return Board(number, config.board_title, items, len(nodes) - len(items))
@@ -108,7 +114,7 @@ def _parse_item(node):
     status = (node["status"] or {}).get("name") or DEFAULT_STATUS
     return Item(
         number=content["number"],
-        author=content["author"]["login"],
+        author=(content["author"] or {}).get("login", DELETED_AUTHOR),
         status=status,
         has_parent=bool(_PARENT_HEADING.search(content["body"])),
     )

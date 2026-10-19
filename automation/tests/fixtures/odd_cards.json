@@ -1,0 +1,92 @@
+{
+  "FindBoard": {
+    "data": {
+      "user": {
+        "projectsV2": {
+          "nodes": [
+            {
+              "number": 7,
+              "title": "pokefirered autodev"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "BoardItems": {
+    "": {
+      "data": {
+        "user": {
+          "projectV2": {
+            "items": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": "Y3Vyc29yOjE="
+              },
+              "nodes": [
+                {
+                  "id": "PVTI_g",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 65,
+                    "title": "Issue 65",
+                    "body": "Written by an account that was later deleted.",
+                    "state": "OPEN",
+                    "author": null,
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_h",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 66,
+                    "title": "Issue 66",
+                    "body": "## Parent #61\n\n## What to build\n\nStock it.\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                },
+                {
+                  "id": "PVTI_i",
+                  "type": "ISSUE",
+                  "status": {
+                    "name": "Todo"
+                  },
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 67,
+                    "title": "Issue 67",
+                    "body": "## Parenting\n\nNot a parent heading.\n",
+                    "state": "OPEN",
+                    "author": {
+                      "login": "MinimalEffort07"
+                    },
+                    "repository": {
+                      "nameWithOwner": "MinimalEffort07/pokefirered"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

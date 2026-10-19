@@ -205,8 +205,11 @@ run_wizard() {
 # Re-running is safe: each stage checks whether it is already done.
 
 TOTAL_STAGES=5
-OWNER="MinimalEffort07"
-REPO="MinimalEffort07/pokefirered"
+# Owner and repo come from the dispatcher's config, like setup.sh's.
+HERE=$(cd "$(dirname "$0")" && pwd)
+config() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$HERE/config.json" "$1"; }
+OWNER=$(config owner)
+REPO=$(config repo)
 ENV_FILE="$HOME/.config/autodev/env"
 mkdir -p "$(dirname "$ENV_FILE")" && chmod 700 "$(dirname "$ENV_FILE")"
 
@@ -306,10 +309,23 @@ fi
 # ── 4 ────────────────────────────────────────────────────────────────────
 stage "Keep WSL running"
 TASK="WSL autodev keepalive"
-STARTUP_DIR=$(wslpath "$(cmd.exe /c 'echo %APPDATA%' 2>/dev/null | tr -d '\r')")/Microsoft/Windows/Start\ Menu/Programs/Startup
+# conhost.exe --headless runs a console program with no window at all, so
+# nothing pops up at logon; wsl.exe -d <distro> --exec sleep infinity keeps
+# that distro running for as long as Windows is logged in.
+KEEPALIVE_ARGS="--headless wsl.exe -d ${WSL_DISTRO_NAME:-} --exec sleep infinity"
+APPDATA_WIN=$(cmd.exe /c 'echo %APPDATA%' 2>/dev/null | tr -d '\r' || true)
+if [[ -z "${WSL_DISTRO_NAME:-}" || -z "$APPDATA_WIN" ]]; then
+  warn "This doesn't look like WSL with Windows interop, so there's nothing to keep running."
+  SKIPPED+=("WSL keepalive (run this wizard inside WSL)")
+  pause
+  STARTUP_DIR=""
+else
+  STARTUP_DIR="$(wslpath "$APPDATA_WIN")/Microsoft/Windows/Start Menu/Programs/Startup"
+fi
 SHORTCUT="$STARTUP_DIR/WSL autodev keepalive.lnk"
-KEEPALIVE_ARGS="--headless wsl.exe -d $WSL_DISTRO_NAME --exec sleep infinity"
-if schtasks.exe /Query /TN "$TASK" >/dev/null 2>&1 || [[ -f "$SHORTCUT" ]]; then
+if [[ -z "$STARTUP_DIR" ]]; then
+  :
+elif schtasks.exe /Query /TN "$TASK" >/dev/null 2>&1 || [[ -f "$SHORTCUT" ]]; then
   say "✓ Already done: Windows starts WSL ($WSL_DISTRO_NAME) at logon."
   pause
 else
@@ -324,7 +340,11 @@ else
       # shortcut in your Startup folder does the same job without admin.
       warn "Task Scheduler refused (logon tasks usually need admin)."
       say "Putting a shortcut in your Startup folder instead."
-      powershell.exe -NoProfile -Command "\$s = (New-Object -ComObject WScript.Shell).CreateShortcut('$(wslpath -w "$SHORTCUT")'); \$s.TargetPath = 'C:\\Windows\\System32\\conhost.exe'; \$s.Arguments = '$KEEPALIVE_ARGS'; \$s.WindowStyle = 7; \$s.Save()" >/dev/null
+      # PowerShell builds the .lnk file. WindowStyle 7 means "minimised,
+      # not focused", a second guard against anything showing at logon.
+      # Inside PowerShell's single quotes a ' is written as ''.
+      lnk_win=$(wslpath -w "$SHORTCUT"); lnk_win=${lnk_win//\'/\'\'}
+      powershell.exe -NoProfile -Command "\$s = (New-Object -ComObject WScript.Shell).CreateShortcut('$lnk_win'); \$s.TargetPath = 'C:\\Windows\\System32\\conhost.exe'; \$s.Arguments = '$KEEPALIVE_ARGS'; \$s.WindowStyle = 7; \$s.Save()" >/dev/null || true
       if [[ -f "$SHORTCUT" ]]; then say "✓ Created $SHORTCUT"
       else warn "Couldn't create the shortcut."; SKIPPED+=("WSL keepalive at Windows logon"); fi
     fi

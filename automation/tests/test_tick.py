@@ -70,6 +70,20 @@ class TickLogsTheBoard(unittest.TestCase):
         ] + ["#%d MinimalEffort07 Todo has_parent=yes" % n for n in range(49, 61)])
         self.assertEqual(gh.mutations, [])
 
+    def test_unusual_authors_and_parent_headings(self):
+        # GitHub reports a deleted account's issues with no author; it
+        # shows that account as "ghost". A "## Parent" heading may carry
+        # the parent's number on the same line; "## Parenting" is not one.
+        code, lines, gh = run_tick("odd_cards.json")
+        self.assertEqual(code, 0)
+        self.assertEqual(lines, [
+            'board #7 "pokefirered autodev": 3 items',
+            "#65 ghost Todo has_parent=no",
+            "#66 MinimalEffort07 Todo has_parent=yes",
+            "#67 MinimalEffort07 Todo has_parent=no",
+        ])
+        self.assertEqual(gh.mutations, [])
+
     def test_a_missing_board_is_an_error(self):
         # Only a board with exactly the configured title counts; GitHub's
         # search also returns near matches.
