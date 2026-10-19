@@ -271,7 +271,9 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
   - `read <number>` shows an issue or PR and its comments. Read the ticket, its parent and the parent's design comment, including the owner's comments on the ticket, before starting.
   - `comment` comments on your ticket.
   - `open-pr --title "Fix #<T>: …"` opens your PR into master from the branch checked out here, with the body on stdin. It refuses a body without Fixes #<T> and @MinimalEffort07 written as plain text: GitHub ignores both inside code, so the ticket wouldn't close and the owner wouldn't be notified.
-- Run `bash test/run_suite.sh` before opening the PR. `record_test.sh` waits for any other recording on the machine to finish (it takes a machine-wide lock itself), so a recording may start late.
+- Run `bash test/run_suite.sh` before opening the PR. It takes about 10 minutes, and longer while another session runs its own, which is more than one foreground command may run. So start it in the background with its output in a log file, and before opening the PR wait for it to finish with a loop on that log (e.g. `until grep -q "^SUITE" suite.log; do sleep 15; done`).
+- Report your result once, at the very end, after every step has finished. Never report while a command is still running.
+- `record_test.sh` waits for any other recording on the machine to finish (it takes a machine-wide lock itself), so a recording may start late.
 - The PR body carries Fixes #<T>, Part of #<parent>, a summary, the tests run with the suite result, the "Recordings available at…" and "Branch README" lines (or "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
 - Push only your own branch: `git push -u origin issue-<T>-<slug>`. Never push to master, force-push or merge.
 - If you can't finish, push the unfinished branch before reporting `failed`.
