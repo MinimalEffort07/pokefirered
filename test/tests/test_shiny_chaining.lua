@@ -36,7 +36,8 @@
 --      START -> BAG -> KEY ITEMS -> POKé RADAR -> USE. The bag must list the
 --      item (its src/data/items.json entry) and USE must reach the radar's
 --      field-use function (that entry's fieldUseFunc): four patches start
---      shaking, the charge is spent and the 50-step recharge begins. This is
+--      shaking, the charge is spent and the 50-step recharge begins. Then
+--      the player must be able to walk again, to step into a patch. This is
 --      also the README's Shiny Chaining GIF (see RECORD THE GIF below).
 --
 -- TESTS (requiring a Route 1 save fixture, skipped if fixture missing):
@@ -75,6 +76,7 @@ local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local cs = dofile(project_dir .. "test/lib/character_select.lua")
 local pr = dofile(project_dir .. "test/lib/poke_radar.lua")
 local warp = dofile(project_dir .. "test/lib/warp.lua")
+local walk = dofile(project_dir .. "test/lib/walk.lua")
 local sym = dofile(project_dir .. "test/lib/symbols.lua")
 local capture = dofile(project_dir .. "test/lib/frame_capture.lua")
 
@@ -444,14 +446,13 @@ end
 
 -- ---------- Test G: use the radar from the bag in tall grass ----------
 
--- Route 1 (map group 3, number 19) and a tall-grass tile on it, in map
--- coordinates as in data/maps/Route1/map.json (the player's ObjectEvent
--- stores them 7 higher, see MAP_OFFSET in the C code). Grass surrounds it,
--- so the radar has plenty of tiles within its 6-tile radius to shake.
-local ROUTE1_GROUP, ROUTE1_NUM = 3, 19
+-- A tall-grass tile on Route 1, in map coordinates as in
+-- data/layouts/Route1/map.bin (the player's ObjectEvent stores them 7
+-- higher, see MAP_OFFSET in the C code). Grass surrounds it, so the radar
+-- has plenty of tiles within its 6-tile radius to shake, and the tiles
+-- below it (12,25) and to its right (13,24) are walkable tall grass.
 local ROUTE1_GRASS_X, ROUTE1_GRASS_Y = 12, 24
 local MTB_TALL_GRASS = 0x02          -- MB_TALL_GRASS
-local MAX_SPRITES = 64               -- sprite ids are 0..63
 local FLDEFF_UNUSED_GRASS = 19       -- the radar's shaking-grass field effect
 local SPRITE_OFF_DATA0 = 0x2E        -- struct Sprite: s16 data[8] starts here
 
@@ -467,21 +468,33 @@ end
 -- Test B wrote. FldEff_UnusedGrass marks its sprites by storing the field
 -- effect number in data[0], so check the sprite is in use and marked so.
 local function is_live_grass_patch(id)
-    if id >= MAX_SPRITES then return false end
+    if id >= ADDR.MAX_SPRITES then return false end
     local sprite = sym.addr("gSprites") + id * ADDR.SPRITE_STRUCT_SIZE
     local in_use = (fw.read8(sprite + ADDR.SPRITE_OFF_FLAGS_3E) & 1) ~= 0
     return in_use and fw.read16(sprite + SPRITE_OFF_DATA0) == FLDEFF_UNUSED_GRASS
 end
 
+-- Is (x, y) one of the four patch tiles? The radar stores them in the same
+-- coordinates as the player's ObjectEvent (PlayerGetDestCoords), so they
+-- compare directly with snapshot_player_tile().
+local function is_patch_tile(x, y)
+    for i = 0, pr.PATCH_COUNT - 1 do
+        if pr.get_patch_x(i) == x and pr.get_patch_y(i) == y then
+            return true
+        end
+    end
+    return false
+end
+
 local function test_use_from_bag_in_grass()
     fw.log("=== Test G: use the radar from the bag in tall grass ===")
-    fw.assert_true(warp.warp_to_pos(ROUTE1_GROUP, ROUTE1_NUM,
+    fw.assert_true(warp.warp_to_pos(ADDR.MAP_GROUP_KANTO, ADDR.MAP_NUM_ROUTE1,
         ROUTE1_GRASS_X, ROUTE1_GRASS_Y), "warped to Route 1")
     fw.wait_frames(30)
 
     local x0, y0, mt0 = snapshot_player_tile()
     fw.log(string.format("[Test G] player pos=(%d,%d) mtb=0x%02X", x0, y0, mt0))
-    fw.assert_true(mt0 == MTB_TALL_GRASS, "player stands on a tall-grass tile")
+    fw.assert_eq(mt0, MTB_TALL_GRASS, "player stands on a tall-grass tile")
     -- Test D left the radar charged, with no chain and no patches.
     fw.assert_eq(pr.get_charges(), 1, "radar charged before use")
     fw.assert_eq(pr.get_flags() & pr.FLAG_PATCHES_ACTIVE, 0,
@@ -518,13 +531,26 @@ local function test_use_from_bag_in_grass()
     fw.assert_true((pr.get_flags() & pr.FLAG_PATCHES_ACTIVE) ~= 0,
         "USE activated the radar (PATCHES_ACTIVE)")
     fw.assert_eq(pr.get_charges(), 0, "USE spent the charge")
-    fw.assert_eq(pr.get_steps_to_charge(), 50,
+    fw.assert_eq(pr.get_steps_to_charge(), pr.RECHARGE_STEPS,
         "recharge started (stepsUntilCharge = POKE_RADAR_RECHARGE_STEPS)")
-    for i = 0, 3 do
+    for i = 0, pr.PATCH_COUNT - 1 do
         local id = pr.get_patch_sprite_id(i)
         fw.assert_true(is_live_grass_patch(id),
             string.format("patch %d is a live shaking-grass sprite (id %d)", i, id))
     end
+
+    -- Now the player must be free to walk into a patch. Step onto the grass
+    -- below, or to the right if that is a patch: a patch starts a forced
+    -- battle, and this new game's party is empty. Opening the START menu
+    -- locked the field controls and froze the map's objects
+    -- (ShowStartMenu), and for an item used from the bag they stay that way
+    -- until the item's field-use callback releases them, as the BICYCLE's
+    -- and the ITEMFINDER's do. If it doesn't, the player is frozen here.
+    local dx, dy = 0, 1
+    if is_patch_tile(x0, y0 + 1) then dx, dy = 1, 0 end
+    fw.assert_true(walk.step_onto(ROUTE1_GRASS_X + dx, ROUTE1_GRASS_Y + dy),
+        string.format("player can walk after USE (onto %d,%d)",
+            ROUTE1_GRASS_X + dx, ROUTE1_GRASS_Y + dy))
 end
 
 -- ---------- Run everything ----------
