@@ -64,6 +64,27 @@ ROM="$PROJECT_DIR/pokefirered.gba"
 # The test script to run. Defaults to the basic player sprite test.
 TEST_SCRIPT="${1:-$PROJECT_DIR/test/tests/test_player_sprite.lua}"
 
+# --- Prerequisite checks ---
+# (Before the run's directory is made, so a run that can't start leaves no
+# empty directory behind.)
+
+if [ ! -x "$MGBA_HEADLESS" ]; then
+    echo "ERROR: mgba-headless not found at $MGBA_HEADLESS"
+    echo "Build it with: cd mgba/build && cmake -DBUILD_HEADLESS=ON . && make mgba-headless"
+    exit 1
+fi
+
+if [ ! -f "$ROM" ]; then
+    echo "ERROR: ROM not found at $ROM"
+    echo "Build it with: make -j\$(nproc) firered"
+    exit 1
+fi
+
+if [ ! -f "$TEST_SCRIPT" ]; then
+    echo "ERROR: Test script not found: $TEST_SCRIPT"
+    exit 1
+fi
+
 # This run's private output directory (see PER-RUN OUTPUT above). The file
 # names inside it are the ones every test used directly in /tmp before.
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mgba-test.XXXXXX")"
@@ -83,25 +104,6 @@ TIMEOUT_SECONDS="${MGBA_TEST_TIMEOUT:-60}"
 # load one (emu:autoloadSave()), its save directory still points at this
 # run's directory, which starts empty.
 SAVE_OPTION="savegamePath=$RUN_DIR"
-
-# --- Prerequisite checks ---
-
-if [ ! -x "$MGBA_HEADLESS" ]; then
-    echo "ERROR: mgba-headless not found at $MGBA_HEADLESS"
-    echo "Build it with: cd mgba/build && cmake -DBUILD_HEADLESS=ON . && make mgba-headless"
-    exit 1
-fi
-
-if [ ! -f "$ROM" ]; then
-    echo "ERROR: ROM not found at $ROM"
-    echo "Build it with: make -j\$(nproc) firered"
-    exit 1
-fi
-
-if [ ! -f "$TEST_SCRIPT" ]; then
-    echo "ERROR: Test script not found: $TEST_SCRIPT"
-    exit 1
-fi
 
 echo "=== mGBA Test Runner ==="
 echo "ROM:    $ROM"
@@ -125,7 +127,10 @@ echo ""
 # TMPDIR="$RUN_DIR": the stdbuf on this machine (uutils coreutils, written
 # in Rust) leaves an empty .tmpXXXXXX folder in $TMPDIR every time it runs.
 # Pointing TMPDIR at this run's own folder puts that leftover there, so it
-# is deleted along with the folder instead of piling up in /tmp.
+# is deleted along with the folder instead of piling up in /tmp. The setting
+# also reaches mgba-headless and everything the test itself starts: a test
+# that runs other tests (test_framework_rules.lua) gets their run folders
+# made inside its own.
 #
 # timeout prevents runaway tests from hanging forever. The Seel test
 # takes about 10 seconds in headless mode; the default 60 seconds is a

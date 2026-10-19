@@ -12,27 +12,35 @@
 # USAGE:
 #   bash test/run_suite.sh                     # the whole suite
 #   bash test/run_suite.sh test/tests/test_a.lua test/tests/test_b.lua
-#                                              # only these tests
+#                                              # only these tests (the
+#                                              # exclusion list still applies)
 #
 # OPTIONS:
-#   --jobs N        run N tests at a time (default 4)
 #   --timeout S     each test's time limit in seconds (default 1500). It is
 #                   passed to run_test.sh as MGBA_TEST_TIMEOUT.
 #   --exclude FILE  the exclusion list to use (default test/suite_exclude.txt)
 #
 # THE EXCLUSION LIST (test/suite_exclude.txt):
 #   One test per line: its file name without ".lua", then, after spaces, a
-#   one-line reason saying why the suite leaves it out. Every exclusion
-#   needs a reason: a line with no reason stops the suite before it runs
-#   anything. Blank lines and lines starting with "#" are ignored. Excluded
-#   tests are not run, and the summary lists each one as SKIPPED with its
-#   reason.
+#   one-line reason saying why the suite leaves it out. Blank lines and
+#   lines starting with "#" are ignored. Every exclusion needs a reason, and
+#   must name a test that exists (a top-level test/tests/*.lua file, or one
+#   of the files named on the command line); a line that breaks either rule
+#   stops the suite before it runs anything. Excluded tests are not run, and
+#   the summary lists each one as SKIPPED with its reason.
+#
+# RUN FOLDERS:
+#   run_test.sh gives every test run its own folder, mgba-test.XXXXXX in
+#   $TMPDIR (default /tmp). The suite deletes a passing run's folder and
+#   keeps a failing or timed-out run's folder, with everything run_test.sh
+#   printed for that run saved in it as run_test.log; the summary gives its
+#   path. Folders the suite's own runs didn't make are never touched.
 #
 # EXIT CODES:
 #   0 = every test that ran passed
 #   1 = a test failed or timed out, or no test ran at all
 #   2 = the suite could not start (a bad option, a missing ROM or test file,
-#       an exclusion without a reason)
+#       a bad line in the exclusion list)
 #
 ###############################################################################
 
@@ -41,6 +49,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# How many tests run at once. 4 keeps an 8-core machine busy with room to
+# spare: some tests start emulators of their own.
 JOBS=4
 TIMEOUT_SECONDS=1500
 EXCLUDE_FILE="$SCRIPT_DIR/suite_exclude.txt"
@@ -56,10 +66,9 @@ die() {
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --jobs|--timeout|--exclude)
+        --timeout|--exclude)
             [ $# -ge 2 ] || die "$1 needs a value"
             case "$1" in
-                --jobs)    JOBS="$2" ;;
                 --timeout) TIMEOUT_SECONDS="$2" ;;
                 --exclude) EXCLUDE_FILE="$2" ;;
             esac
@@ -80,7 +89,6 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "--jobs must be a whole number of 1 or more, got: $JOBS"
 [[ "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || die "--timeout must be a whole number of seconds, got: $TIMEOUT_SECONDS"
 
 # With no test files named, run every top-level test. Files in subfolders of
@@ -90,10 +98,39 @@ if [ ${#TESTS[@]} -eq 0 ]; then
     TESTS=("$PROJECT_DIR"/test/tests/*.lua)
 fi
 
+# --- Prerequisites ---
+
+# Checked here once, so a missing file stops the suite at once instead of
+# failing every test the same way. (run_test.sh checks for mgba-headless
+# before it makes a run folder, so a missing emulator fails each test
+# without leaving anything behind.)
+[ -f "$PROJECT_DIR/pokefirered.gba" ] \
+    || die "ROM not found at $PROJECT_DIR/pokefirered.gba; build it with: make -j\$(nproc) firered"
+
+# Each test is known by its file name without ".lua" (its "name"): in the
+# exclusion list, in the summary, and in the scratch files below. So no two
+# tests in one run may share a name.
+#
+# KNOWN[<name>] is set for every test of this run. (In bash,
+# "${array[key]+set}" expands to "set" when the key exists and to nothing
+# when it doesn't, which is how this script asks "is this key there?".)
+declare -A KNOWN=()
+for test in "${TESTS[@]}"; do
+    [ -f "$test" ] || die "test script not found: $test"
+    name="$(basename "$test" .lua)"
+    [ -z "${KNOWN[$name]+set}" ] || die "two tests are both called $name; run them separately"
+    KNOWN["$name"]=set
+done
+
 # --- The exclusion list ---
 
-# EXCLUDED[<test name>] = the reason it is left out.
+# EXCLUDED[<name>] = the reason that test is left out.
 declare -A EXCLUDED=()
+
+# True if test <name> is in the exclusion list.
+is_excluded() {
+    [ -n "${EXCLUDED[$1]+set}" ]
+}
 
 [ -f "$EXCLUDE_FILE" ] || die "exclusion list not found: $EXCLUDE_FILE"
 line_no=0
@@ -105,25 +142,22 @@ while IFS= read -r line || [ -n "$line" ]; do
         ''|'#'*) continue ;;
     esac
     name="${line%%[[:space:]]*}"              # the first word
-    reason="${line#"$name"}"                  # everything after it
-    reason="${reason#"${reason%%[![:space:]]*}"}"
-    reason="${reason%"${reason##*[![:space:]]}"}"
+    reason="${line#"$name"}"                  # everything after it,
+    reason="${reason#"${reason%%[![:space:]]*}"}"  # without leading
+    reason="${reason%"${reason##*[![:space:]]}"}"  # or trailing spaces
+    where="$EXCLUDE_FILE line $line_no"
     # Every exclusion needs a reason: a test left out of the suite proves
-    # nothing on any run, so the list must say why each one is acceptable.
+    # nothing on any run, so the list must say why that is acceptable.
     [ -n "$reason" ] \
-        || die "$EXCLUDE_FILE line $line_no: '$name' has no reason. Every exclusion needs a one-line reason after the test name."
-    EXCLUDED["${name%.lua}"]="$reason"
+        || die "$where: '$name' has no reason. Every exclusion needs a one-line reason after the test name."
+    # And it must name a real test, so the list never claims to leave out a
+    # test that was renamed or deleted (or misspelt).
+    [ -f "$PROJECT_DIR/test/tests/$name.lua" ] || [ -n "${KNOWN[$name]+set}" ] \
+        || die "$where: '$name' is not a test (no test/tests/$name.lua). Give the file name without .lua, or remove the line."
+    EXCLUDED["$name"]="$reason"
 done < "$EXCLUDE_FILE"
 
-# --- Prerequisites ---
-
-# Checked here once, so a missing file stops the suite at once instead of
-# failing every test the same way.
-[ -f "$PROJECT_DIR/pokefirered.gba" ] \
-    || die "ROM not found at $PROJECT_DIR/pokefirered.gba; build it with: make -j\$(nproc) firered"
-for test in "${TESTS[@]}"; do
-    [ -f "$test" ] || die "test script not found: $test"
-done
+# --- Running the tests ---
 
 # The suite's own scratch folder: each test's output while it runs, and the
 # result each one ends with. It is removed when the suite exits.
@@ -151,7 +185,12 @@ stop_all() {
 }
 trap stop_all INT TERM
 
-# --- Running the tests ---
+# One line of the progress list or the summary:
+#   <RESULT> <name> <seconds> s  <note>
+print_row() {
+    local result="$1" name="$2" seconds="$3" note="${4:-}"
+    printf '%-8s %-36s %5d s%s\n' "$result" "$name" "$seconds" "${note:+  $note}"
+}
 
 # Delete one test's run folder: the folder run_test.sh made with mktemp and
 # printed as "Output: <folder>". The name is checked against mktemp's
@@ -199,13 +238,13 @@ run_one() {
     fi
 
     printf '%s %s %s\n' "$result" "$seconds" "$dir" > "$SUITE_TMP/$name.result"
-    printf '%-8s %-36s %5d s\n' "$result" "$name" "$seconds"
+    print_row "$result" "$name" "$seconds"
 }
 
 SUITE_START=$(date +%s)
 to_run=0
 for test in "${TESTS[@]}"; do
-    [ -n "${EXCLUDED[$(basename "$test" .lua)]+set}" ] || to_run=$((to_run + 1))
+    is_excluded "$(basename "$test" .lua)" || to_run=$((to_run + 1))
 done
 echo "=== Test suite: $to_run to run, $(( ${#TESTS[@]} - to_run )) excluded, $JOBS at a time, timeout $TIMEOUT_SECONDS s each ==="
 
@@ -214,7 +253,7 @@ echo "=== Test suite: $to_run to run, $(( ${#TESTS[@]} - to_run )) excluded, $JO
 running=0
 for test in "${TESTS[@]}"; do
     name="$(basename "$test" .lua)"
-    [ -z "${EXCLUDED[$name]+set}" ] || continue
+    is_excluded "$name" && continue
     if [ "$running" -ge "$JOBS" ]; then
         wait -n
         running=$((running - 1))
@@ -235,7 +274,7 @@ skipped=0
 failures=()
 for test in "${TESTS[@]}"; do
     name="$(basename "$test" .lua)"
-    if [ -n "${EXCLUDED[$name]+set}" ]; then
+    if is_excluded "$name"; then
         printf '%-8s %-36s %7s  %s\n' SKIPPED "$name" "" "${EXCLUDED[$name]}"
         skipped=$((skipped + 1))
         continue
@@ -244,7 +283,7 @@ for test in "${TESTS[@]}"; do
     [ -f "$SUITE_TMP/$name.result" ] && read -r result seconds dir < "$SUITE_TMP/$name.result"
     case "$result" in
         PASS)
-            printf '%-8s %-36s %5d s\n' "$result" "$name" "$seconds"
+            print_row "$result" "$name" "$seconds"
             passed=$((passed + 1))
             ;;
         *)
@@ -256,7 +295,7 @@ for test in "${TESTS[@]}"; do
             else
                 note="no run folder; run_test.sh said: $(tail -n 1 "$SUITE_TMP/$name.log" 2>/dev/null)"
             fi
-            printf '%-8s %-36s %5d s  %s\n' "$result" "$name" "$seconds" "$note"
+            print_row "$result" "$name" "$seconds" "$note"
             if [ "$result" = TIMEOUT ]; then
                 timed_out=$((timed_out + 1))
             else

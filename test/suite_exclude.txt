@@ -2,8 +2,10 @@
 #
 # One test per line: its file name in test/tests/ without ".lua", then, after
 # spaces, a one-line reason. Every exclusion needs a reason: run_suite.sh
-# refuses a line without one. The suite's summary lists each excluded test as
-# SKIPPED with its reason, so every run shows what it did not check.
+# refuses a line without one, and a line naming a test that doesn't exist
+# (so remove a test's line when the test is renamed or deleted). The suite's
+# summary lists each excluded test as SKIPPED with its reason, so every run
+# shows what it did not check.
 #
 # Leave a test out only when running it in the suite can't prove anything:
 # it needs something a person has to make by hand, or it makes no assertions
