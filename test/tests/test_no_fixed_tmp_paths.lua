@@ -1,6 +1,7 @@
 -------------------------------------------------------------------------------
 -- test_no_fixed_tmp_paths.lua
--- No script under test/ writes to a fixed /tmp path (issue #50)
+-- No script under test/ uses a fixed /tmp path, apart from two hand-made
+-- savestate fixtures (issue #50)
 -------------------------------------------------------------------------------
 --
 -- WHY THIS EXISTS:
@@ -14,23 +15,27 @@
 --
 -- WHAT IT CHECKS:
 --   This test reads source files; it never looks at the game. It reads every
---   .lua, .sh and .py file under test/ and fails once for every /tmp path in
---   their code, unless the ALLOWED table below lists it. The ROM still boots
---   only because run_test.sh always starts the emulator.
+--   .lua, .sh and .py file under test/ and fails if any /tmp path appears in
+--   their code, unless the ALLOWED table below lists it. A source file can't
+--   show whether a path is read or written, so the check is on every use.
+--   The ROM still boots only because run_test.sh always starts the emulator.
 --
---   Comments and Python docstrings are skipped. Commands written there are
---   for a person to type, and the person picks the folder. The scan goes line
---   by line and tracks quotes, so a "--" or "#" inside a string is not taken
---   for the start of a comment. It does not understand Lua's multi-line
---   [[...]] strings or --[[...]] comments, which no file here uses. Text
---   inside them is checked as code, so the check can report too much there
---   but never too little.
+--   Comments are skipped: commands written there are for a person to type,
+--   and the person picks the folder. In Python files, every line holding a
+--   triple quote (""" or ''') and every line between two such lines is
+--   skipped too, which covers docstrings (and, rarely, code). The scan goes
+--   line by line and tracks quotes, so a "--" or "#" inside a string is not
+--   taken for the start of a comment. It does not understand Lua's
+--   multi-line [[...]] strings or --[[...]] comments, which no file here
+--   uses: a "--" inside [[...]] would hide the rest of that line.
 --
 -- THE ONLY FIXED PATHS ALLOWED:
---   The two hand-made savestate fixtures, which the tests only read (see
---   ALLOWED). Three more /tmp names are allowed because none of them is
---   fixed for a run: mktemp templates, record_test.sh's video folder, and
---   fw.out_path's fallback for scripts loaded by hand.
+--   The two hand-made savestate fixtures (see ALLOWED). The tests only read
+--   them; the test/tools/ scripts that make them are run by hand, once.
+--   Three more /tmp names are allowed because no file in them is used under
+--   the same name by two runs: mktemp templates, record_test.sh's video
+--   folder (each video gets a timestamped name), and fw.out_path's fallback
+--   for scripts loaded by hand, which run_test.sh never uses.
 --
 -- Run:
 --   bash test/run_test.sh test/tests/test_no_fixed_tmp_paths.lua
@@ -75,7 +80,7 @@ local ALLOWED = {
 -------------------------------------------------------------------------------
 
 -- The comment marker of each file type the scan reads.
-local COMMENT = { lua = "--", sh = "#", py = "#" }
+local COMMENT_MARKER = { lua = "--", sh = "#", py = "#" }
 
 -- The code part of one source line: the text before its comment starts.
 -- A marker inside a '...' or "..." string does not start a comment. A shell
@@ -157,7 +162,7 @@ local function scan_file(file, lang)
             if quotes % 2 == 1 then in_docstring = not in_docstring end
         end
         if not skip then
-            local code = code_part(line, COMMENT[lang])
+            local code = code_part(line, COMMENT_MARKER[lang])
             for _, p in ipairs(tmp_paths(code)) do
                 if not is_allowed(file, p, code) then
                     table.insert(findings, { line = n, path = p })
@@ -189,7 +194,7 @@ fw.run(function()
     fw.log("=== No fixed /tmp paths under test/ ===")
 
     for _, ex in ipairs(SCANNER_EXAMPLES) do
-        local got = tmp_paths(code_part(ex.line, COMMENT[ex.lang]))[1]
+        local got = tmp_paths(code_part(ex.line, COMMENT_MARKER[ex.lang]))[1]
         fw.assert_eq(got, ex.want, "scanner finds " .. tostring(ex.want) .. " in: " .. ex.line)
     end
 
@@ -200,17 +205,17 @@ fw.run(function()
     -- List the files from the project root, so paths read "test/...".
     local pipe = io.popen("cd '" .. project_dir .. "' && find test -type f "
         .. "\\( -name '*.lua' -o -name '*.sh' -o -name '*.py' \\) | sort")
-    local scanned, total = 0, 0
+    local scanned = 0
+    local bad = {}  -- "file:line path" for every fixed path found
     for file in pipe:lines() do
         if file ~= SELF then
             local findings = scan_file(file, file:match("%.(%w+)$"))
             if findings then
                 scanned = scanned + 1
                 for _, hit in ipairs(findings) do
-                    total = total + 1
-                    fw.assert_true(false, string.format(
-                        "%s:%d uses fixed path %s (use fw.out_path)",
-                        file, hit.line, hit.path))
+                    local where = string.format("%s:%d %s", file, hit.line, hit.path)
+                    fw.log_error("fixed /tmp path (use fw.out_path): " .. where)
+                    table.insert(bad, where)
                 end
             end
         end
@@ -220,6 +225,9 @@ fw.run(function()
     -- Guards against a scan that silently read nothing (wrong directory,
     -- find missing): test/ holds dozens of scripts.
     fw.assert_true(scanned >= 40, "scanned " .. scanned .. " scripts under test/")
-    fw.assert_eq(total, 0, "fixed /tmp paths in scripts under test/")
+    -- One assertion for the whole scan; on failure its message lists every
+    -- path found, so the results file names them all.
+    fw.assert_eq(#bad, 0, "fixed /tmp paths in scripts under test/"
+        .. (#bad > 0 and (": " .. table.concat(bad, "; ")) or ""))
     fw.finish()
 end)
