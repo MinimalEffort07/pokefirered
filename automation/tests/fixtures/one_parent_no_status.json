@@ -1,0 +1,42 @@
+{
+  "FindBoard": {
+    "data": {
+      "user": {
+        "projectsV2": {
+          "nodes": [
+            {"number": 7, "title": "pokefirered autodev"}
+          ]
+        }
+      }
+    }
+  },
+  "BoardItems": {
+    "": {
+      "data": {
+        "user": {
+          "projectV2": {
+            "items": {
+              "pageInfo": {"hasNextPage": false, "endCursor": "Y3Vyc29yOjE="},
+              "nodes": [
+                {
+                  "id": "PVTI_lADOA1",
+                  "type": "ISSUE",
+                  "status": null,
+                  "content": {
+                    "__typename": "Issue",
+                    "number": 61,
+                    "title": "Add a Poke Flute to every Mart",
+                    "body": "Sell the Poke Flute in every Mart.",
+                    "state": "OPEN",
+                    "author": {"login": "MinimalEffort07"},
+                    "repository": {"nameWithOwner": "MinimalEffort07/pokefirered"}
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
