@@ -58,6 +58,18 @@ class TickLogsTheBoard(unittest.TestCase):
         ])
         self.assertEqual(gh.mutations, [])
 
+    def test_the_real_board_as_github_returned_it(self):
+        # Recorded from the live board on 2026-10-19, read as the bot, while
+        # it held parent #48 and its twelve tickets #49-#60 (GitHub adds a
+        # parent's sub-issues along with it, and sets new cards to Todo).
+        code, lines, gh = run_tick("live_board_2026-10-19.json")
+        self.assertEqual(code, 0)
+        self.assertEqual(lines, [
+            'board #3 "pokefirered autodev": 13 items',
+            "#48 MinimalEffort07 Todo has_parent=no",
+        ] + ["#%d MinimalEffort07 Todo has_parent=yes" % n for n in range(49, 61)])
+        self.assertEqual(gh.mutations, [])
+
     def test_a_missing_board_is_an_error(self):
         # Only a board with exactly the configured title counts; GitHub's
         # search also returns near matches.
