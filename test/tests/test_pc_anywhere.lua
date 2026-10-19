@@ -145,8 +145,9 @@ fw.run(function()
     fw.wait_frames(90)
 
     local count_after_pc = fw.read8(ADDR.gPlayerPartyCount)
-    fw.assert_true(count_after_pc == party_count,
-        "Part A: party count unchanged after Quick Select PC visit")
+    fw.assert_true(count_after_pc == party_count, string.format(
+        "Part A: party count unchanged after Quick Select PC visit (%d -> %d)",
+        party_count, count_after_pc))
 
     -- ------------------------------------------------------------------ --
     -- Part B: Party menu -> MOVE TO PC
@@ -197,8 +198,9 @@ fw.run(function()
     local party_count_after = fw.read8(ADDR.gPlayerPartyCount)
     fw.log(string.format("Party count after MOVE TO PC: %d", party_count_after))
 
-    fw.assert_true(party_count_after == party_count - 1,
-        "Part B: party count decreased by 1 after MOVE TO PC")
+    fw.assert_true(party_count_after == party_count - 1, string.format(
+        "Part B: party count decreased by 1 after MOVE TO PC (%d -> %d)",
+        party_count, party_count_after))
 
     -- Exit menus
     fw.press("B")

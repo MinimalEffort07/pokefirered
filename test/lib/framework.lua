@@ -533,12 +533,14 @@ local shutdown_requested = false
 --
 --   fw.allow_no_assertions("demo: only captures frames for the README GIF")
 --
--- It then passes with zero assertions, and the RESULTS line gives the
--- reason. The opt-out only lifts the zero-assertion rule: an assertion that
--- fails, a crash, or a failed boot (test/lib/character_select.lua) still
--- fails the run. Since these files prove nothing, whole-suite runs leave
--- them out; run them on their own, or record them with test/record_test.sh.
-local ZERO_ASSERTIONS_ERROR = "FAIL: 0 assertions -- this test checked nothing, "
+-- (A test that only skips itself in some setting, such as a GUI-only test
+-- run headless, calls it on the path that skips instead.) It then passes
+-- with zero assertions, and the RESULTS line gives the reason. The opt-out
+-- only lifts the zero-assertion rule: an assertion that fails, a crash, or a
+-- failed boot (test/lib/character_select.lua) still fails the run. As these
+-- files prove nothing, a whole-suite run should leave them out; run them on
+-- their own, or record them with test/record_test.sh.
+local ZERO_ASSERTIONS_FAILURE = "0 assertions -- this test checked nothing, "
     .. "so it cannot pass. Assert what it is meant to prove (fw.assert_true, "
     .. "fw.assert_eq, fw.assert_neq), or, if it is a demo or probe that only "
     .. "makes frames, declare fw.allow_no_assertions(reason) at the top."
@@ -558,23 +560,22 @@ end
 -- In GUI mode, it restores normal emulation speed so you can interact.
 -- In headless mode, it triggers process termination.
 function fw.finish()
+    -- The zero-assertion rule (above). Its failure is recorded like a failed
+    -- assertion, so the results file, the exit code and the RESULTS line all
+    -- report it the same way.
     local assertions = results.pass + results.fail
-    if assertions == 0 and no_assertions_reason == nil then
-        results.fail = results.fail + 1
-        fw.log_error(ZERO_ASSERTIONS_ERROR)
-        table.insert(results.errors, ZERO_ASSERTIONS_ERROR)
+    local summary
+    if assertions > 0 then
+        summary = string.format("RESULTS: %d/%d passed, %d failed",
+            results.pass, assertions, results.fail)
+    elseif no_assertions_reason ~= nil then
+        summary = "RESULTS: 0 assertions, as declared (" .. no_assertions_reason .. ")"
+    else
+        fw.assert_true(false, ZERO_ASSERTIONS_FAILURE)
+        summary = "RESULTS: 0 assertions, so the test fails"
     end
 
     fw.write_results()
-    local summary
-    if assertions == 0 and no_assertions_reason ~= nil then
-        summary = "RESULTS: 0 assertions, as declared (" .. no_assertions_reason .. ")"
-    elseif assertions == 0 then
-        summary = "RESULTS: 0 assertions, so the test fails"
-    else
-        summary = string.format("RESULTS: %d/%d passed, %d failed",
-            results.pass, assertions, results.fail)
-    end
     if results.fail > 0 then
         fw.log_error(summary)
     else

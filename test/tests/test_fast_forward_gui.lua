@@ -27,7 +27,6 @@
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
 local project_dir = script_dir .. "../../"
 local fw = dofile(project_dir .. "test/lib/framework.lua")
-fw.allow_no_assertions("GUI-only check: under mgba-headless it is skipped")
 
 -- Wall-clock pause. fw.wait_frames runs on emulator time — under fast-forward
 -- 60 emulated frames might elapse in 20ms of real time, far too short for a
@@ -58,9 +57,10 @@ fw.run(function()
         -- Headless mode has no display rate-limiter and no menu to inspect,
         -- so both the timing measurements and the visual verification this
         -- test performs are meaningless there. Skip cleanly instead of
-        -- reporting a spurious failure, with no assertions (allowed by the
-        -- fw.allow_no_assertions at the top of this file).
+        -- reporting a spurious failure: with no assertions, which only this
+        -- skip declares allowed (in the GUI the test must still assert).
         fw.log("Skipped: this test only makes sense in GUI mode (mgba-qt)")
+        fw.allow_no_assertions("GUI-only test: skipped under mgba-headless")
         -- Brief wait so stdout flushes before clean_shutdown SIGTERMs us;
         -- without this the skip completes in microseconds and the kill
         -- races ahead of the log/PASS lines reaching the terminal.

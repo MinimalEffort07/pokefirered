@@ -48,12 +48,12 @@ local capture = dofile(project_dir .. "test/lib/frame_capture.lua")
 local chain = {}
 
 -- Assertions go through the TEST's framework instance (passed to
--- walk_chain or walk_leg, which set T). Every copy of framework.lua now
--- shares one results table, so this library's own copy would count too, but
--- T keeps every assertion going through the test's own instance. Captions
--- must go through the test's frame_capture instance (also passed in): every dofile() of
--- frame_capture.lua is a separate recorder, and only the one the test
--- started writes captions.tsv.
+-- walk_chain or walk_leg, which set T). Every copy of framework.lua reports
+-- into one shared results table (see test/lib/framework.lua), so they are
+-- counted alike through T or through this file's own copy. Captions must
+-- go through the test's frame_capture instance (also passed in): every
+-- dofile() of frame_capture.lua is a separate recorder, and only the one
+-- the test started writes captions.tsv.
 local T = fw
 local CAP = capture
 

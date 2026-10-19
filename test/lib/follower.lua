@@ -64,9 +64,9 @@ local follower = {}
 
 -- ASSERTIONS. This library asserts through T, the calling test's
 -- framework, which the test hands over with follower.bind(fw) right after
--- loading this file. (Every copy of framework.lua shares one results table,
--- so an assertion through this file's own copy would be counted too; T keeps
--- them all going through the test's own instance.)
+-- loading this file. Every copy of framework.lua reports into one shared
+-- results table (see test/lib/framework.lua), so assertions made through T
+-- and through this file's own copy are counted alike.
 local T = fw
 function follower.bind(test_fw)
     T = test_fw
