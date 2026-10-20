@@ -58,8 +58,12 @@
 --       fw.wait_frames(60)           -- wait 1 second (60 frames)
 --       fw.press("A")                -- press the A button
 --       fw.assert_eq(value, 42, "should be 42")
+--       fw.show("the menu now open") -- a moment: recorded at normal speed
 --       fw.finish()                  -- report results and exit
 --   end)
+--
+-- Recorded in the mGBA window, a test fast-forwards except at its moments;
+-- see MOMENTS below.
 --
 -- A test must make at least one assertion: one that makes none fails with
 -- "0 assertions". Demos and probes, which only make frames, opt out with
