@@ -2,7 +2,7 @@
 
 How this repo's machinery fits together: autodev, the tests, the recordings, and one line on every script. Read this first when you've lost track; the details live in the files it links to.
 
-**In one paragraph.** You write an issue. A timer on your laptop wakes a dispatcher every 2 minutes, and the dispatcher hands the issue to headless Claude sessions that act as a bot account. They design it, split it into tickets, build each ticket in its own folder, prove it in an emulator, film it, and open a PR. Nothing reaches master until you comment `/merge`.
+**In one paragraph.** You write an issue. A timer on your laptop wakes a dispatcher every 2 minutes, and the dispatcher hands the issue to headless Claude sessions that act as a bot account. They design it, split it into tickets, build each ticket in its own folder, prove it in an emulator, film it if the game changed, and open a PR. Nothing reaches master until you comment `/merge`.
 
 **Keeping it true.** A PR that changes anything on this map updates it in the same PR, and every PR body says what changes for you (CLAUDE.md, "System map"). `test/tests/test_system_map.lua` fails when a script is missing from the map or the map names a file that's gone. In the diagrams, red marks a step only you take.
 
@@ -37,10 +37,10 @@ sequenceDiagram
   Note over You,W: Build, once nothing blocks a ticket
   D->>W: make the ticket's worktree and branch
   D->>S: start a ticket session
-  S->>W: test first, build, suite, record, README, map
+  S->>W: test first, build, suite, record (if the game changed), README, map
   S->>GH: push the branch, open the PR (issue.py)
   rect rgba(194, 42, 53, 0.12)
-    GH-->>You: the PR mentions you, with a video link
+    GH-->>You: the PR mentions you, with a video link if the game changed
     You->>GH: comment /merge, or leave feedback
   end
   Note over You,W: Review and merge
@@ -57,7 +57,7 @@ Read it top to bottom; each column is one actor. The dispatcher never does the w
 
 1. Write an issue and add it to the **pokefirered autodev** board.
 2. Skim the design comment the grill session posts, starting with its **Least-confident defaults** list. Set the card to `Paused` if you want to stop work and rethink.
-3. Review each PR: the diff, its **What changes for you** section, the recording link and the branch README.
+3. Review each PR: the diff, its **What changes for you** section, the recording link (only when the game changed) and the branch README.
 4. Comment exactly `/merge` to approve it. Any other comment is feedback, and a fix-up session handles it.
 5. Rescue anything in `Needs human`. The bot's comment says what went wrong and ends with a command that reopens that session where it stopped.
 
@@ -106,8 +106,8 @@ A parent you write is grilled into tickets. Each ticket waits for its blockers, 
 | Role | Starts when | What it does | Runs in | Limit, effort |
 |---|---|---|---|---|
 | grill | Your new issue (no `## Parent` heading) is in `Todo` | CLAUDE.md steps 1–4. It grills the idea on its own, taking its own recommended answer each round, posts the design with a Least-confident defaults list, rewrites the issue body as a scope summary and creates the tickets. It can't edit code. | autodev's clone | 60 min, max |
-| ticket | A ticket is in `Todo` and nothing it's blocked by is open | Steps 7–11: test first, clean build, full suite, a recording with notes, README and this map, code review, then a PR that @mentions you, says what changes for you and links each recording's own page. Once the PR is open, it puts the PR's number into each recording's notes (`set-pr`). | its own worktree | 3 h, xhigh |
-| fix-up | Your newest unhandled PR comment is anything but `/merge` | Handles all your unhandled comments at once, runs the tests again, records again with notes if the game changed (the PR's number goes in by itself), pushes, and replies on the PR saying what it did about each one. | the ticket's worktree | 90 min, xhigh |
+| ticket | A ticket is in `Todo` and nothing it's blocked by is open | Steps 7–11: test first, clean build, full suite, a recording with notes only if the game changed (`test/record_test.sh` refuses a branch that changes nothing in the game; a ticket that asks for one anyway gets none, and the PR says so), README and this map, code review, then a PR that @mentions you, says what changes for you and links each recording's own page. Once the PR is open, it puts the PR's number into each recording's notes (`set-pr`). | its own worktree | 3 h, xhigh |
+| fix-up | Your newest unhandled PR comment is anything but `/merge` | Handles all your unhandled comments at once, runs the tests again, records again with notes only if the game changed (the same refusal applies; the PR's number goes in by itself), pushes, and replies on the PR saying what it did about each one. | the ticket's worktree | 90 min, xhigh |
 | merge | Your newest unhandled PR comment is exactly `/merge` | Merges master in, builds, runs the unit tests and the suite on that tree, then merges with a merge commit. On a conflict it resolves it, explains on the PR, and waits for a fresh `/merge`. | the ticket's worktree | 45 min, xhigh |
 
 At most 2 sessions run at once, all on Opus (`automation/config.json`). When more are waiting, merges go first, then fix-ups, then tickets, then new issues, so finishing work beats starting more. Within merges, fix-ups and tickets, the feature grilled first goes first, so its tickets finish before a later feature's start. A new issue is still grilled whenever a slot is free and nothing above wants it. Time limits and effort levels are set in `automation/autodev/sessions.py`.
@@ -141,6 +141,7 @@ All four paths start from the same ROM. The top two prove the change and need no
 - **Recordings are small enough to stream.** The live capture is fast but big (about 3 Mbps). Once it ends and the lock is released, `test/tools/encode_recording.sh` encodes it again, slowly and well, into `/tmp/mgba-recordings`: 5 to 8 times smaller, with the scripting log as readable as before. If that encode fails, the capture is kept as the video.
 - **Recordings carry notes.** `record_test.sh --notes FILE` takes a few lines saying which ticket, feature and PR the recording is for, what it tests, what the problem was and what you should see. It checks them before it waits for the lock, so bad notes cost a second, not a recording (`--check` only checks). Every video then gets `<name>.json` beside it, with the notes, when it was recorded, the test, the branch and commit, and the run's result; the script's last lines are the `mv` that keeps both files and the recording's own page.
 - **Autodev's recordings always carry notes.** In a session autodev started, `test/record_test.sh` refuses to record without notes, or with notes for another ticket or without the parent. Each PR links its recordings' own pages, and `test/tools/recording_notes.py set-pr` puts the PR's number into their notes once the PR exists (a fix-up's get it by themselves). Your own recordings may still leave notes out.
+- **Only game changes are filmed.** A recording is made only when something on the GBA screen looks or behaves differently. A change to tests, tooling, autodev, docs, the recordings page or the recorder, or a new test of behaviour the game already had, gets none: its PR says "No recording: no in-game behaviour changes." (CLAUDE.md, step 8). In a session autodev started, `test/record_test.sh` (`--check` included) refuses when no file changed since the branch left master is one the ROM is built from: `src/`, `include/`, `asm/`, `data/`, `graphics/`, `sound/`, `constants/`, `tools/` and the top-level build files. It refuses too when it can't tell (no `origin/master`), and says what to do instead. It judges paths, so a `src/` change you can't see still passes; the written rule covers that. Your own recordings are never refused. `test/tests/test_record_game_changes.lua` checks it.
 - **The tests need the patched mGBA** in `~/projects/minimaleffort/mgba/build` (a screenshot fix and a fast-forward scripting API). Stock mGBA won't do.
 - **Autodev has its own unit tests** in `automation/tests/`, run with `cd automation && python3 -m unittest`. About half of them pin down the rules in `automation/autodev/decide.py`.
 
@@ -179,7 +180,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/run_test.sh` | Runs one Lua test in headless mGBA. Exit 0 pass, 1 fail, 124 timed out. |
 | `test/run_suite.sh` | Runs every top-level test, 4 at a time, in about 10 minutes. Must pass before a merge. |
 | `test/suite_exclude.txt` | The tests the suite skips, each with a one-line reason. The suite refuses to start on a line without one. |
-| `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. It captures fast, then encodes the video small enough to stream with `test/tools/encode_recording.sh`, after it has let the next recording start. `--notes FILE` says what the recording is for; the notes are checked before anything starts (`--check` only checks), a ticket they name starts the video's name, and every video gets a notes file beside it. An autodev session must give notes, for its own ticket. It ends with the `mv` that keeps both files and the recording's page. |
+| `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. It captures fast, then encodes the video small enough to stream with `test/tools/encode_recording.sh`, after it has let the next recording start. `--notes FILE` says what the recording is for; the notes are checked before anything starts (`--check` only checks), a ticket they name starts the video's name, and every video gets a notes file beside it. An autodev session must give notes, for its own ticket, and is refused when its branch changes no file the ROM is built from (the list of those paths lives here). It ends with the `mv` that keeps both files and the recording's page. |
 | `test/serve_recordings.py` | The recordings page on port 8080, run by `autodev-recordings.service`: the videos newest first, each with its own page. A card shows its notes file: the ticket as its title, the parent and PR, the three notes, and when, the test, the branch and commit and the result. A video without a notes file gets a title from its file name. `--port 8081` previews a branch's page. `test/tests/test_recordings_page.lua` and `test/tests/test_recording_notes.lua` check it. The dispatcher restarts it when a merge changes this file, so it must stay one file that imports only Python's standard library, and it reads the notes files itself. |
 | `test/mgba-qt.sh` | Opens the patched mGBA window by hand. |
 | `test/lib/framework.lua` | The test framework: press buttons, wait frames, assert, write results. Every test loads it. |
@@ -189,6 +190,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/lib/warp.lua` | Warps the player straight to a map, for tests and tools that don't need the walk. |
 | `test/lib/character_select.lua` | Boots a new game through Oak's speech to the character list. |
 | `test/lib/frame_capture.lua` | With `MGBA_FRAME_DIR` set, saves every second frame and its caption for a GIF; it can pause, so a warp the demo makes isn't filmed. |
+| `test/lib/record_fixture.lua` | Makes a small git repo holding copies of `test/record_test.sh` and its notes helper on a branch of its own, so a test can check what the recorder refuses in an autodev session whichever branch the test runs on. |
 | `test/lib/follower.lua` | The walking Pokémon harness: a save state with it walking, where it stands, putting it on a tile (its sprite too, so recordings show it there), the per-frame walkable-tile rule, and a record of each time you swap places with it (a swap may leave it on a doormat or ladder, which the rule allows until its next step). |
 | `test/lib/poke_radar.lua` | Reads and writes the Poké Radar chain state, and plays the radar. |
 | `test/lib/route14_battle.lua` | Starts the Kiri and Jan double battle on Route 14, for the type-colour tests. |

@@ -76,6 +76,16 @@ bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA
 bash test/record_test.sh --notes notes.txt test/tests/test_pc_anywhere.lua  # recorded, with notes saying what it's for
 ```
 
+**Recordings are only for changes you can see in the game.** A recording is made only when a change makes something on the GBA screen look or behave differently (CLAUDE.md, step 8). A change to tests, tooling, autodev, docs, the recordings page or the recorder itself gets no recording, even when a test of it runs in the game, and nor does a new test of behaviour the game already had. Its PR says "No recording: no in-game behaviour changes."
+
+- **Autodev's sessions can't film anything else.** In a session autodev started, `record_test.sh` (`--check` included) refuses to record when the branch changes no file the ROM is built from. It looks at every file that differs from where the branch left master (`git merge-base HEAD origin/master`): commits, staged and unstaged edits, untracked new files, deletions and renames. The game is anything under `src/`, `include/`, `asm/`, `data/`, `graphics/`, `sound/`, `constants/` or `tools/`, plus the top-level `Makefile`, `config.mk`, `*.mk`, `ld_script*.ld`, `sym_*.txt` and `charmap.txt` (listed once, in the script). A pattern for the top level matches only there: `docs/x.mk` isn't the game.
+- **It fails closed.** With no `origin/master`, or no commit shared with it, it says it can't tell what the branch changes, and refuses.
+- **The refusal says what to do instead:** which commit it compared with, which paths count as the game, and to leave the recording out, write "No recording: no in-game behaviour changes." in the PR, and name any acceptance criterion that asked for a recording. It runs before the recording lock, so a refusal costs a second.
+- **It judges paths, not the screen.** A `src/` change you can't see, such as a refactor, gets past it; the written rule covers that case.
+- **Your own recordings are never refused:** without the session variables, the check doesn't run.
+
+`test/tests/test_record_game_changes.lua` checks it on small git repos it makes in its run folder (`test/lib/record_fixture.lua`), each holding copies of the recorder on a branch changed a different way.
+
 **Recordings run one at a time.** `record_test.sh` films the whole virtual display and closes any other mGBA window, so it takes a machine-wide lock (`/tmp/autodev-record.lock`) first. A second recording started meanwhile, from any worktree, prints "Waiting for another recording to finish…" and starts once the first is done. `run_test.sh` and `run_suite.sh` don't need the display, so they run alongside a recording.
 
 **Recordings don't use the machine's sound.** `record_test.sh` gives mGBA SDL's dummy audio output (`SDL_AUDIODRIVER=dummy`), so a hung or missing audio server can't stop the game before its first frame. The videos have no sound track anyway.
