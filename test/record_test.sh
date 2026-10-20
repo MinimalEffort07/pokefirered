@@ -16,8 +16,8 @@
 #   bash test/record_test.sh --check [--notes FILE] [TEST_SCRIPT]
 #       Check the arguments and the notes, print the verdict and the name
 #       the video would get, and exit 0 (accepted) or 1 (refused), without
-#       recording. Tests use this: a real recording closes every mGBA
-#       window on the machine.
+#       recording (nor needing the ROM built). Tests use this: a real
+#       recording closes every mGBA window on the machine.
 #
 # NOTES: what a recording is for, in a few plain lines. Which ticket,
 # feature (the parent issue) and PR it belongs to, what it tests, what the
@@ -110,7 +110,9 @@ TEST_SCRIPT=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --notes)
-            if [ $# -lt 2 ] || [ -z "$2" ]; then
+            # The word after --notes is its file, unless it is missing or
+            # another option (as in "--notes --check"): - alone is stdin.
+            if [ $# -lt 2 ] || [ -z "$2" ] || { [ "$2" != "-" ] && [ "${2#-}" != "$2" ]; }; then
                 echo "ERROR: --notes needs a notes file, or - for stdin"; exit 1
             fi
             NOTES="$2"
@@ -132,9 +134,6 @@ while [ $# -gt 0 ]; do
 done
 TEST_SCRIPT="${TEST_SCRIPT:-$PROJECT_DIR/test/tests/test_player_sprite.lua}"
 
-if [ ! -f "$ROM" ]; then
-    echo "ERROR: ROM not found at $ROM"; exit 1
-fi
 if [ ! -f "$TEST_SCRIPT" ]; then
     echo "ERROR: Test script not found: $TEST_SCRIPT"; exit 1
 fi
@@ -168,6 +167,12 @@ if [ "$CHECK_ONLY" = 1 ]; then
     echo "OK: would record $TEST_SCRIPT as $RECORDINGS_DIR/$(video_name "$(date +%s)").mp4"
     echo "Nothing recorded (--check)."
     exit 0
+fi
+
+# The ROM isn't an argument, so --check doesn't need it: a checkout can
+# check its notes before it is built.
+if [ ! -f "$ROM" ]; then
+    echo "ERROR: ROM not found at $ROM"; exit 1
 fi
 
 RUN_DIR="$(mktemp -d /tmp/mgba-record.XXXXXX)"

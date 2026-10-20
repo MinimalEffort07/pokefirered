@@ -182,9 +182,9 @@ def parse_time(text):
     return seconds
 
 
-def optional(record, key, kind):
-    """record[key] when it is a `kind`, None when it is null or missing."""
-    value = record.get(key)
+def optional(data, key, kind):
+    """data[key] when it is a `kind`, None when it is null or missing."""
+    value = data.get(key)
     if value is None:
         return None
     # JSON's true and false are Python bools, which also count as ints.
@@ -200,80 +200,80 @@ def whole_number(value, least):
     return value
 
 
-def read_notes(path):
-    """The notes file at `path`, checked, as a dict with every field of
-    the format (None where the file has null) plus "recorded", recorded_at
-    in seconds since 1970. None when there is no such file. Raises
+def read_notes_file(path):
+    """The notes file at `path`, checked, as a dict (a video's "record")
+    with every field of the format (None where the file has null) plus
+    "recorded", recorded_at in seconds since 1970. Its "notes" are the
+    three notes themselves. None when there is no such file. Raises
     NotesUnreadable when the file is there but can't be used."""
     try:
         with open(path, "rb") as f:
-            data = f.read(NOTES_LIMIT + 1)
+            raw = f.read(NOTES_LIMIT + 1)
     except FileNotFoundError:
         return None
     except OSError:
         raise NotesUnreadable
-    if len(data) > NOTES_LIMIT:
+    if len(raw) > NOTES_LIMIT:
         raise NotesUnreadable
     try:
-        record = json.loads(data.decode("utf-8"))
+        data = json.loads(raw.decode("utf-8"))
     except (ValueError, RecursionError):    # UnicodeDecodeError is a ValueError
         raise NotesUnreadable
-    if not isinstance(record, dict):
+    if not isinstance(data, dict):
         raise NotesUnreadable
 
-    notes = {"recorded": parse_time(record.get("recorded_at"))}
+    record = {"recorded": parse_time(data.get("recorded_at"))}
     for key in ("test", "branch", "commit"):
-        notes[key] = optional(record, key, str)
-    notes["uncommitted_changes"] = optional(record, "uncommitted_changes", bool)
-    notes["result"] = optional(record, "result", dict)
-    if notes["result"] is not None:
-        notes["result"] = {key: whole_number(notes["result"].get(key), 0)
-                           for key in ("pass", "fail")}
+        record[key] = optional(data, key, str)
+    record["uncommitted_changes"] = optional(data, "uncommitted_changes", bool)
+    record["result"] = optional(data, "result", dict)
+    if record["result"] is not None:
+        record["result"] = {key: whole_number(record["result"].get(key), 0)
+                            for key in ("pass", "fail")}
     for key in ("ticket", "parent"):
-        issue = optional(record, key, dict)
+        issue = optional(data, key, dict)
         if issue is not None:
             title = issue.get("title")
             if not isinstance(title, str):
                 raise NotesUnreadable
             issue = {"number": whole_number(issue.get("number"), 1), "title": title}
-        notes[key] = issue
-    notes["pr"] = optional(record, "pr", int)
-    if notes["pr"] is not None:
-        whole_number(notes["pr"], 1)
-    notes["notes"] = optional(record, "notes", dict)
-    if notes["notes"] is not None:
+        record[key] = issue
+    pr = data.get("pr")
+    record["pr"] = None if pr is None else whole_number(pr, 1)
+    record["notes"] = optional(data, "notes", dict)
+    if record["notes"] is not None:
         for key, _ in NOTE_SECTIONS:
-            if not isinstance(notes["notes"].get(key), str):
+            if not isinstance(record["notes"].get(key), str):
                 raise NotesUnreadable
-    return notes
+    return record
 
 
 class Video:
     """One .mp4 file in a source folder, and its notes file."""
 
-    def __init__(self, source, filename, size, mtime, notes=None,
+    def __init__(self, source, filename, size, mtime, record=None,
                  notes_unreadable=False):
         self.source = source
         self.filename = filename    # e.g. test_x_20261020_134554.mp4
         self.name = filename[:-4]   # without .mp4: its page is /r/<name>
         self.size = size
         self.mtime = mtime          # seconds since 1970: when the recording ended
-        self.notes = notes          # read_notes's dict, or None
-        self.notes_unreadable = notes_unreadable
+        self.record = record        # its notes file (read_notes_file), or None
+        self.notes_unreadable = notes_unreadable    # a notes file it can't use
         # When it was recorded: its notes file says, else its file's time.
-        self.recorded = notes["recorded"] if notes else mtime
+        self.recorded = record["recorded"] if record else mtime
         self.title, self.title_link = self._title()
 
     def _title(self):
         """The card's title and the link it carries (None for none): the
         ticket the notes name, else the test's name; with no notes file,
         the title made from the file name (title_of)."""
-        notes = self.notes
-        if notes is not None and notes["ticket"] is not None:
-            number = notes["ticket"]["number"]
-            return f'#{number} {notes["ticket"]["title"]}', ISSUE_URL.format(number)
-        if notes is not None and notes["test"]:
-            test = os.path.basename(notes["test"])
+        record = self.record
+        if record is not None and record["ticket"] is not None:
+            number = record["ticket"]["number"]
+            return f'#{number} {record["ticket"]["title"]}', ISSUE_URL.format(number)
+        if record is not None and record["test"]:
+            test = os.path.basename(record["test"])
             if test.endswith(".lua"):
                 test = test[:-len(".lua")]
             if test:
@@ -309,15 +309,15 @@ def list_videos(source, with_notes=True):
             st = entry.stat()
         except OSError:
             continue
-        notes, unreadable = None, False
+        record, unreadable = None, False
         if with_notes:
             try:
-                notes = read_notes(os.path.join(source.directory,
-                                                entry.name[:-4] + ".json"))
+                record = read_notes_file(os.path.join(source.directory,
+                                                      entry.name[:-4] + ".json"))
             except NotesUnreadable:
                 unreadable = True
         videos.append(Video(source, entry.name, st.st_size, st.st_mtime,
-                            notes, unreadable))
+                            record, unreadable))
     # Newest first; two videos with the same time go by name, so the order
     # never changes between page loads.
     videos.sort(key=lambda v: (-v.recorded, v.name))
@@ -379,10 +379,10 @@ def result_text(result):
     return f"{passed} of {total} {checks} passed"
 
 
-def source_text(notes):
+def source_text(record):
     """Where the test was run from, e.g. "branch issue-90-x at cae067302,
     with uncommitted changes", or "" when the notes file doesn't know."""
-    branch, commit = notes["branch"], notes["commit"]
+    branch, commit = record["branch"], record["commit"]
     if branch and commit:
         text = f"branch {branch} at {commit}"
     elif commit:
@@ -391,7 +391,7 @@ def source_text(notes):
         text = f"branch {branch}"
     else:
         return ""
-    if notes["uncommitted_changes"]:
+    if record["uncommitted_changes"]:
         text += ", with uncommitted changes"
     return text
 
@@ -401,14 +401,14 @@ def facts(video, page_link):
     notes file, the test, where it was run from and the result; then its
     size, its file name and (on the main page) a link to its own page."""
     items = [f"Recorded {format_time(video.recorded)}"]
-    notes = video.notes
-    if notes is not None:
-        if notes["test"]:
-            items.append(esc(notes["test"]))
-        source = source_text(notes)
+    record = video.record
+    if record is not None:
+        if record["test"]:
+            items.append(esc(record["test"]))
+        source = source_text(record)
         if source:
             items.append(esc(source))
-        items.append(esc(result_text(notes["result"])))
+        items.append(esc(result_text(record["result"])))
     items.append(format_size(video.size))
     items.append(f'<span class="file">{esc(video.filename)}</span>')
     if page_link:
@@ -416,20 +416,20 @@ def facts(video, page_link):
     return " · ".join(items)
 
 
-def under_title(notes):
+def under_title(record):
     """The line under a card's title: "Part of #87 <title>" and "PR #97",
     each linked, when the notes file names them ("" when neither)."""
-    if notes is None:
+    if record is None:
         return ""
     items = []
-    parent = notes["parent"]
+    parent = record["parent"]
     if parent is not None:
         number = parent["number"]
         text = esc(f"#{number} {parent['title']}")
         items.append(f'Part of <a href="{esc(ISSUE_URL.format(number))}">{text}</a>')
-    if notes["pr"] is not None:
-        items.append(f'<a href="{esc(PULL_URL.format(notes["pr"]))}">'
-                     f'PR #{notes["pr"]}</a>')
+    if record["pr"] is not None:
+        items.append(f'<a href="{esc(PULL_URL.format(record["pr"]))}">'
+                     f'PR #{record["pr"]}</a>')
     return " · ".join(items)
 
 
@@ -441,14 +441,14 @@ def card(video, page_link=True):
     if video.title_link is not None:
         title = f'<a href="{esc(video.title_link)}">{title}</a>'
     parts = ['<div class="card">', f'<div class="title">{title}</div>']
-    links = under_title(video.notes)
+    links = under_title(video.record)
     if links:
         parts.append(f'<div class="links">{links}</div>')
     parts.append(f'<div class="facts">{facts(video, page_link)}</div>')
     tag = (f'<video controls preload="metadata">'
            f'<source src="/{video.source.label}/{url_part(video.filename)}" '
            f'type="video/mp4"></video>')
-    notes = video.notes["notes"] if video.notes is not None else None
+    notes = video.record["notes"] if video.record is not None else None
     if video.notes_unreadable:
         parts.append(f'<div class="no-notes">No notes: notes file unreadable '
                      f'({esc(video.name)}.json).</div>')

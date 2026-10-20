@@ -24,11 +24,11 @@ record_test.sh:
       rest as it was.
 
 record_test.sh writes the notes file into its run's own directory as the
-recording starts, so the branch, commit and uncommitted changes are those
-of the checkout it recorded, even if the checkout changes while the
-recording waits for its turn or runs. Once the test has finished it adds
-the result with set-result, and once the video is in place it moves the
-notes file beside it.
+recording starts (once it has its turn), so the branch, commit and
+uncommitted changes are those of the checkout as mGBA loads the test,
+even if the checkout changes while the recording runs. Once the test has
+finished it adds the result with set-result, and once the video is in
+place it moves the notes file beside it.
 
 THE NOTES, as a person writes them (the ticket and the PR are examples):
 
@@ -85,6 +85,7 @@ them back through the page: that keeps the two halves agreeing.
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -240,8 +241,11 @@ def read_notes(path, save=None):
         return None, [f"notes file {path} isn't UTF-8 text"]
     fields, problems = parse(text)
     if save is not None and not problems:
-        with open(save, "wb") as f:
-            f.write(data)
+        try:
+            with open(save, "wb") as f:
+                f.write(data)
+        except OSError as e:
+            problems.append(f"can't save a copy of the notes to {save}: {e.strerror}")
     return fields, problems
 
 
@@ -256,6 +260,7 @@ def summary(fields):
 
 
 def report_problems(problems, path):
+    """Print why the notes at `path` were refused, one problem a line."""
     where = "stdin" if path == "-" else path
     print(f"The notes ({where}) can't be used:", file=sys.stderr)
     for problem in problems:
@@ -263,6 +268,7 @@ def report_problems(problems, path):
 
 
 def cmd_check(args):
+    """check: the verdict on the notes, and their copy with --save."""
     fields, problems = read_notes(args.notes, args.save)
     if problems:
         report_problems(problems, args.notes)
@@ -272,6 +278,8 @@ def cmd_check(args):
 
 
 def cmd_ticket(args):
+    """ticket: the number of the ticket the notes name, for the video's
+    name."""
     fields, problems = read_notes(args.notes)
     if problems:
         report_problems(problems, args.notes)
@@ -349,10 +357,19 @@ def save(record, path):
 
 
 def cmd_write(args):
+    """write: a video's notes file, from the notes (if any), the test, the
+    time, the results file (if any) and the checkout."""
     if not args.video.endswith(".mp4"):
         print(f"not a video (.mp4): {args.video}", file=sys.stderr)
         return 1
-    fields = {key: None for key in ("ticket", "parent", "pr", "notes")}
+    # The recordings page sorts by this time, so it must be one it reads.
+    try:
+        datetime.datetime.fromisoformat(args.recorded_at)
+    except ValueError:
+        print(f"--recorded-at needs a time like 2026-10-20T13:45:54+11:00, "
+              f"not {args.recorded_at!r}", file=sys.stderr)
+        return 1
+    fields = dict.fromkeys(HEADERS + ("notes",))      # no notes: all null
     if args.notes is not None:
         fields, problems = read_notes(args.notes)
         if problems:
@@ -376,6 +393,7 @@ def cmd_write(args):
 
 
 def cmd_set_result(args):
+    """set-result: the run's result into an existing notes file."""
     try:
         with open(args.notes_file, encoding="utf-8") as f:
             record = json.load(f)

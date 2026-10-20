@@ -200,6 +200,19 @@ local function check_accepted()
     if not fw.assert_eq(code, 1, "C1: --check --notes - with nothing on stdin exits 1") then
         dump("empty stdin", output)
     end
+
+    -- --check checks only the arguments and the notes, so it works in a
+    -- checkout that isn't built yet: here a copy of the two scripts in a
+    -- folder with no ROM.
+    local bare = WORK .. "/unbuilt"
+    run("mkdir -p " .. sh_quote(bare .. "/test/tools")
+        .. " && cp " .. sh_quote(RECORD) .. " " .. sh_quote(bare .. "/test/record_test.sh")
+        .. " && cp " .. sh_quote(NOTES_TOOL) .. " " .. sh_quote(bare .. "/test/tools/recording_notes.py"))
+    code, output = run("bash " .. sh_quote(bare .. "/test/record_test.sh") .. " --check --notes "
+        .. sh_quote(path) .. " " .. sh_quote(SOME_TEST))
+    if not fw.assert_eq(code, 0, "C1: --check works in a checkout with no ROM built") then
+        dump("no ROM", output)
+    end
 end
 
 -------------------------------------------------------------------------------
@@ -264,6 +277,21 @@ local function check_refused()
     ok = fw.assert_true(output:find(missing, 1, true) ~= nil and output:find("not found", 1, true) ~= nil,
         "C2: the message names the missing file and says it is not found") and ok
     if not ok then dump("missing notes file", output) end
+
+    -- --notes followed by another option, rather than a file.
+    code, output = run("bash " .. sh_quote(RECORD) .. " --check --notes --check " .. sh_quote(SOME_TEST))
+    ok = fw.assert_eq(code, 1, "C2: --check refuses --notes followed by an option (exit 1)")
+    ok = fw.assert_true(output:find("--notes needs a notes file", 1, true) ~= nil,
+        "C2: the message says --notes needs a notes file") and ok
+    if not ok then dump("--notes --check", output) end
+
+    -- The helper's own failures are messages, not Python tracebacks.
+    code, output = run("python3 " .. sh_quote(NOTES_TOOL) .. " check --save "
+        .. sh_quote(WORK .. "/no_such_folder/copy.txt") .. " " .. sh_quote(notes_file("save.txt", COMPLETE)))
+    ok = fw.assert_eq(code, 1, "C2: check --save into a folder that doesn't exist exits 1")
+    ok = fw.assert_true(output:find("Traceback", 1, true) == nil and output:find("can't save", 1, true) ~= nil,
+        "C2: ... saying it can't save the copy, without a traceback") and ok
+    if not ok then dump("check --save", output) end
 end
 
 -------------------------------------------------------------------------------
@@ -409,6 +437,15 @@ local function check_notes_file()
     ok = fw.assert_eq(code, 0, "C3: no results file: the helper still writes (exit 0)")
     ok = fw.assert_eq(f.result, "null", "C3: no results file: result is null") and ok
     if not ok then dump("write, no results", output) end
+
+    -- recorded_at must be a time the page can read.
+    write_file(WORK .. "/bad_time.mp4", "")
+    code, output = run("python3 " .. sh_quote(NOTES_TOOL) .. " write " .. sh_quote(WORK .. "/bad_time.mp4")
+        .. " --test " .. sh_quote(REPO_TEST) .. " --recorded-at now --repo " .. sh_quote(REPO))
+    ok = fw.assert_eq(code, 1, "C3: write refuses --recorded-at now (exit 1)")
+    ok = fw.assert_true(output:find("recorded-at", 1, true) ~= nil, "C3: ... naming --recorded-at") and ok
+    ok = fw.assert_eq(read_json(WORK .. "/bad_time.json").keys, nil, "C3: ... and writes no notes file") and ok
+    if not ok then dump("write, bad time", output) end
 
     -- record_test.sh writes the notes file when the recording starts (the
     -- branch and commit are the ones recorded, whatever happens to the
