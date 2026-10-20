@@ -81,7 +81,7 @@ local MAP_OFFSET = mm.MAP_OFFSET
 -- The struct ObjectEvent fields read here that mt_moon.lua's object readers
 -- (mm.live_objects) don't report. 36 bytes per object:
 --   0x00 u32 bit flags: bit 0 active, bit 6 heldMovementActive,
---        bit 7 heldMovementFinished
+--        bit 7 heldMovementFinished, bit 16 isPlayer
 --   0x10 s16 currentCoords.x, 0x12 currentCoords.y
 --   0x1C u8 movementActionId (the held movement being played)
 local OE_SIZE       = 0x24
@@ -92,9 +92,11 @@ local OE_ACTION     = 0x1C
 local FLAG_ACTIVE          = 0x001
 local FLAG_HELD_ACTIVE     = 0x040
 local FLAG_HELD_FINISHED   = 0x080
+local FLAG_IS_PLAYER       = 0x10000
 
 -- sFollower (src/pokemon_follower.c), see test/lib/addresses.lua for the
--- whole layout: u8 objEventId at offset 7.
+-- whole layout: bool8 active at offset 0, u8 objEventId at offset 7.
+local FOLLOWER_ACTIVE_OFF = 0
 local FOLLOWER_OBJ_EVENT_ID_OFF = 7
 local OBJECT_EVENTS_COUNT = 16
 
@@ -136,10 +138,15 @@ end
 -------------------------------------------------------------------------------
 
 -- Index of the follower's ObjectEvent, or nil when no follower sprite exists.
+-- Before the first WALK, sFollower is all zeros: objEventId 0 is then the
+-- player's object, so a follower also needs sFollower.active and an object
+-- that isn't the player's.
 function follower.object_index()
+    if emu:read8(sym.addr("sFollower") + FOLLOWER_ACTIVE_OFF) == 0 then return nil end
     local i = emu:read8(sym.addr("sFollower") + FOLLOWER_OBJ_EVENT_ID_OFF)
     if i >= OBJECT_EVENTS_COUNT then return nil end
-    if (emu:read32(object_addr(i) + OE_FLAGS) & FLAG_ACTIVE) == 0 then return nil end
+    local flags = emu:read32(object_addr(i) + OE_FLAGS)
+    if (flags & FLAG_ACTIVE) == 0 or (flags & FLAG_IS_PLAYER) ~= 0 then return nil end
     return i
 end
 

@@ -37,6 +37,8 @@
 --   local sym = dofile(project_dir .. "test/lib/symbols.lua")
 --   local addr = sym.addr("sWarpDestination")   -- error if missing
 --   local maybe = sym.find("gRoamers")           -- nil if missing
+--   local all = sym.find_all("HandleInputChooseAction")  -- every copy of a
+--                                                -- name several files define
 --   if sym.is_func(emu:read32(cb2_slot), "CB2_Overworld") then ... end
 --
 -- The table is read once per test run (about 200,000 lines; it takes well
@@ -60,14 +62,18 @@ symbols.ELF_PATH = project_dir .. "pokefirered.elf"
 -- `nm -S` also prints each symbol's size in bytes, when the ELF records one
 -- (functions and variables do), as a second hex column:
 --     08000890 00000030 t WaitForVBlank
--- Sizes go in a second table, read by symbols.contains().
+-- Sizes go in a second table, read by symbols.contains(), and every address
+-- of every name (ambiguous ones included) in a third, read by
+-- symbols.find_all().
 local function load()
     local table_cache = _G.__pokefirered_symbol_table
     if table_cache then return table_cache end
     table_cache = {}
     local sizes = {}
+    local all = {}
     _G.__pokefirered_symbol_table = table_cache
     _G.__pokefirered_symbol_sizes = sizes
+    _G.__pokefirered_symbol_all = all
     local pipe = io.popen("arm-none-eabi-nm -S '" .. symbols.ELF_PATH .. "' 2>/dev/null")
     if pipe == nil then return table_cache end
     for line in pipe:lines() do
@@ -84,6 +90,8 @@ local function load()
             elseif seen ~= addr then
                 table_cache[name] = false
             end
+            all[name] = all[name] or {}
+            table.insert(all[name], addr)
         end
     end
     pipe:close()
@@ -109,6 +117,22 @@ function symbols.addr(name)
         error("symbol not found (or ambiguous) in " .. symbols.ELF_PATH .. ": " .. name)
     end
     return addr
+end
+
+-- Every address the symbol `name` has, lowest first (an empty list if it
+-- has none). Use it for an ambiguous name, one that several files each
+-- define as `static`, to pick the right file's copy by where it lies: the
+-- linker places each file's functions together, so the copy next to a
+-- unique symbol from the same file is that file's (see test/lib/
+-- poke_radar.lua's battle helpers for an example).
+function symbols.find_all(name)
+    load()
+    local list = {}
+    for _, addr in ipairs(_G.__pokefirered_symbol_all[name] or {}) do
+        list[#list + 1] = addr
+    end
+    table.sort(list)
+    return list
 end
 
 -- True when `pointer` (a value read from memory) points at function `name`.

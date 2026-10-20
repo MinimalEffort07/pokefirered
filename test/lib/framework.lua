@@ -350,6 +350,13 @@ function fw.assert_true(cond, msg)
     end
 end
 
+-- The assertions so far in this run: passed, failed. A test with several
+-- scenarios can take the difference before and after each one to log its
+-- own counts.
+function fw.counts()
+    return results.pass, results.fail
+end
+
 -------------------------------------------------------------------------------
 -- WHERE OUTPUT FILES GO
 -------------------------------------------------------------------------------
