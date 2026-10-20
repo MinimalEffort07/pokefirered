@@ -6,9 +6,9 @@ GH_TOKEN, and gh uses it for every call.
 """
 
 from autodev.board import issue_numbers, section
-from autodev.decide import (HANDLED_THROUGH, FixupOutcome, GrillOutcome,
-                            MergeOutcome, PrComment, PullRequest, Ticket,
-                            TicketOutcome, merge_cancelled)
+from autodev.decide import (HANDLED_THROUGH, MARKER, PARKED, FixupOutcome,
+                            GrillOutcome, MergeOutcome, PrComment, PullRequest,
+                            Ticket, TicketOutcome, merge_cancelled)
 from autodev.worktrees import branch_prefix
 
 # The grill session marks its design comment with this hidden tag
@@ -117,18 +117,13 @@ class GitHub:
     # ── a ticket's PR ─────────────────────────────────────────────────────
 
     def _find_ticket_pr(self, number):
-        """The bot's open PR for ticket `number` as GitHub lists it, or None.
-        Anyone can open a PR from a fork with any branch name, so only a
-        branch in this repo, pushed and opened by the bot, counts."""
-        prefix = branch_prefix(number)
+        """Ticket `number`'s open PR as GitHub lists it (is_ticket_pr), or
+        None."""
         if self._open_pulls is None:
             self._open_pulls = self.gh.rest_list(
                 "repos/%s/pulls?state=open" % self.config.repo)
         for pr in self._open_pulls:
-            head = pr["head"]
-            if (head["ref"].startswith(prefix)
-                    and (head["repo"] or {}).get("full_name") == self.config.repo
-                    and pr["user"]["login"] == self.config.bot):
+            if is_ticket_pr(self.config, number, pr):
                 return pr
         return None
 
@@ -144,9 +139,20 @@ class GitHub:
         if pr is None:
             return None
         return PullRequest(
-            number=pr["number"], head=pr["head"]["ref"],
+            number=pr["number"], head=pr["head"]["ref"], opened=pr["created_at"],
             comments=pr_timeline(self.gh, self.config.repo, pr["number"])
             if comments else ())
+
+    def parked_at(self, number):
+        """When autodev last parked issue `number` in Needs human: the time
+        of the bot's newest comment that says so (decide.PARKED), or "" if
+        there is none."""
+        comments = self.gh.rest_list("repos/%s/issues/%d/comments"
+                                     % (self.config.repo, number))
+        return max((c["created_at"] for c in comments
+                    if c["user"]["login"] == self.config.bot
+                    and PARKED in (c["body"] or "") and MARKER in (c["body"] or "")),
+                   default="")
 
     def merge_outcome(self, pr, handled_through):
         """Whether the PR is merged, whether the bot replied on it naming
@@ -169,6 +175,17 @@ class GitHub:
     def _replied(self, said, comment_id):
         return any(c.author == self.config.bot and _handles(c.body, comment_id)
                    for c in said)
+
+
+def is_ticket_pr(config, ticket, pr):
+    """Whether `pr` (GitHub's record of a PR) is ticket `ticket`'s: from the
+    ticket's own branch, in this repo, opened by the bot or by the owner
+    (who may finish a parked ticket by hand). Anyone can open a PR from a
+    fork with any branch name, so a fork's never counts."""
+    head = pr["head"]
+    return (head["ref"].startswith(branch_prefix(ticket))
+            and (head["repo"] or {}).get("full_name") == config.repo
+            and pr["user"]["login"] in (config.bot, config.owner))
 
 
 def pr_timeline(gh, repo, pr):

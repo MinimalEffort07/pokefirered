@@ -15,8 +15,9 @@ import os
 import time
 
 from autodev import board, worktrees
-from autodev.decide import (IN_REVIEW, TODO, CloseIssue, Comment, Finish,
-                            Launch, LinkSubIssue, MakeWorktree, PauseLaunches,
+from autodev.decide import (IN_REVIEW, NEEDS_HUMAN, TODO, CloseIssue,
+                            Comment, Finish, Launch, LinkSubIssue,
+                            MakeWorktree, PauseLaunches,
                             PlaceOnBoard, RemoveWorktree, SetStatus, State,
                             is_waiting_ticket, plan)
 from autodev.github import GitHub
@@ -80,7 +81,8 @@ def read_state(github, config, snapshot, registry, log):
     """Everything decide() needs beyond the board: the sessions, what
     GitHub shows for the ones that ended, which of the waiting tickets'
     blockers are closed, the PRs waiting in review and what was said on
-    them, which tickets have a worktree, and what the registry remembers:
+    them, when each parked ticket was parked and what was said on its PR
+    since, which tickets have a worktree, and what the registry remembers:
     a usage-limit pause and earlier crashes. Returns (exit code, State)."""
     code = 0
     now = time.time()
@@ -114,13 +116,21 @@ def read_state(github, config, snapshot, registry, log):
         if not is_open:
             closed.add(number)
     prs = {}
+    parked_at = {}
     for item in snapshot.items:
         # In review: what was said on the PR (D9). Todo: only whether it has
         # one, so a resumed or re-queued ticket goes back to review (D8).
-        if item.has_parent and item.is_open and item.status in (IN_REVIEW, TODO):
+        # Needs human: when it was parked, and what was said on its PR, so
+        # the owner can hand it back.
+        if (item.has_parent and item.is_open
+                and item.status in (IN_REVIEW, TODO, NEEDS_HUMAN)):
             try:
                 pr = github.ticket_pr(item.number,
-                                      comments=item.status == IN_REVIEW)
+                                      comments=item.status != TODO)
+                if pr is not None and item.status == NEEDS_HUMAN:
+                    at = github.parked_at(item.number)
+                    if at:
+                        parked_at[item.number] = at
             except GhError as e:
                 print("error: reading #%d's PR: %s" % (item.number, e), file=log)
                 code = 1
@@ -130,7 +140,7 @@ def read_state(github, config, snapshot, registry, log):
     return code, State(
         owner=config.owner, bot=config.bot, items=snapshot.items,
         sessions=known, outcomes=outcomes, max_sessions=config.max_sessions,
-        closed=frozenset(closed), prs=prs,
+        closed=frozenset(closed), prs=prs, parked_at=parked_at,
         worktrees=frozenset(worktrees.tickets_with_worktrees(config.clone)),
         resume_command=config.resume_command, now=now,
         paused_until=registry.paused_until(), crashes=registry.crashes(),

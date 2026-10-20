@@ -120,7 +120,7 @@ bash automation/setup.sh    # the rest: the board, the bot's access, the master 
 | `Blocked` | A ticket is waiting for an issue under its `## Blocked by` heading to close. |
 | `In progress` | A parent's tickets are in flight, or a session is running for a ticket. |
 | `In review` | A ticket's PR is waiting for your `/merge` or your feedback. |
-| `Needs human` | Parked, after a failure or because someone else wrote the issue. The bot's latest comment says why. |
+| `Needs human` | Parked, after a failure or because someone else wrote the issue. The bot's latest comment says why. A parked ticket of yours comes back on its own once its PR is opened or you comment on it (see below). |
 | `Paused` | Your stop switch for that card. |
 | `Done` | Closed. |
 
@@ -136,10 +136,14 @@ bash automation/setup.sh    # the rest: the board, the bot's access, the master 
 **Resuming a parked session.** When a session fails, its `Needs human` comment @mentions you, says what went wrong, and ends with a command that reopens the session interactively, exactly where it stopped:
 
 ```bash
-cd ~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-68 && CLAUDE_CONFIG_DIR=~/.claude-personal claude --resume <session-id>
+cd ~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-68 && (set -a && . ~/.config/autodev/env && set +a && AUTODEV_ROLE=ticket AUTODEV_ISSUE=68 CLAUDE_CONFIG_DIR=~/.claude-personal claude --resume <session-id>)
 ```
 
-Once it's sorted, move the card back to `Todo`. Autodev carries on from where things stand: a parent that already has tickets isn't grilled again, and a ticket whose PR is open goes back to `In review`.
+The resumed session is still that session: it acts as the bot (the token loads only inside the brackets, not in your shell) and `issue.py` knows its role and issue, so it can finish the job, e.g. open the ticket's PR.
+
+Once it's sorted, hand it back:
+- **A ticket comes back on its own.** Once its PR is opened (by the resumed session, or by you from the ticket's `issue-<T>-*` branch), it goes to `In review`. Your `/merge` or feedback on its PR starts a merge or fix-up straight away, as in review. Only what happens after it was parked counts, so the comment it was parked over doesn't start the same work again.
+- **Or move the card back to `Todo`.** Autodev carries on from where things stand: a parent that already has tickets isn't grilled again, and a ticket whose PR is open goes back to `In review`.
 
 **Demo.** The demo is the canary, [#83](https://github.com/MinimalEffort07/pokefirered/issues/83), a throwaway issue that runs the whole flow on the live board: it is grilled into tickets, implemented in a PR, fixed up after one comment from you, and merged after your `/merge`. The canary passed: apart from that one comment and that `/merge`, it went from grilling to merge on its own.
 

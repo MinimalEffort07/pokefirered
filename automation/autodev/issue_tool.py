@@ -20,7 +20,7 @@ import re
 
 from autodev.board import issue_numbers, section
 from autodev.decide import MARKER, handled_marker, merge_cancelled, unhandled
-from autodev.github import pr_timeline
+from autodev.github import is_ticket_pr, pr_timeline
 from autodev.worktrees import branch_prefix
 
 
@@ -136,14 +136,12 @@ def _check_mention(config, body, what):
 
 
 def _check_own_pr(gh, config, ticket, pr):
-    """Refuse unless `pr` is the bot's open PR from `ticket`'s own branch.
-    The PR number comes from the session's environment, which one of its
-    commands could override, so the PR itself is checked."""
+    """Refuse unless `pr` is `ticket`'s open PR (the bot's or the owner's,
+    from its own branch: github.is_ticket_pr). The PR number comes from the
+    session's environment, which one of its commands could override, so the
+    PR itself is checked."""
     data = gh.rest("GET", "repos/%s/pulls/%d" % (config.repo, pr))
-    head = data["head"]
-    if not (data["state"] == "open" and data["user"]["login"] == config.bot
-            and head["ref"].startswith(branch_prefix(ticket))
-            and (head["repo"] or {}).get("full_name") == config.repo):
+    if not (data["state"] == "open" and is_ticket_pr(config, ticket, data)):
         raise Refused("PR #%d isn't #%d's open PR from its own %s* branch"
                       % (pr, ticket, branch_prefix(ticket)))
 
