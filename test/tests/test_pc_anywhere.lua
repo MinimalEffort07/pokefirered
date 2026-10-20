@@ -200,11 +200,12 @@ fw.run(function()
         fw.wait_frames(20)
     end
 
-    -- Confirm MOVE TO PC. The message box opens about 20 frames later and
-    -- "<name> was sent to the PC!" types out from about frame 48; it is
-    -- complete at about frame 116 (the injected Bulbasaurs have blank
-    -- names), and by frame 130 the screen has faded to black on the way
-    -- back to the field. The moment plays frames 71 to 130.
+    -- Confirm MOVE TO PC. Counting frames from when fw.press returns: the
+    -- message box opens about 20 frames later and "<name> was sent to the
+    -- PC!" types out from about frame 48; it is complete at about frame 116
+    -- (the injected Bulbasaurs have blank names), and by frame 130 the
+    -- screen has faded to black on the way back to the field, whatever the
+    -- speed. The moment plays frames 71 to 130.
     fw.press("A")
     fw.wait_frames(70)
     fw.show_next("Part B: \"... was sent to the PC!\" after MOVE TO PC")

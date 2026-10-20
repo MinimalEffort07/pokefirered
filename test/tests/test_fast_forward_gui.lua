@@ -67,14 +67,14 @@ local function timed(fn)
 end
 
 -- Check that `seconds` is a moment's length (G1, G3, G4).
-local function check_moment(name, seconds)
+local function check_moment_length(name, seconds)
     fw.assert_true(seconds >= MOMENT_MIN_SECONDS and seconds <= MOMENT_MAX_SECONDS,
         string.format("%s lasts %.1f to %.1f s (took %.2f s)",
             name, MOMENT_MIN_SECONDS, MOMENT_MAX_SECONDS, seconds))
 end
 
 -- Check that `seconds` is FAST_FRAMES frames at fast-forward (G0, G2, G4).
-local function check_fast(name, seconds)
+local function check_fast_forward(name, seconds)
     fw.assert_true(seconds < FAST_MAX_SECONDS,
         string.format("%s: %d frames take under %d s (took %.2f s; 25 s at normal speed)",
             name, FAST_FRAMES, FAST_MAX_SECONDS, seconds))
@@ -101,7 +101,7 @@ fw.run(function()
     -- Get past the title animation so the emulator is fully running.
     fw.wait_frames(180)
 
-    check_fast("G0 before any moment",
+    check_fast_forward("G0 before any moment",
         timed(function() fw.wait_frames(FAST_FRAMES) end))
 
     -- G1: one frame first, so no process ran in the frame the moment is
@@ -109,9 +109,9 @@ fw.run(function()
     local start = now()
     fw.yield()
     fw.show("G1 a 60-frame moment (fw.show)")
-    check_moment("G1 a 60-frame fw.show", now() - start)
+    check_moment_length("G1 a 60-frame fw.show", now() - start)
 
-    check_fast("G2 after the moment",
+    check_fast_forward("G2 after the moment",
         timed(function() fw.wait_frames(FAST_FRAMES) end))
 
     -- G3: a process started in the very frame the moment is marked in.
@@ -119,17 +119,17 @@ fw.run(function()
     local pipe = io.popen("true")
     pipe:close()
     fw.show("G3 a 60-frame moment right after io.popen")
-    check_moment("G3 a 60-frame fw.show right after io.popen", now() - start)
+    check_moment_length("G3 a 60-frame fw.show right after io.popen", now() - start)
     fw.wait_frames(120)  -- back to fast-forward before G4
 
     -- G4: the moment plays while the test waits frame by frame.
-    check_moment("G4 the 60 frames of fw.show_next", timed(function()
+    check_moment_length("G4 the 60 frames of fw.show_next", timed(function()
         fw.show_next("G4 the next 60 frames (fw.show_next)", 60)
         for _ = 1, 60 do
             fw.yield()
         end
     end))
-    check_fast("G4 after the moment",
+    check_fast_forward("G4 after the moment",
         timed(function() fw.wait_frames(FAST_FRAMES) end))
 
     fw.finish()

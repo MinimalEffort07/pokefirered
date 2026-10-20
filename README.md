@@ -76,7 +76,7 @@ bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA
 bash test/record_test.sh --notes notes.txt test/tests/test_pc_anywhere.lua  # recorded, with notes saying what it's for
 ```
 
-**Recordings fast-forward except at a test's moments.** In the mGBA window a test fast-forwards, 1,200 to 1,800 frames a second, so its boot and setup take seconds. A *moment* is an outcome a watcher must see to believe the test; the test marks it, and it plays at normal speed for about a second. The drop to normal speed is your cue to pause the video. Headless, a moment changes nothing but `fw.speed()`: the suite and the recording play the same frames.
+**Recordings fast-forward except at a test's moments.** In the mGBA window a test fast-forwards, over a thousand frames a second on this machine, so its boot and setup take seconds. A *moment* is an outcome a watcher must see to believe the test; the test marks it, and it plays at normal speed for about a second. The drop to normal speed is your cue to pause the video. Headless, a moment changes nothing but `fw.speed()`: the suite and the recording play the same frames.
 
 - `fw.show(label, frames)` holds on what's on screen now: the test waits there `frames` frames (default 60, one second). Use it for an outcome on screen, such as the PP in the move menu or the party after MOVE TO PC.
 - `fw.show_next(label, frames)` plays the next `frames` frames (default 60) at normal speed while the test carries on. Use it for a motion the test is about to cause, such as a swap, a warp or a battle starting.

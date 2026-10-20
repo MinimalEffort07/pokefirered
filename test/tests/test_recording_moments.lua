@@ -20,7 +20,8 @@
 --   M5  frames of 0, 181, 1.5 or "60", and a label of nil, "" or 42, are
 --       each refused with an error naming the rule, by both calls, and
 --       change neither the speed nor the frame. (That they don't count as
---       moments either is M6's: its fixture's total leaves them out.)
+--       moments either is M6's: its fixture tries them all, and its total
+--       leaves them out.)
 --   M6  Run through test/run_test.sh, a fixture with two 60-frame moments
 --       overlapping by 30 frames passes, and its output holds both
 --       "[WATCH] <label>" lines and "[WATCH] 2 moments, 1.5 s at normal
@@ -29,6 +30,12 @@
 --       "[WATCH] no moments: ...".
 --   M9  fw.slow_down makes fw.speed() "normal" until fw.speed_up (both are
 --       removed again by #119's last ticket, and M9 with them).
+--   M10 A test library loading its own copy of the framework mid-test
+--       doesn't end a moment that is playing (the M6 fixture checks that it
+--       doesn't lose the count either).
+--
+-- (M8 belongs to #119's last ticket: a check that nothing under test/ but
+-- the framework sets the speed.)
 --
 -- The fixtures are in test/tests/framework_fixtures/ (two_moments.lua and
 -- no_moments.lua). As in test/tests/test_framework_rules.lua, io.popen
@@ -177,22 +184,21 @@ fw.run(function()
     local FRAMES_RULE = "frames must be a whole number from 1 to 180"
     local LABEL_RULE = "label must be a non-empty string"
     local refused = {
-        { "frames 0",     "M5", 0,    FRAMES_RULE },
-        { "frames 181",   "M5", 181,  FRAMES_RULE },
-        { "frames 1.5",   "M5", 1.5,  FRAMES_RULE },
-        { 'frames "60"',  "M5", "60", FRAMES_RULE },
-        { "label nil",    nil,  60,   LABEL_RULE },
-        { 'label ""',     "",   60,   LABEL_RULE },
-        { "label 42",     42,   60,   LABEL_RULE },
+        { what = "frames 0",    label = "M5", frames = 0,    rule = FRAMES_RULE },
+        { what = "frames 181",  label = "M5", frames = 181,  rule = FRAMES_RULE },
+        { what = "frames 1.5",  label = "M5", frames = 1.5,  rule = FRAMES_RULE },
+        { what = 'frames "60"', label = "M5", frames = "60", rule = FRAMES_RULE },
+        { what = "label nil",   label = nil,  frames = 60,   rule = LABEL_RULE },
+        { what = 'label ""',    label = "",   frames = 60,   rule = LABEL_RULE },
+        { what = "label 42",    label = 42,   frames = 60,   rule = LABEL_RULE },
     }
     for _, r in ipairs(refused) do
-        local what, label, frames, rule = r[1], r[2], r[3], r[4]
         for _, call in ipairs({ "show", "show_next" }) do
-            local name = string.format("M5 fw.%s, %s", call, what)
+            local name = string.format("M5 fw.%s, %s", call, r.what)
             local start = emu:currentFrame()
-            local ok, err = pcall(fw[call], label, frames)
-            fw.assert_true(not ok and tostring(err):find(rule, 1, true) ~= nil,
-                name .. ": refused with an error saying \"" .. rule .. "\" (got "
+            local ok, err = pcall(fw[call], r.label, r.frames)
+            fw.assert_true(not ok and tostring(err):find(r.rule, 1, true) ~= nil,
+                name .. ": refused with an error saying \"" .. r.rule .. "\" (got "
                 .. tostring(err) .. ")")
             fw.assert_eq(emu:currentFrame() - start, 0, name .. ": no frame passed")
             local after = next_speeds(3)
@@ -208,6 +214,17 @@ fw.run(function()
     fw.speed_up()
     fw.assert_eq(fw.speed(), "fast", "M9: fw.speed_up makes it fast again")
     fw.assert_eq(count(next_speeds(10), "fast"), 10, "M9: and it stays fast")
+
+    -- M10: a test library that loads its own copy of the framework while a
+    -- moment plays (test_mt_moon_properties.lua's checks load theirs
+    -- mid-test) leaves the moment, and the frame count, alone.
+    fw.show_next("M10 a moment while a library loads the framework", 60)
+    fw.wait_frames(10)
+    dofile(project_dir .. "test/lib/framework.lua")
+    local rest = next_speeds(51)
+    fw.assert_eq(count({ table.unpack(rest, 1, 50) }, "normal"), 50,
+        "M10: the moment's last 50 frames are still normal after the load")
+    fw.assert_eq(rest[51], "fast", "M10: and it ends on time")
 
     expect{ label = "M6 two overlapping moments", fixture = "two_moments.lua",
             says = { "[WATCH] first moment: the next 60 frames",

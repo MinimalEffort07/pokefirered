@@ -511,9 +511,11 @@ local is_headless = (canvas == nil)
 -- number from 1 to 180 (3 seconds); anything else is an error that names the
 -- rule (and so fails the test). A moment marked while another plays extends
 -- it to whichever ends later, never shortens it. fw.speed() says "fast" or
--- "normal": the speed the window runs at on the frame the test is on, or
--- would run at headless, so a headless test can check moments frame by frame
--- (test/tests/test_recording_moments.lua does). fw.finish() logs the total,
+-- "normal": whether the frame the test is on belongs to a moment, which is
+-- the speed the window runs at then (from the frame after the one a moment
+-- is marked on, see below), or would run at headless. So a headless test can
+-- check moments frame by frame (test/tests/test_recording_moments.lua does).
+-- fw.finish() logs the total,
 -- e.g. "[WATCH] 3 moments, 3.0 s at normal speed", or that there were none.
 -- In the video a 60-frame moment lasts about 1.2 s: a second at normal
 -- speed, plus a fifth of a second as the emulator settles after fast-forward.
@@ -550,30 +552,31 @@ local is_headless = (canvas == nil)
 -- ONE SPEED PER RUN. Like the results table above, the speed state lives in
 -- a global shared by every copy of this file, so a moment marked by a test
 -- library (through its own copy) reaches the frame callback the test's copy
--- registered.
+-- registered. Only the first copy loaded makes it, and only fw.run() empties
+-- it: a library may load its copy mid-test (test_mt_moon_properties.lua's
+-- checks do), and that must not end a moment or lose the total.
 
 local MOMENT_DEFAULT_FRAMES = 60
 local MOMENT_MAX_FRAMES = 180  -- 3 seconds
 
--- `watch` starts empty here; fw.run() fills it in (reset_watch, below) as the
--- test starts.
-local watch = _G.__pokefirered_test_watch
-if watch == nil then
-    watch = {}
-    _G.__pokefirered_test_watch = watch
-end
-
-local function reset_watch()
+-- Empty `watch` for a new run: at frame 0, with no moments.
+local function reset_watch(watch)
     watch.frame = 0           -- frames so far: the frame callback counts them
     watch.normal_until = 0    -- the last frame a moment covers
     watch.moments = 0         -- moments marked
-    watch.moment_frames = 0   -- frames moments cover, overlaps counted once
+    watch.moment_frames = 0   -- frames moments played, overlaps counted once
     watch.slowed = false      -- between fw.slow_down and fw.speed_up
     watch.slowed_frames = 0   -- frames slowed that way, outside any moment
     watch.finishing = false   -- fw.finish() was called: normal speed
     watch.applied = nil       -- the speed last set in the window
 end
-reset_watch()
+
+local watch = _G.__pokefirered_test_watch
+if watch == nil then
+    watch = {}
+    reset_watch(watch)
+    _G.__pokefirered_test_watch = watch
+end
 
 -- "normal" or "fast": the speed of the frame the test is on (see above).
 function fw.speed()
@@ -583,8 +586,8 @@ function fw.speed()
     return "fast"
 end
 
--- A value as an error message shows it: strings in quotes.
-local function shown(value)
+-- `value` as an error message shows it: strings in quotes.
+local function value_in_error(value)
     if type(value) == "string" then
         return string.format("%q", value)
     end
@@ -597,7 +600,7 @@ end
 local function check_moment(caller, label, frames)
     if type(label) ~= "string" or label == "" then
         error(string.format("%s: label must be a non-empty string saying what to watch (got %s)",
-            caller, shown(label)), 3)
+            caller, value_in_error(label)), 3)
     end
     if frames == nil then
         frames = MOMENT_DEFAULT_FRAMES
@@ -605,21 +608,16 @@ local function check_moment(caller, label, frames)
     if type(frames) ~= "number" or frames ~= math.floor(frames)
             or frames < 1 or frames > MOMENT_MAX_FRAMES then
         error(string.format("%s: frames must be a whole number from 1 to %d (got %s)",
-            caller, MOMENT_MAX_FRAMES, shown(frames)), 3)
+            caller, MOMENT_MAX_FRAMES, value_in_error(frames)), 3)
     end
     return frames
 end
 
 -- Mark the next `frames` frames as a moment, extending any moment still
--- playing, and log its label.
+-- playing, and log its label. (The frame callback counts the frames it
+-- plays, for the total.)
 local function mark_moment(label, frames)
-    local last = watch.frame + frames
-    -- Count only the frames no earlier moment covers.
-    local from = math.max(watch.frame + 1, watch.normal_until + 1)
-    if last >= from then
-        watch.moment_frames = watch.moment_frames + (last - from + 1)
-    end
-    watch.normal_until = math.max(watch.normal_until, last)
+    watch.normal_until = math.max(watch.normal_until, watch.frame + frames)
     watch.moments = watch.moments + 1
     fw.log("[WATCH] " .. label)
 end
@@ -869,7 +867,7 @@ function fw.run(test_fn)
     results.errors = {}
     results.log_lines = {}
     -- And from no moments, at frame 0 (the same reason: shared in the GUI).
-    reset_watch()
+    reset_watch(watch)
 
     -- Create the coroutine that will run the test function.
     -- xpcall wraps it in error handling so crashes produce useful messages.
@@ -906,7 +904,9 @@ function fw.run(test_fn)
         -- speed is left alone until mGBA has had its STARTUP_FRAMES: at
         -- the third frame fast-forward goes on, and the test starts.
         watch.frame = watch.frame + 1
-        if watch.slowed and watch.frame > watch.normal_until then
+        if watch.frame <= watch.normal_until then
+            watch.moment_frames = watch.moment_frames + 1
+        elseif watch.slowed then
             watch.slowed_frames = watch.slowed_frames + 1
         end
         if watch.frame > STARTUP_FRAMES then
