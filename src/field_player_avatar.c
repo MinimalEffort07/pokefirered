@@ -700,20 +700,40 @@ static const u8 sQuestLogSurfDismountActionIds[] = {
     QL_PLAYER_GFX_STOP_SURF_E
 };
 
+/*
+ * Can the surfing player get off the water onto land tile (x, y), moving in
+ * `direction`? If so, the hop ashore starts right here.
+ *
+ * Land is the tiles at height (elevation) 3; the water is at 1. The player
+ * never lands on an object, with one exception (issue #100, "MAKING WAY" in
+ * pokemon_follower.c): the walking Pokemon waits on the shore while the
+ * player surfs, often on the very tile they left from, so when it stands
+ * still on (x, y) and has a free tile to step to, it makes way and the hop
+ * goes ahead. Otherwise the landing is refused, as for any other object.
+ *
+ * CreateStopSurfingTask freezes every object but the player for the length
+ * of the hop. The follower's step is started after that, in the same frame
+ * as the hop: starting a held movement unfreezes that one object, so its
+ * step still plays while the others stay frozen.
+ */
 static bool8 CanStopSurfing(s16 x, s16 y, u8 direction)
 {
-    if ((gPlayerAvatar.flags & PLAYER_AVATAR_FLAG_SURFING)
-        && MapGridGetElevationAt(x, y) == 3
-        && GetObjectEventIdByPosition(x, y, 3) == OBJECT_EVENTS_COUNT)
-    {
-        QuestLogRecordPlayerAvatarGfxTransitionWithDuration(sQuestLogSurfDismountActionIds[direction], 16);
-        CreateStopSurfingTask(direction);
-        return TRUE;
-    }
-    else
-    {
+    u8 makeWayDirection = DIR_NONE;
+
+    if (!(gPlayerAvatar.flags & PLAYER_AVATAR_FLAG_SURFING) || MapGridGetElevationAt(x, y) != 3)
         return FALSE;
+    if (GetObjectEventIdByPosition(x, y, 3) != OBJECT_EVENTS_COUNT)
+    {
+        makeWayDirection = GetFollowerMakeWayDirection(x, y, direction);
+        if (makeWayDirection == DIR_NONE)
+            return FALSE;
     }
+
+    QuestLogRecordPlayerAvatarGfxTransitionWithDuration(sQuestLogSurfDismountActionIds[direction], 16);
+    CreateStopSurfingTask(direction);
+    if (makeWayDirection != DIR_NONE)
+        StartFollowerMakeWayStep(makeWayDirection);
+    return TRUE;
 }
 
 static bool8 ShouldJumpLedge(s16 x, s16 y, u8 direction)
@@ -1008,10 +1028,34 @@ void PlayerTurnInPlace(u8 direction)
     PlayerSetAnimId(GetWalkInPlaceFastMovementAction(direction), 1);
 }
 
+/*
+ * Every ledge jump starts here: walking or running, on the bicycle (bike.c),
+ * and forced (DoForcedMovement). The jump is two tiles, over the ledge onto
+ * the landing tile beyond it.
+ *
+ * If the walking Pokemon stands on the landing tile, it steps aside as the
+ * player takes off (issue #100, "MAKING WAY" in pokemon_follower.c): it
+ * can't swap, because it can't jump back up the ledge. Its step is started
+ * right after the player's jump, in the same frame, so the sprite callbacks
+ * start both later in that frame and the landing tile is free from the
+ * jump's first frame on. If it can't make way, the jump goes ahead anyway.
+ */
 void PlayerJumpLedge(u8 direction)
 {
+    struct ObjectEvent *playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
+    s16 x = playerObj->currentCoords.x;
+    s16 y = playerObj->currentCoords.y;
+    u8 makeWayDirection;
+
+    /* The landing tile: two tiles on, past the ledge */
+    MoveCoords(direction, &x, &y);
+    MoveCoords(direction, &x, &y);
+    makeWayDirection = GetFollowerMakeWayDirection(x, y, direction);
+
     PlaySE(SE_LEDGE);
     PlayerSetAnimId(GetJump2MovementAction(direction), 8);
+    if (makeWayDirection != DIR_NONE)
+        StartFollowerMakeWayStep(makeWayDirection);
 }
 
 // Shakes head for male player character,

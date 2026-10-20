@@ -95,12 +95,14 @@ local MAP_OFFSET = mm.MAP_OFFSET
 -- (mm.live_objects) don't report. 36 bytes per object:
 --   0x00 u32 bit flags: bit 0 active, bit 6 heldMovementActive,
 --        bit 7 heldMovementFinished, bit 16 isPlayer
+--   0x04 u8 spriteId (its sprite's index in gSprites)
 --   0x10 s16 currentCoords.x, 0x12 currentCoords.y
 --   0x14 s16 previousCoords.x, 0x16 previousCoords.y (the tile a step
 --        started from; equal to currentCoords once the step has ended)
 --   0x1C u8 movementActionId (the held movement being played)
 local OE_SIZE       = 0x24
 local OE_FLAGS      = 0x00
+local OE_SPRITE_ID  = 0x04
 local OE_CURRENT    = 0x10
 local OE_PREVIOUS   = 0x14
 local OE_ACTION     = 0x1C
@@ -109,6 +111,12 @@ local FLAG_ACTIVE          = 0x001
 local FLAG_HELD_ACTIVE     = 0x040
 local FLAG_HELD_FINISHED   = 0x080
 local FLAG_IS_PLAYER       = 0x10000
+
+-- struct Sprite (include/sprite.h), 0x44 bytes each in gSprites: s16 x at
+-- 0x20 and s16 y at 0x22, the sprite's position in pixels.
+local SPRITE_SIZE = 0x44
+local SPRITE_X    = 0x20
+local SPRITE_Y    = 0x22
 
 -- sFollower (src/pokemon_follower.c), see test/lib/addresses.lua for the
 -- whole layout: bool8 active at offset 0, u8 objEventId at offset 7.
@@ -248,13 +256,19 @@ function follower.wait_still(timeout)
 end
 
 -- Put the follower on map tile (x, y): writes its current and previous
--- coordinates (both, so the engine sees a follower standing still there).
--- Only the record moves; the sprite on screen jumps there on its next step.
--- This is a scenario's setup, done between two frames.
+-- coordinates (both, so the engine sees a follower standing still there),
+-- and moves its sprite by as many pixels (a tile is 16), so the picture
+-- shows it there too. The engine never moves a sprite back onto its tile by
+-- itself: each step only adds that step's pixels to where the sprite is.
+-- This is a scenario's setup, done between two frames while the follower
+-- stands still.
 function follower.place(x, y)
     local f = follower.read()
     assert(f ~= nil, "no follower to place")
     mm.poke_object(f.index, x, y)
+    local sprite = sym.addr("gSprites") + emu:read8(object_addr(f.index) + OE_SPRITE_ID) * SPRITE_SIZE
+    emu:write16(sprite + SPRITE_X, (emu:read16(sprite + SPRITE_X) + (x - f.x) * 16) & 0xFFFF)
+    emu:write16(sprite + SPRITE_Y, (emu:read16(sprite + SPRITE_Y) + (y - f.y) * 16) & 0xFFFF)
 end
 
 -- Set the game's random number state (gRngValue, the seed Random() steps
