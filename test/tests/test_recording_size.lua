@@ -46,8 +46,8 @@
 -- HOW A TEST CAN RUN SHELL SCRIPTS: mGBA's Lua has the standard io library,
 -- so io.popen starts each command as a separate process and reads what it
 -- prints; this emulator just waits (no frames pass) until it is done. The
--- whole test takes about 20 seconds, longer while a suite runs alongside
--- (the encodes run at low priority).
+-- whole test takes under 10 seconds, a little longer while the machine is
+-- busy (the encodes run at low priority).
 --
 -- Run:
 --   bash test/run_test.sh test/tests/test_recording_size.lua
