@@ -462,39 +462,228 @@ function fw.try_load_state(path)
 end
 
 -------------------------------------------------------------------------------
--- VISUAL INSPECTION CONTROL (GUI mode only)
+-- HEADLESS VS GUI MODE DETECTION
 -------------------------------------------------------------------------------
--- Tests run with fast-forward enabled by default so the long boot /
--- navigation sequences don't waste a tester's time. But the part of a
--- test that actually demonstrates the feature (e.g., a battle starting,
--- a sprite appearing, a warp transition) flies by too fast to see at
--- 1000+ fps. These helpers let the test author drop back to real-time
--- 60fps right before the interesting moment so a human watching the
--- mGBA window can actually observe it, then resume fast-forward
--- afterward to skip the cleanup phase.
---
--- In headless mode (no canvas), both functions are no-ops -- there is
--- no display to slow down for, and slowing the headless run would just
--- waste CI time. Detection is the same `canvas == nil` check used
--- throughout the framework.
+-- mGBA provides a "canvas" global for drawing overlays in the GUI.
+-- In headless mode (mgba-headless), canvas is nil because there's no display.
+-- We use this to detect which mode we're running in.
+local is_headless = (canvas == nil)
 
--- Drop fast-forward to normal 60fps speed for visual inspection.
--- Pass a short reason string so the test log explains why we slowed.
-function fw.slow_down(reason)
-    if emu.setFastForward and canvas ~= nil then
-        emu:setFastForward(1)  -- 1.0 = real-time 60fps
-        fw.log("[SLOW] " .. (reason or "visual inspection"))
-    end
+-------------------------------------------------------------------------------
+-- MOMENTS: WHAT A RECORDING PLAYS AT NORMAL SPEED
+-------------------------------------------------------------------------------
+-- FAST-FORWARD. A real GBA makes 60 frames (pictures) a second, and an
+-- emulator normally holds itself back to that pace so a game plays at its
+-- real speed. Fast-forward lifts that limit: the emulator makes frames as
+-- fast as the computer can, 1,200 to 1,800 a second in the mGBA window on
+-- this machine. The game can't tell the difference (it still sees one frame
+-- after another), so a test proves the same things either way; only the
+-- wall-clock time changes. Headless (mgba-headless, the suite) there is no
+-- window and the emulator always runs flat out.
+--
+-- So in the mGBA window (test/record_test.sh films a test there) a test
+-- fast-forwards throughout, and its boot and setup take seconds instead of
+-- minutes. But then the outcome it proves, a menu opening or a sprite
+-- swapping, flies by in a few milliseconds of video, too quick to see.
+--
+-- A MOMENT is an outcome a watcher must see to believe the test. The test
+-- marks it, and in the window it plays at normal speed (60 frames a second)
+-- for about a second; then fast-forward resumes by itself. The scripting log
+-- beside the game names it ("[WATCH] P1: four patches shake around the
+-- player"), and the drop to normal speed is the watcher's cue to pause the
+-- video. There are two calls:
+--
+--   fw.show(label, frames)       The test waits here `frames` frames
+--                                (default 60, one second), and they play at
+--                                normal speed: for an outcome on screen now
+--                                (the PP in the move menu, the party after
+--                                MOVE TO PC).
+--   fw.show_next(label, frames)  The next `frames` frames (default 60) play
+--                                at normal speed while the test carries on:
+--                                for a motion the test is about to cause (a
+--                                swap, a warp, a battle starting).
+--
+-- `label` is a non-empty string saying what to look at, and `frames` a whole
+-- number from 1 to 180 (3 seconds); anything else is an error that names the
+-- rule (and so fails the test). A moment marked while another plays extends
+-- it to whichever ends later, never shortens it. fw.speed() says "fast" or
+-- "normal": the speed the window runs at on the frame the test is on, or
+-- would run at headless, so a headless test can check moments frame by frame
+-- (test/tests/test_recording_moments.lua does). fw.finish() logs the total,
+-- e.g. "[WATCH] 3 moments, 3.0 s at normal speed", or that there were none.
+-- In the video a 60-frame moment lasts about 1.2 s: a second at normal
+-- speed, plus a fifth of a second as the emulator settles after fast-forward.
+--
+-- SAME RUN HEADLESS AND RECORDED. A moment changes only the window's speed:
+-- the game sees the same frames and the same buttons in both, and fw.show
+-- waits its frames headless too (they take milliseconds there). So a video
+-- shows exactly the run the suite proves.
+--
+-- WHERE MOMENTS GO:
+--   * One per outcome a watcher must see to believe the test: usually one
+--     per scenario, at the outcome it asserts, while it's on screen.
+--   * For many cases of one check (8 head-on swaps), one representative.
+--   * A second (the default). Up to three only for a motion that lasts
+--     longer.
+--   * fw.show adds frames, so never put it inside a stretch the test times
+--     (a frame count it asserts). Use fw.show_next there: it adds none.
+--   * None for a test with nothing to show in the game (one that checks
+--     files, scripts or ROM data).
+--
+-- WHY A TEST NEVER SETS THE SPEED ITSELF. mGBA ignores emu:setFastForward
+-- called from inside the test (the coroutine, see THE COROUTINE PATTERN)
+-- once the test has started a process (io.popen, which test libraries use
+-- to run `nm` or `ls`) earlier in the same frame: asked for normal speed,
+-- the game stayed at 1,834 frames a second. Why isn't known. Made from the
+-- frame callback, outside the coroutine, every change works. So the test
+-- only marks moments, and the framework makes every speed change itself, in
+-- its frame callback, before it resumes the test: the fast-forward at the
+-- start, each moment, fw.finish()'s normal speed (record_test.sh films 3
+-- seconds of the final screen), and the older fw.slow_down/fw.speed_up. A
+-- moment marked on frame F therefore starts in the window on frame F+1, a
+-- sixtieth of a second later.
+--
+-- ONE SPEED PER RUN. Like the results table above, the speed state lives in
+-- a global shared by every copy of this file, so a moment marked by a test
+-- library (through its own copy) reaches the frame callback the test's copy
+-- registered.
+
+local MOMENT_DEFAULT_FRAMES = 60
+local MOMENT_MAX_FRAMES = 180  -- 3 seconds
+
+-- `watch` starts empty here; fw.run() fills it in (reset_watch, below) as the
+-- test starts.
+local watch = _G.__pokefirered_test_watch
+if watch == nil then
+    watch = {}
+    _G.__pokefirered_test_watch = watch
 end
 
--- Resume unbounded fast-forward (GUI only). Pair with a prior
--- slow_down() to skip back into accelerated playback once the human
--- has seen the moment.
-function fw.speed_up()
-    if emu.setFastForward and canvas ~= nil then
-        emu:setFastForward(0)  -- 0 = unbounded
-        fw.log("[FAST] resumed fast-forward")
+local function reset_watch()
+    watch.frame = 0           -- frames so far: the frame callback counts them
+    watch.normal_until = 0    -- the last frame a moment covers
+    watch.moments = 0         -- moments marked
+    watch.moment_frames = 0   -- frames moments cover, overlaps counted once
+    watch.slowed = false      -- between fw.slow_down and fw.speed_up
+    watch.slowed_frames = 0   -- frames slowed that way, outside any moment
+    watch.finishing = false   -- fw.finish() was called: normal speed
+    watch.applied = nil       -- the speed last set in the window
+end
+reset_watch()
+
+-- "normal" or "fast": the speed of the frame the test is on (see above).
+function fw.speed()
+    if watch.finishing or watch.slowed or watch.frame <= watch.normal_until then
+        return "normal"
     end
+    return "fast"
+end
+
+-- A value as an error message shows it: strings in quotes.
+local function shown(value)
+    if type(value) == "string" then
+        return string.format("%q", value)
+    end
+    return tostring(value)
+end
+
+-- Check a moment's label and frames for fw.show or fw.show_next (`caller`),
+-- and return the frames (the default if none were given). The error names
+-- the rule and points at the test's line (level 3: the caller's caller).
+local function check_moment(caller, label, frames)
+    if type(label) ~= "string" or label == "" then
+        error(string.format("%s: label must be a non-empty string saying what to watch (got %s)",
+            caller, shown(label)), 3)
+    end
+    if frames == nil then
+        frames = MOMENT_DEFAULT_FRAMES
+    end
+    if type(frames) ~= "number" or frames ~= math.floor(frames)
+            or frames < 1 or frames > MOMENT_MAX_FRAMES then
+        error(string.format("%s: frames must be a whole number from 1 to %d (got %s)",
+            caller, MOMENT_MAX_FRAMES, shown(frames)), 3)
+    end
+    return frames
+end
+
+-- Mark the next `frames` frames as a moment, extending any moment still
+-- playing, and log its label.
+local function mark_moment(label, frames)
+    local last = watch.frame + frames
+    -- Count only the frames no earlier moment covers.
+    local from = math.max(watch.frame + 1, watch.normal_until + 1)
+    if last >= from then
+        watch.moment_frames = watch.moment_frames + (last - from + 1)
+    end
+    watch.normal_until = math.max(watch.normal_until, last)
+    watch.moments = watch.moments + 1
+    fw.log("[WATCH] " .. label)
+end
+
+-- Hold on what's on screen now: the test waits `frames` frames (default 60)
+-- and the window plays them at normal speed.
+function fw.show(label, frames)
+    frames = check_moment("fw.show", label, frames)
+    mark_moment(label, frames)
+    fw.wait_frames(frames)
+end
+
+-- Play the next `frames` frames (default 60) at normal speed in the window,
+-- while the test carries on at once.
+function fw.show_next(label, frames)
+    frames = check_moment("fw.show_next", label, frames)
+    mark_moment(label, frames)
+end
+
+-- The older way to slow down: normal speed from fw.slow_down(reason) until
+-- fw.speed_up(). It is kept only until #119's tickets have given every test
+-- that calls it moments instead, and then removed. Prefer fw.show and
+-- fw.show_next.
+function fw.slow_down(reason)
+    watch.slowed = true
+    fw.log("[SLOW] " .. (reason or "visual inspection"))
+end
+
+function fw.speed_up()
+    watch.slowed = false
+    fw.log("[FAST] resumed fast-forward")
+end
+
+-- Set the window to fw.speed(), if it isn't already. Called only from the
+-- frame callback, before it resumes the test (see WHY A TEST NEVER SETS THE
+-- SPEED ITSELF). emu.setFastForward is a binding added to our patched mGBA:
+-- 0 means unbounded (fast-forward), 1 means normal speed. Headless there is
+-- no window to change, so only the record of the speed changes.
+local function apply_speed()
+    local want = fw.speed()
+    if want == watch.applied then
+        return
+    end
+    watch.applied = want
+    if is_headless or not emu.setFastForward then
+        return
+    end
+    emu:setFastForward(want == "fast" and 0 or 1)
+end
+
+-- The [WATCH] total fw.finish() logs: how many moments, and how long the
+-- window played at normal speed for them.
+local function watch_total()
+    local lines = {}
+    if watch.moments > 0 then
+        lines[1] = string.format("[WATCH] %d moment%s, %.1f s at normal speed",
+            watch.moments, watch.moments == 1 and "" or "s", watch.moment_frames / 60)
+    elseif watch.slowed_frames == 0 then
+        lines[1] = "[WATCH] no moments: in the mGBA window this test fast-forwards throughout"
+    else
+        lines[1] = "[WATCH] no moments"
+    end
+    if watch.slowed_frames > 0 then
+        lines[#lines + 1] = string.format(
+            "[WATCH] and %.1f s at normal speed between fw.slow_down and fw.speed_up",
+            watch.slowed_frames / 60)
+    end
+    return lines
 end
 
 -------------------------------------------------------------------------------
@@ -590,6 +779,10 @@ function fw.finish()
         summary = "RESULTS: 0 assertions, so the test fails"
     end
 
+    for _, line in ipairs(watch_total()) do
+        fw.log(line)
+    end
+
     fw.write_results()
     if results.fail > 0 then
         fw.log_error(summary)
@@ -605,23 +798,13 @@ function fw.finish()
         ef:close()
     end
 
-    -- Restore normal emulation speed in GUI mode so the user can
-    -- interact with the game after the test finishes.
-    -- emu.setFastForward is a custom binding we added to mGBA.
-    if emu.setFastForward then
-        emu:setFastForward(1)  -- 1.0 = normal 60fps speed
-    end
+    -- Back to normal speed in the window, so record_test.sh's last 3
+    -- seconds show the final screen and the user can play on. The frame
+    -- callback makes the change (see WHY A TEST NEVER SETS THE SPEED ITSELF).
+    watch.finishing = true
 
     shutdown_requested = true
 end
-
--------------------------------------------------------------------------------
--- HEADLESS VS GUI MODE DETECTION
--------------------------------------------------------------------------------
--- mGBA provides a "canvas" global for drawing overlays in the GUI.
--- In headless mode (mgba-headless), canvas is nil because there's no display.
--- We use this to detect which mode we're running in.
-local is_headless = (canvas == nil)
 
 -- Terminate the mGBA process cleanly (headless mode only).
 -- In GUI mode, we just stop the test — we don't want to close the window.
@@ -659,6 +842,9 @@ end
 -- This is the core of the framework. It sets up the coroutine and frame
 -- callback that drive the test.
 
+-- Frames mGBA gets to finish starting up before the test begins.
+local STARTUP_FRAMES = 2
+
 -- Run a test function. Call this once at the end of your test script.
 --
 -- How it works:
@@ -678,23 +864,16 @@ function fw.run(test_fn)
     results.fail = 0
     results.errors = {}
     results.log_lines = {}
+    -- And from no moments, at frame 0 (the same reason: shared in the GUI).
+    reset_watch()
 
     -- Create the coroutine that will run the test function.
     -- xpcall wraps it in error handling so crashes produce useful messages.
     test_coroutine = coroutine.create(function()
         -- Wait 2 frames for mGBA to fully initialize before doing anything.
-        fw.wait_frames(2)
-
-        -- Enable fast-forward so tests run as fast as the CPU allows.
-        -- In GUI mode: removes the 60fps frame limiter (the game runs at
-        -- hundreds or thousands of fps). The screen still updates each frame.
-        -- In headless mode: already runs at max speed, so this is a no-op.
-        -- emu.setFastForward is a custom API we added to mGBA's scripting
-        -- bindings. It sets sync.fpsTarget to 0 (unbounded).
-        if emu.setFastForward then
-            emu:setFastForward(0)  -- 0 = run as fast as possible
-            fw.log("Fast-forward enabled")
-        end
+        -- The frame callback turns fast-forward on as these end (see
+        -- STARTUP_FRAMES below), so the test itself starts fast.
+        fw.wait_frames(STARTUP_FRAMES)
 
         -- Run the test function with error protection.
         -- debug.traceback gives us a full stack trace if it crashes.
@@ -712,6 +891,24 @@ function fw.run(test_fn)
     -- emulated frame (i.e., 60 times per second of game time).
     -- This is the "heartbeat" that drives the test forward.
     callbacks:add("frame", function()
+        -- This run is over (in the GUI the callback is still called every
+        -- frame; a script loaded after this one runs its own).
+        if shutdown_done then
+            return
+        end
+
+        -- Count the frame and set the window's speed for it, before the
+        -- test runs (see WHY A TEST NEVER SETS THE SPEED ITSELF). The
+        -- speed is left alone until mGBA has had its STARTUP_FRAMES: at
+        -- the third frame fast-forward goes on, and the test starts.
+        watch.frame = watch.frame + 1
+        if watch.slowed and watch.frame > watch.normal_until then
+            watch.slowed_frames = watch.slowed_frames + 1
+        end
+        if watch.frame > STARTUP_FRAMES then
+            apply_speed()
+        end
+
         -- If the test called fw.finish(), shut down on this frame.
         -- clean_shutdown() runs outside the coroutine (important!).
         if shutdown_requested then
