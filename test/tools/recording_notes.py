@@ -28,6 +28,12 @@ record_test.sh:
       as it was. It looks in ~/recordings first, then /tmp/mgba-recordings,
       as the recordings page does; --kept and --scratch name other folders.
       A ticket session runs it once its PR is open (see AUTODEV SESSIONS).
+  python3 test/tools/recording_notes.py add-notes NAME NOTES [--test TEST] [--kept DIR]
+      Give notes NOTES ("-" reads stdin) to the recording named NAME (as
+      the recordings page shows it, with or without .mp4), one kept before
+      notes existed, by writing NAME.json beside NAME.mp4 in ~/recordings
+      (--kept names another folder). TEST is the test it recorded. See OLD
+      RECORDINGS.
 
 record_test.sh writes the notes file into its run's own directory as the
 recording starts (once it has its turn), so the branch, commit and
@@ -69,7 +75,34 @@ session makes says what it is for:
 
 test/record_test.sh itself refuses to record without notes in a session. A
 ticket session records before its PR exists, so it runs set-pr after
-opening the PR. A person (no AUTODEV_ROLE) sees none of this.
+opening the PR. A person (no AUTODEV_ROLE) sees none of this. add-notes
+doesn't follow these rules either (see OLD RECORDINGS).
+
+OLD RECORDINGS: videos kept before notes existed (#110) have no notes
+file, so their cards have no notes. add-notes gives one notes, without
+moving it on the recordings page, which lists the newest first:
+
+  - "recorded_at" comes from the stamp record_test.sh ends a video's name
+    with (_YYYYMMDD_HHMMSS, when the recording started), in this machine's
+    time with that date's UTC offset. With no valid stamp it is the
+    video's modification time, which is when the recording ended (mv and
+    test/tools/shrink_recordings.sh keep it). It is never the time the
+    notes are added, which would list the video as the newest.
+  - What nobody knows any more is null: "branch", "commit",
+    "uncommitted_changes" and "result". "test" is TEST's path (as for
+    write), or null without --test. "notes_added_at" says when the notes
+    were written, and the page's card says "notes added <date>" in place
+    of a result.
+  - It refuses, saying why and changing nothing: a name with no such video
+    in the folder; a video whose notes file record_test.sh wrote (one with
+    no "notes_added_at": every fresh recording has one); a notes file it
+    can't read; and notes the parser refuses, listing every problem.
+  - It may rewrite a notes file it wrote itself, to fix the notes, keeping
+    its "recorded_at". The rest comes from the new run, so give --test
+    again.
+  - An autodev session's rules (see AUTODEV SESSIONS) don't apply, because
+    an old video belongs to an old ticket. Refusing notes files
+    record_test.sh wrote is what keeps it off fresh recordings.
 
 THE NOTES FILE is JSON. What the notes don't give is null:
 
@@ -97,6 +130,10 @@ THE NOTES FILE is JSON. What the notes don't give is null:
   - "result" is the test's own pass and fail counts, from the results file
     test/lib/framework.lua writes when a test finishes, and null when there
     is none: the test didn't finish.
+  - "notes_added_at", the last field, is only in a notes file add-notes
+    wrote: when it wrote it, with this machine's UTC offset (e.g.
+    "2026-10-21T14:05:33+11:00"). record_test.sh never writes it. See OLD
+    RECORDINGS.
 
 The recordings page reads this format itself, without importing this
 file (see its ONE SELF-CONTAINED FILE), so test/tests/
@@ -130,9 +167,17 @@ ISSUE_VALUE = re.compile(r"#?(\d+)\s+(\S.*)")
 PR_VALUE = re.compile(r"#?(\d+)")
 
 # Where set-pr looks for a recording, in this order, as the recordings page
-# does: the kept recordings, then record_test.sh's own folder.
+# does: the kept recordings, then record_test.sh's own folder. add-notes
+# looks only in the kept one.
 KEPT_DIR = os.path.expanduser("~/recordings")
 SCRATCH_DIR = "/tmp/mgba-recordings"
+
+# The checkout holding this script: a test's path is given from its root.
+REPO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+
+# record_test.sh ends a video's name with the date and time its recording
+# started: _<YYYYMMDD>_<HHMMSS>, e.g. test_x_20261020_134554.
+NAME_STAMP = re.compile(r"_(\d{8}_\d{6})$")
 
 
 def heading_key(heading):
@@ -291,10 +336,11 @@ def parse(text, session=None):
     return fields, problems
 
 
-def read_notes(path, save=None):
+def read_notes(path, save=None, session_rules=True):
     """Notes file `path` ("-" for stdin) -> (fields, problems), as parse.
     A file that can't be read is one problem. With `save`, accepted notes
-    are also written to that file, byte for byte."""
+    are also written to that file, byte for byte. session_rules=False
+    leaves out an autodev session's rules (add-notes)."""
     try:
         if path == "-":
             data = sys.stdin.buffer.read()
@@ -310,7 +356,7 @@ def read_notes(path, save=None):
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         return None, [f"notes file {path} isn't UTF-8 text"]
-    fields, problems = parse(text, session_from(os.environ))
+    fields, problems = parse(text, session_from(os.environ) if session_rules else None)
     if save is not None and not problems:
         try:
             with open(save, "wb") as f:
@@ -427,6 +473,16 @@ def save(record, path):
     return 0
 
 
+def is_time(text):
+    """Whether `text` is a time the recordings page reads, such as
+    2026-10-20T13:45:54+11:00."""
+    try:
+        datetime.datetime.fromisoformat(text)
+    except (TypeError, ValueError):     # TypeError: not a string at all
+        return False
+    return True
+
+
 def cmd_write(args):
     """write: a video's notes file, from the notes (if any), the test, the
     time, the results file (if any) and the checkout."""
@@ -434,9 +490,7 @@ def cmd_write(args):
         print(f"not a video (.mp4): {args.video}", file=sys.stderr)
         return 1
     # The recordings page sorts by this time, so it must be one it reads.
-    try:
-        datetime.datetime.fromisoformat(args.recorded_at)
-    except ValueError:
+    if not is_time(args.recorded_at):
         print(f"--recorded-at needs a time like 2026-10-20T13:45:54+11:00, "
               f"not {args.recorded_at!r}", file=sys.stderr)
         return 1
@@ -455,10 +509,7 @@ def cmd_write(args):
         "commit": git(args.repo, "rev-parse", "--short=9", "HEAD"),
         "uncommitted_changes": None if status is None else status != "",
         "result": read_result(args.results) if args.results else None,
-        "ticket": fields["ticket"],
-        "parent": fields["parent"],
-        "pr": fields["pr"],
-        "notes": fields["notes"],
+        **fields,       # ticket, parent, pr and notes
     }
     return save(record, notes_file_path(args.video))
 
@@ -487,6 +538,21 @@ def cmd_set_result(args):
     return save(record, args.notes_file)
 
 
+def recording_name(given, command):
+    """A recording's name as `command` was given it (with or without .mp4),
+    without the ending, or None, saying why, when it is not a plain name: a
+    path can't lead the command outside its folder."""
+    name = given
+    for ending in (".mp4", ".json"):
+        if name.endswith(ending):
+            name = name[:-len(ending)]
+    if not name or "/" in name or name.startswith("."):
+        print(f'{command} needs a recording\'s name, its file name with or without .mp4 '
+              f'(e.g. issue-90_test_x_20261020_134554), not "{given}"', file=sys.stderr)
+        return None
+    return name
+
+
 def cmd_set_pr(args):
     """set-pr: a PR's number into the notes file of a recording, found by
     its name in the kept folder first, then in scratch, as the recordings
@@ -496,13 +562,8 @@ def cmd_set_pr(args):
         print(f'set-pr needs a PR number, as in "set-pr NAME 97" (got "{args.pr}")',
               file=sys.stderr)
         return 1
-    name = args.name
-    for ending in (".mp4", ".json"):
-        if name.endswith(ending):
-            name = name[:-len(ending)]
-    if not name or "/" in name or name.startswith("."):
-        print(f'set-pr needs a recording\'s name, as record_test.sh prints it '
-              f'(e.g. issue-90_test_x_20261020_134554), not "{args.name}"', file=sys.stderr)
+    name = recording_name(args.name, "set-pr")
+    if name is None:
         return 1
     folders = (args.kept, args.scratch)
     for folder in folders:
@@ -519,6 +580,81 @@ def cmd_set_pr(args):
     if save(record, path) != 0:
         return 1
     print(f"PR #{record['pr']} set in {path}")
+    return 0
+
+
+def when_recorded(name, video):
+    """When recording `name` (video file `video`) was recorded, as an ISO
+    time with this machine's UTC offset on that date: when it started, from
+    the stamp its name ends with, or, with no valid stamp, its video's
+    modification time, which is when it ended (mv and the shrink tool keep
+    that time). Never the time now: the page would list it as new."""
+    m = NAME_STAMP.search(name)
+    if m is not None:
+        try:
+            started = datetime.datetime.strptime(m.group(1), "%Y%m%d_%H%M%S")
+            # A naive time's astimezone() takes it as this machine's time,
+            # with the UTC offset in force on that date (summer or not).
+            return started.astimezone().isoformat(timespec="seconds")
+        except (ValueError, OverflowError, OSError):
+            pass        # no such date or time (month 13): no stamp
+    ended = datetime.datetime.fromtimestamp(os.stat(video).st_mtime, datetime.timezone.utc)
+    return ended.astimezone().isoformat(timespec="seconds")
+
+
+def cmd_add_notes(args):
+    """add-notes: notes for a recording kept before notes existed, without
+    moving it on the recordings page (see OLD RECORDINGS)."""
+    name = recording_name(args.name, "add-notes")
+    if name is None:
+        return 1
+    video = os.path.join(args.kept, name + ".mp4")
+    path = notes_file_path(video)
+    if not os.path.isfile(video):
+        print(f"no video {name}.mp4 in {args.kept}: add-notes gives notes to a "
+              f"kept recording, named as the recordings page shows it", file=sys.stderr)
+        return 1
+    # A notes file record_test.sh wrote has the recording's own facts (its
+    # branch, commit and result), and every fresh recording has one: only
+    # a notes file add-notes wrote itself (with notes_added_at) is rewritten,
+    # and it keeps the time it gave the recording then. One whose times the
+    # page can't read counts as unreadable, as on the page.
+    recorded_at = None
+    if os.path.lexists(path):
+        record = load(path)
+        if record is None:
+            return 1
+        added = record.get("notes_added_at")
+        if added is None:
+            print(f"{path} has no notes_added_at, so add-notes didn't write it: "
+                  f"record_test.sh writes one for every recording, with the run's own "
+                  f"facts. It is left as it is: add-notes only gives notes to a "
+                  f"recording kept before notes existed", file=sys.stderr)
+            return 1
+        recorded_at = record.get("recorded_at")
+        for key, value in (("notes_added_at", added), ("recorded_at", recorded_at)):
+            if not is_time(value):
+                print(f"can't read notes file {path}: its {key}, {value!r}, isn't a "
+                      f"time (delete the file to start again)", file=sys.stderr)
+                return 1
+    fields, problems = read_notes(args.notes, session_rules=False)
+    if problems:
+        report_problems(problems, args.notes)
+        return 1
+    record = {
+        "video": name + ".mp4",
+        "recorded_at": recorded_at or when_recorded(name, video),
+        "test": test_path(args.test, REPO_DIR) if args.test else None,
+        "branch": None,
+        "commit": None,
+        "uncommitted_changes": None,
+        "result": None,
+        **fields,       # ticket, parent, pr and notes
+        "notes_added_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    if save(record, path) != 0:
+        return 1
+    print(f"Notes added: {path}")
     return 0
 
 
@@ -546,7 +682,7 @@ def main():
                    help="the run's results file (it may not exist; none: "
                         "the result is null)")
     p.add_argument("--notes", help="the notes, already checked (none: no notes)")
-    p.add_argument("--repo", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."),
+    p.add_argument("--repo", default=REPO_DIR,
                    help="the git checkout for the branch and commit "
                         "(default: the one holding this script)")
     p.set_defaults(run=cmd_write)
@@ -565,6 +701,15 @@ def main():
     p.add_argument("--scratch", default=SCRATCH_DIR,
                    help="record_test.sh's folder, looked in next (default: %(default)s)")
     p.set_defaults(run=cmd_set_pr)
+
+    p = commands.add_parser("add-notes",
+                            help="give notes to a recording kept before notes existed")
+    p.add_argument("name", help="the recording's name, e.g. issue-24-safety-net")
+    p.add_argument("notes", help='the notes file, or "-" for stdin')
+    p.add_argument("--test", help="the test it recorded (none: the test is null)")
+    p.add_argument("--kept", default=KEPT_DIR,
+                   help="the folder the recording is kept in (default: %(default)s)")
+    p.set_defaults(run=cmd_add_notes)
 
     args = parser.parse_args()
     sys.exit(args.run(args))
