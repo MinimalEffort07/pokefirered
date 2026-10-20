@@ -40,14 +40,19 @@
 --   * pr.assert_object_sprites(): every object still has its own sprite;
 --   * pr.raise_encounter_rate(), pr.wait_for_battle(), pr.play_battle(action):
 --     a wild battle, ended by RUN or by FIGHT;
---   * pr.reset(), pr.start_in_grass(name), pr.scenario(name, fn): a test's
---     setup between scenarios, and pr.walk_follower(name),
+--   * pr.reset(), pr.start_in_grass(name) (on Route 1's grass at
+--     pr.GRASS_X, pr.GRASS_Y), pr.scenario(name, fn): a test's setup
+--     between scenarios, and pr.walk_follower(name),
 --     pr.assert_follower_sprite(name, when): the WALK follower;
---   * pr.walk_into_patch(label), pr.walk_off_grass(label): walking along the
---     grass without spoiling the patches, then into one or off the grass
---     (issue #89), and pr.live_patch_sprites(): every patch sprite left;
---   * pr.wild_species(), pr.wild_message_up(): the wild battle's Pokemon,
---     and its "Wild PIDGEY appeared!" on screen.
+--   * pr.on_field(), pr.field_running(), pr.in_battle(): where the game's
+--     main loop is, and pr.wait_step_done(): the end of the player's step;
+--   * pr.walk_on_grass_onto(label, what, is_target), pr.walk_into_patch(label),
+--     pr.walk_off_grass(label): walking along the grass without spoiling
+--     the patches, then into one or off the grass (issue #89), and
+--     pr.live_patch_sprites(): every patch sprite left;
+--   * pr.is_wild_battle() (pr.BATTLE_TYPE_TRAINER), pr.wild_species(),
+--     pr.forget_wild_species(), pr.wild_message_up(): the wild battle, its
+--     Pokemon, and its "Wild PIDGEY appeared!" on screen.
 -- Tiles there are map coordinates (data/maps/<Map>/map.json), as in
 -- test/lib/walk.lua; the radar struct stores its patch tiles 7 higher
 -- (MAP_OFFSET, the engine's margin around every map).
@@ -1176,15 +1181,28 @@ end
 
 -- The wild Pokemon's species: gBattleMons[1].species (struct BattlePokemon,
 -- 0x58 bytes each, species the u16 at 0; battler 1 is the opponent). The
--- battle copies it in during its intro, before "Wild PIDGEY appeared!".
+-- battle copies it in during its intro, before "Wild PIDGEY appeared!",
+-- and it stays there after the battle until the next one.
+local function wild_species_addr()
+    return sym.addr("gBattleMons") + ADDR.BATTLEMON_SIZE
+end
+
 function pr.wild_species()
-    return fw.read16(sym.addr("gBattleMons") + ADDR.BATTLEMON_SIZE)
+    return fw.read16(wild_species_addr())
+end
+
+-- Clear gBattleMons[1].species (outside a battle, where nothing reads it),
+-- so the next value pr.wild_species() reads is the next battle's own.
+function pr.forget_wild_species()
+    emu:write16(wild_species_addr(), 0)
 end
 
 -- "Wild PIDGEY appeared!" is the battle's message: the battle's text buffer
 -- gDisplayedStringBattle starts with the ROM's sText_WildPkmnAppeared
 -- ("Wild {B_OPPONENT_MON1_NAME} appeared!"), compared up to its first
--- placeholder (0xFD, the Pokemon's name). See pr.oak_message_up.
+-- placeholder (0xFD, the Pokemon's name, which the game fills in) or its
+-- end (0xFF, EOS), as pr.oak_message_up does. "Wild " is 5 characters, so
+-- 32 is plenty.
 function pr.wild_message_up()
     local text = sym.addr("sText_WildPkmnAppeared")
     local shown = sym.addr("gDisplayedStringBattle")

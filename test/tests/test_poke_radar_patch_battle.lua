@@ -24,9 +24,9 @@
 -- HOW THE CHECKS READ THE GAME (the design on #87):
 --   in battle    gMain.callback2 is BattleMainCB2 (CB2_Overworld on the field)
 --   wild battle  gBattleTypeFlags has no BATTLE_TYPE_TRAINER bit
---   species      gBattleMons[1].species, read once "Wild PIDGEY appeared!"
---                (or RATTATA) shows; Route 1's grass has only PIDGEY (16)
---                and RATTATA (19)
+--   species      gBattleMons[1].species once the battle fills it in (the
+--                test clears it before the step); Route 1's grass has only
+--                PIDGEY (16) and RATTATA (19)
 --   outcome      gBattleOutcome: 1 won, 4 ran
 --   the radar    its struct in SaveBlock1 (test/lib/poke_radar.lua): flags
 --                bit 0 PATCHES_ACTIVE, bit 1 the from-patch flag;
@@ -43,7 +43,7 @@
 --      the step: callback2 is BattleMainCB2; no trainer bit; the species is
 --      16 or 19 and chainSpecies equals it; the from-patch flag is 1 in the
 --      battle; PATCHES_ACTIVE is 0 and no patch sprite was left on the
---      field when the patches went.
+--      field when the patches went. Then "Wild ... appeared!" shows.
 --   P2 win P1's battle: chainCount is 1, the from-patch flag is 0 and the
 --      player is not frozen.
 --   P3 charges set to 1, USE, step into a patch: the battle's species is
@@ -89,12 +89,20 @@ local ROUTE1_SPECIES = {
     [SPECIES.SPECIES_RATTATA] = "RATTATA",
 }
 
--- The radar's two flag bits, as 0 or 1.
-local function from_patch()
+-- The radar's two flag bits, as 0 or 1 (what the assertions compare).
+local function from_patch_bit()
     return (pr.get_flags() & pr.FLAG_FROM_PATCH_ENCOUNTER) ~= 0 and 1 or 0
 end
-local function patches_active()
+local function patches_active_bit()
     return pr.patches_active() and 1 or 0
+end
+
+-- Start a scenario that carries on where the last one left off (no warp,
+-- no reset): log its name and, in the mGBA window, play it in real time
+-- (pr.scenario speeds up again), as pr.start_in_grass does.
+local function carry_on(name)
+    fw.log("=== " .. name .. " ===")
+    fw.slow_down(name)
 end
 
 -- USE the radar from the bag where the player stands, and check it worked:
@@ -110,47 +118,60 @@ local function use_radar(name, opts)
 end
 
 -- Walk into a patch and check the battle it starts (P1's checks, which P3,
--- P4 and P8 repeat). `gif`: caption the demo. Returns the battle's species,
--- or nil if no battle started.
+-- P4 and P8 repeat): all of them within 300 frames of the step. `gif`:
+-- caption the demo. Returns the battle's species, or nil if no battle
+-- started.
 local function patch_battle(name, gif)
     if gif then capture.caption("Walk into a shaking patch...") end
+    -- gBattleMons[1] keeps the last battle's Pokemon until the next battle
+    -- fills it in, so clear it: a species there now is this battle's.
+    pr.forget_wild_species()
     local stepped, x, y = pr.walk_into_patch(name)
     if not stepped then return nil end
     if gif then capture.caption("...and a wild POKéMON jumps out!") end
 
-    -- Wait for the battle. On the way, note the frame the radar drops its
-    -- patches while the field is still running (the battle's screen
-    -- transition plays on top of it), and which patch sprites are left
-    -- then: once the battle itself starts it frees every field sprite.
-    local left_on_field = nil
-    local started = fw.wait_until(function()
+    -- Count frames from the step until the battle runs and has its
+    -- Pokemon. On the way, note the frame the radar drops its patches
+    -- while the field is still running (the battle's screen transition
+    -- plays on top of it), and which patch sprites are left then: once
+    -- the battle itself starts it frees every field sprite.
+    local left_on_field, started_at, species_at = nil, nil, nil
+    for frame = 0, 300 do
         if left_on_field == nil and pr.field_running() and not pr.patches_active() then
             left_on_field = pr.live_patch_sprites()
         end
-        return pr.in_battle()
-    end, 300, "the patch battle")
-    if not fw.assert_true(started, string.format(
+        if started_at == nil and pr.in_battle() then started_at = frame end
+        if started_at ~= nil and pr.wild_species() ~= 0 then
+            species_at = frame
+            break
+        end
+        if frame < 300 then fw.yield() end
+    end
+    fw.log(string.format("[%s] battle after %s frames, its Pokemon after %s", name,
+        tostring(started_at), tostring(species_at)))
+    if not fw.assert_true(started_at ~= nil, string.format(
             "%s: callback2 is BattleMainCB2 within 300 frames of the step into the patch at (%d,%d)",
             name, x, y)) then
         return nil
     end
     fw.assert_true(pr.is_wild_battle(), name .. ": a wild battle (no BATTLE_TYPE_TRAINER bit)")
-    fw.assert_eq(from_patch(), 1, name .. ": the from-patch flag is 1 as the battle starts")
-    fw.assert_eq(patches_active(), 0, name .. ": PATCHES_ACTIVE is 0")
+    local species = pr.wild_species()
+    fw.assert_true(ROUTE1_SPECIES[species] ~= nil, string.format(
+        "%s: within 300 frames, the wild Pokemon is one of Route 1's grass Pokemon, PIDGEY 16 or RATTATA 19 (gBattleMons[1].species %d)",
+        name, species))
+    fw.assert_eq(pr.get_chain_species(), species, name .. ": chainSpecies is the battle's species")
+    fw.assert_eq(from_patch_bit(), 1, name .. ": the from-patch flag is 1 in the battle")
+    fw.assert_eq(patches_active_bit(), 0, name .. ": PATCHES_ACTIVE is 0")
     fw.assert_true(left_on_field ~= nil and #left_on_field == 0, string.format(
         "%s: no patch sprite was left on the field when the patches went (%s)", name,
         left_on_field == nil and "the field never saw them go"
             or (#left_on_field == 0 and "none" or "ids " .. table.concat(left_on_field, ","))))
 
+    -- What the player sees: the battle's opening message.
     local up = fw.wait_until(pr.wild_message_up, 600, "Wild ... appeared!")
-    if not fw.assert_true(up, name .. ": \"Wild ... appeared!\" shows") then return nil end
-    local species = pr.wild_species()
-    fw.assert_true(ROUTE1_SPECIES[species] ~= nil, string.format(
-        "%s: the wild Pokemon is one of Route 1's grass Pokemon, PIDGEY 16 or RATTATA 19 (gBattleMons[1].species %d)",
-        name, species))
+    fw.assert_true(up, name .. ": \"Wild ... appeared!\" shows")
     fw.log(string.format("[%s] Wild %s appeared!", name, ROUTE1_SPECIES[species] or tostring(species)))
-    fw.assert_eq(pr.get_chain_species(), species, name .. ": chainSpecies is the battle's species")
-    fw.assert_eq(from_patch(), 1, name .. ": the from-patch flag is still 1 with the battle running")
+    fw.assert_eq(from_patch_bit(), 1, name .. ": the from-patch flag is still 1 with the battle running")
     if gif then
         fw.wait_frames(120)   -- the message on screen
         capture.stop()
@@ -192,7 +213,7 @@ local function win_patch_battle(name, chain)
     end
     pr.assert_back_on_field(name, 600, after)
     fw.assert_eq(pr.get_chain_count(), chain, name .. ": chainCount after the win")
-    fw.assert_eq(from_patch(), 0, name .. ": the from-patch flag is 0 after the battle")
+    fw.assert_eq(from_patch_bit(), 0, name .. ": the from-patch flag is 0 after the battle")
     pr.assert_step(name, { grass = true })
     return true
 end
@@ -205,10 +226,9 @@ end
 -- Recharge the radar (as if the player had walked the 50 steps since the
 -- last use) and USE it again where the player stands, keeping the chain.
 local function use_again(name)
-    fw.log("=== " .. name .. " ===")
+    carry_on(name)
     pr.set_charges(1)
     pr.set_steps_to_charge(0)
-    fw.slow_down(name)
     return use_radar(name)
 end
 
@@ -244,10 +264,9 @@ end
 
 -- P7: after P4, a random battle doesn't start a chain.
 local function p7(name)
-    fw.log("=== " .. name .. " ===")
-    fw.slow_down(name)
+    carry_on(name)
     -- P4's battle took the patches, so any battle now is a random one.
-    fw.assert_eq(patches_active(), 0, name .. ": PATCHES_ACTIVE is 0 after P4, so no tile is a patch")
+    fw.assert_eq(patches_active_bit(), 0, name .. ": PATCHES_ACTIVE is 0 after P4, so no tile is a patch")
     pr.set_repel(0)
     local started = false
     for _ = 1, 6 do
@@ -266,7 +285,7 @@ local function p7(name)
     pr.set_repel(5000)
     if not fw.assert_true(started, name .. ": a random wild battle started in the grass") then return end
     fw.assert_true(pr.is_wild_battle(), name .. ": a wild battle (no BATTLE_TYPE_TRAINER bit)")
-    fw.assert_eq(from_patch(), 0, name .. ": the from-patch flag is 0 in a random battle")
+    fw.assert_eq(from_patch_bit(), 0, name .. ": the from-patch flag is 0 in a random battle")
     local outcome, after = pr.play_battle("FIGHT")
     fw.assert_eq(outcome, pr.B_OUTCOME_WON, name .. ": FIGHT won the battle (gBattleOutcome)")
     pr.assert_back_on_field(name, 600, after)
@@ -294,14 +313,13 @@ end
 
 -- P6: after P5, a step off the grass removes the patches.
 local function p6(name)
-    fw.log("=== " .. name .. " ===")
-    fw.slow_down(name)
+    carry_on(name)
     if not fw.assert_true(pr.patches_active(), name .. ": P5 left the patches live") then return end
     if not pr.walk_off_grass(name) then return end
     -- The radar acts when the step ends.
     fw.assert_true(pr.wait_step_done(), name .. ": the step off the grass finished")
-    fw.assert_eq(patches_active(), 0, name .. ": PATCHES_ACTIVE is 0 off the grass")
-    fw.assert_eq(from_patch(), 0, name .. ": the from-patch flag is 0 off the grass")
+    fw.assert_eq(patches_active_bit(), 0, name .. ": PATCHES_ACTIVE is 0 off the grass")
+    fw.assert_eq(from_patch_bit(), 0, name .. ": the from-patch flag is 0 off the grass")
     local left = pr.live_patch_sprites()
     fw.assert_eq(#left, 0, string.format("%s: no patch sprite is left (%s)", name,
         #left == 0 and "none" or "ids " .. table.concat(left, ",")))

@@ -59,19 +59,12 @@ local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
 local project_dir = script_dir .. "../../"
 
 local fw = dofile(project_dir .. "test/lib/framework.lua")
-local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local cs = dofile(project_dir .. "test/lib/character_select.lua")
 local pr = dofile(project_dir .. "test/lib/poke_radar.lua")
 local walk = dofile(project_dir .. "test/lib/walk.lua")
 local mm = dofile(project_dir .. "test/lib/mt_moon.lua")
 local follower = dofile(project_dir .. "test/lib/follower.lua")
 follower.bind(fw)
-
--- gBattleTypeFlags bit set for a trainer battle (see pr.BATTLE_TYPE_TRAINER).
-local BATTLE_TYPE_TRAINER = pr.BATTLE_TYPE_TRAINER
-
--- A scenario's setup (pr.start_in_grass) and its counts (pr.scenario).
-local start, scenario = pr.start_in_grass, pr.scenario
 
 -- After the radar was used (`elapsed` frames ago): the player is not frozen
 -- and steps onto tall grass that isn't a patch, and four patches are still
@@ -99,7 +92,7 @@ end
 
 -- N1: USE from the bag, no follower.
 local function n1(name)
-    if not start(name) then return end
+    if not pr.start_in_grass(name) then return end
     local used, elapsed = pr.use_from_bag(name)
     if not used then return end
     check_after_use(name, elapsed)
@@ -107,7 +100,7 @@ end
 
 -- N3: REGISTER, then use it with SELECT.
 local function n3(name)
-    if not start(name) then return end
+    if not pr.start_in_grass(name) then return end
     if not pr.register_in_bag(name) then return end
     local used, elapsed = pr.use_with_select(name)
     if not used then return end
@@ -170,7 +163,7 @@ end
 
 -- N4: SELECT where the radar can't be used.
 local function n4(name)
-    if not start(name) then return end
+    if not pr.start_in_grass(name) then return end
     if pr.registered_slot() == nil and not pr.register_in_bag(name) then return end
 
     -- In the grass, as just after a use: no charge, 50 steps to go.
@@ -193,7 +186,7 @@ end
 
 -- N2: N1 with the follower out.
 local function n2(name)
-    if not start(name) then return end
+    if not pr.start_in_grass(name) then return end
     if not pr.walk_follower(name) then return end
     local used, elapsed = pr.use_from_bag(name)
     if not used then return end
@@ -203,7 +196,7 @@ end
 -- N5, one battle: USE, then step onto tall grass that isn't a patch until a
 -- wild battle starts, and end it by `action` ("RUN" or "FIGHT").
 local function battle_while_patches_live(name, action, expected_outcome)
-    if not start(name) then return end
+    if not pr.start_in_grass(name) then return end
     local used, elapsed = pr.use_from_bag(name)
     if not used or not pr.assert_back_on_field(name, 120, elapsed) then return end
     pr.assert_live_patches(name .. ", before the battle")
@@ -230,7 +223,7 @@ local function battle_while_patches_live(name, action, expected_outcome)
             name, battle_step.x, battle_step.y))
     fw.assert_eq(pr.get_flags() & pr.FLAG_FROM_PATCH_ENCOUNTER, 0,
         name .. ": a random battle, not a patch's (FROM_PATCH_ENCOUNTER is 0)")
-    fw.assert_eq(fw.read32(ADDR.gBattleTypeFlags) & BATTLE_TYPE_TRAINER, 0, name .. ": a wild battle, not a trainer's")
+    fw.assert_true(pr.is_wild_battle(), name .. ": a wild battle, not a trainer's (no BATTLE_TYPE_TRAINER bit)")
 
     local outcome, after = pr.play_battle(action)
     fw.assert_eq(outcome, expected_outcome, string.format("%s: %s ended the battle (gBattleOutcome)", name, action))
@@ -261,11 +254,11 @@ fw.run(function()
     mm.set_text_speed_fast()
     pr.give_party()
 
-    scenario("N1 bag, no follower", n1)
-    scenario("N3 SELECT", n3)
-    scenario("N4 can't use", n4)
-    scenario("N2 follower", n2)
-    scenario("N5 battle while patches are live", n5)
+    pr.scenario("N1 bag, no follower", n1)
+    pr.scenario("N3 SELECT", n3)
+    pr.scenario("N4 can't use", n4)
+    pr.scenario("N2 follower", n2)
+    pr.scenario("N5 battle while patches are live", n5)
 
     fw.screenshot(fw.out_path("mgba-poke-radar-no-freeze.png"))
     fw.finish()
