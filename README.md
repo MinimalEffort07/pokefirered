@@ -2,6 +2,8 @@
 
 This is a fork of the PRET project with custom features. Development is AI-assisted (Claude Code) with human review and direction; [Autodev](#autodev) turns issues into PRs by itself, and each one waits for approval.
 
+**Lost track of how it all works?** [docs/SYSTEM_MAP.md](docs/SYSTEM_MAP.md) shows on one page how autodev, the tests and the recordings fit together, with one line on every script. Every PR that changes them updates it.
+
 ## Added Features
 
 - **Real-Time 4-Player Multiplayer** — Multi-player position sync via GBA Serial I/O, with remote player sprites on shared maps.
@@ -98,7 +100,7 @@ Autodev takes an issue from the board to a PR that is ready to merge, with nobod
 **What it does.** Add one of your issues to the **pokefirered autodev** board. Every 2 minutes a systemd user timer runs one *tick* of the dispatcher, which looks at the board and moves each card on:
 
 1. A grill session designs the issue by itself, taking every recommended answer, posts the design on the issue, and breaks it into tickets.
-2. Each ticket whose blockers are all closed gets its own worktree (a separate checkout of the repo on the ticket's own branch) and a ticket session: TDD, a clean build, `run_suite.sh`, a recording if the game changes, the README, a code review, then a PR that @mentions you.
+2. Each ticket whose blockers are all closed gets its own worktree (a separate checkout of the repo on the ticket's own branch) and a ticket session: TDD, a clean build, `run_suite.sh`, a recording if the game changes, the README and the system map, a code review, then a PR that @mentions you and says what changes for you.
 3. Your feedback on the PR starts a fix-up session. Your `/merge` starts a merge session, which merges master in, tests that exact tree again, and merges with a merge commit. If merging master in conflicts, it resolves the conflict, explains how on the PR, and waits for a fresh `/merge` from you instead of merging.
 4. Once every ticket of the issue is closed, the issue is closed too.
 
