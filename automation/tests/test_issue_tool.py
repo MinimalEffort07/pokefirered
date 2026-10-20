@@ -272,6 +272,12 @@ class MergingPRs(unittest.TestCase):
                     issue_tool.pr_comment(gh, CONFIG, 68, 73, 501, "Hi @MinimalEffort07")
                 self.assertEqual(gh.writes, [])
 
+    def test_the_owners_pr_from_the_tickets_branch_is_the_tickets_too(self):
+        # The owner opened it, finishing a parked ticket by hand.
+        gh = FakeRest({PULLS + "/73": pull(author="MinimalEffort07")})
+        issue_tool.pr_comment(gh, CONFIG, 68, 73, 501, "Done, @MinimalEffort07")
+        self.assertEqual(len(gh.writes), 1)
+
     def test_a_reply_on_the_pr_says_which_comment_it_handled(self):
         gh = FakeRest({PULLS + "/73": pull()})
         issue_tool.pr_comment(gh, CONFIG, 68, 73, 501,

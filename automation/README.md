@@ -31,7 +31,7 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
    - finally `issue.py open-pr`, which only opens a PR from the ticket's own `issue-<T>-*` branch, and only when the body has Fixes #<T> and an @mention of you written outside code (GitHub ignores both inside code)
 
    It has 3 hours.
-4. **On the first tick after it ends**, the dispatcher looks on GitHub for the bot's open PR from an `issue-<T>-*` branch of this repo. A PR from a fork doesn't count.
+4. **On the first tick after it ends**, the dispatcher looks on GitHub for the ticket's open PR: one from an `issue-<T>-*` branch of this repo, opened by the bot or by you (you may finish a parked ticket yourself). A PR from a fork, or opened by anyone else, doesn't count.
    - **Found:** the card moves to `In review`, and the PR waits for you.
    - **Not found**, or the session reported a failure, or it hit its time limit: the card goes to `Needs human`, with the reason and the resume command ("hit its 3-hour time limit" when systemd stopped it). A crash or the usage limit re-queues it instead, unless its PR is already open, which counts as done.
 
@@ -65,6 +65,16 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
    - **No reply,** or the session reported a failure, or it hit its time limit: `Needs human`, with the reason and the resume command. A crash or the usage limit sends it back to `In review` instead, where your comment is still unhandled, unless its reply is already posted, which counts as done.
 4. **A comment you post while the fix-up runs** isn't covered by its reply, so a follow-up fix-up starts for it once the card is back in `In review`.
 
+## When a ticket is parked
+
+A ticket in `Needs human` is left alone until you've dealt with it. Then it comes back by itself, on the next tick:
+
+- **Its PR is opened** after it was parked, by the resumed session or by you: the card moves to `In review`.
+- **You comment on its PR** after it was parked: your newest unhandled comment there is answered as in review, so `/merge` starts a merge session and anything else a fix-up.
+- **"After it was parked"** means after the bot's newest "autodev parked this issue" comment on the ticket. What came before is what it was parked over (the feedback a failed fix-up was working on, say), so it never starts the same work again.
+- **Not these:** a card you moved to `Needs human` yourself (there's no parked comment), and someone else's ticket, which stays parked for its author.
+- **Moving the card back to `Todo`** still works too, as from `Paused`.
+
 ## Pausing, usage limits and crashes
 
 - **`Paused` is your stop switch.**
@@ -95,10 +105,10 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
 | `~/projects/minimaleffort/pokefirered-autodev` | Autodev's own clone, kept apart from the checkout you work in. It pushes as the bot over HTTPS, using `gh` as git's credential helper. |
 | `autodev.timer` | A systemd user timer that starts `autodev-dispatcher.service` every 2 minutes. |
 | `autodev-dispatcher.service` | One dispatcher tick: `git pull` the clone, then `python3 -m autodev tick` (code in `automation/autodev/`). |
-| `autodev-<role>-<issue>.service` | One Claude session, e.g. `autodev-grill-67` or `autodev-ticket-68`. It's a transient unit that the dispatcher starts with `systemd-run`, and systemd forgets it once it ends. It runs `claude -p` as the bot (the env file), with your Claude login and plugins (`CLAUDE_CONFIG_DIR=~/.claude-personal`), the role's permissions and the role's time limit (grill 60 minutes, ticket 3 hours, merge 45 minutes, fix-up 90 minutes). A grill session runs in the clone; ticket, merge and fix-up sessions run in the ticket's worktree. |
+| `autodev-<role>-<issue>.service` | One Claude session, e.g. `autodev-grill-67` or `autodev-ticket-68`. It's a transient unit that the dispatcher starts with `systemd-run`, and systemd forgets it once it ends. It runs `claude -p` as the bot (the env file), with your Claude login and plugins (`CLAUDE_CONFIG_DIR=~/.claude-personal`), the role's permissions and the role's time limit (grill 60 minutes, ticket 3 hours, merge 45 minutes, fix-up 90 minutes). The model is `config.json`'s `model` (`opus`, the latest Opus). The effort level is set per role in `sessions.py`, so your own default never applies: grill `max`; ticket, merge and fix-up `xhigh`. A grill session runs in the clone; ticket, merge and fix-up sessions run in the ticket's worktree. |
 | `~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-<T>` | Each ticket's worktree (a second checkout of the clone's repository), on its branch `issue-<T>-<slug>`. The ticket's merge and fix-up sessions reuse it, and it is removed once the ticket closes. The worktrees sit beside the clone, not inside it: Claude reads every CLAUDE.md in the folders above where it starts, so a session in a worktree inside the clone would also load the clone's CLAUDE.md. |
 | `automation/settings/<role>.json` | Each role's permissions. A session always uses the clone's copy, never its worktree's, because it could edit the one in its worktree. The grill role is read-only. The ticket and fix-up roles may edit, build, test, commit and push, but they can't use `gh`, push to master, force-push, delete branches, run their worktree's own `issue.py`, or touch `pret/pokefirered` or the `upstream` remote. The fix-up role may also `git pull --ff-only` but can't rebase or merge master in. The merge role has the same limits, may merge master in, and merges only through `issue.py merge-pr`. In auto mode an allow rule only skips the safety classifier, so every limit is a deny rule. The master rulesets are the backstop. |
-| `automation/bin/issue.py` | A session's only way to reach GitHub; its settings deny plain `gh`. Sessions run the clone's copy (ticket, merge and fix-up sessions by its full path), never their worktree's. Every role's settings deny commands that mention `AUTODEV_`, so a session can't point the tool at another issue or PR for one command, and the tool checks a merge or fix-up session's PR is the bot's PR from that ticket's branch anyway. It shows only text written by you or the bot, and it changes only the session's own issue (`AUTODEV_ISSUE`, set by the dispatcher). Reading a PR shows its reviews and inline comments too, and marks your unhandled comments. Each role gets only its own commands (`AUTODEV_ROLE`): a grill session may comment, rewrite its parent's body and create tickets; a ticket session may comment and open its PR; a merge or fix-up session may reply on its PR (`AUTODEV_PR`), @mentioning you and naming the newest comment it answers (`AUTODEV_HANDLED_THROUGH`); a merge session may also merge it, with a merge commit of the commit it tested, unless you have commented since the `/merge` or deleted it. No labels, no closing, no board. |
+| `automation/bin/issue.py` | A session's only way to reach GitHub; its settings deny plain `gh`. Sessions run the clone's copy (ticket, merge and fix-up sessions by its full path), never their worktree's. Every role's settings deny commands that mention `AUTODEV_`, so a session can't point the tool at another issue or PR for one command, and the tool checks a merge or fix-up session's PR is that ticket's PR (the bot's or yours, from its branch) anyway. It shows only text written by you or the bot, and it changes only the session's own issue (`AUTODEV_ISSUE`, set by the dispatcher). Reading a PR shows its reviews and inline comments too, and marks your unhandled comments. Each role gets only its own commands (`AUTODEV_ROLE`): a grill session may comment, rewrite its parent's body and create tickets; a ticket session may comment and open its PR; a merge or fix-up session may reply on its PR (`AUTODEV_PR`), @mentioning you and naming the newest comment it answers (`AUTODEV_HANDLED_THROUGH`); a merge session may also merge it, with a merge commit of the commit it tested, unless you have commented since the `/merge` or deleted it. No labels, no closing, no board. |
 | `~/autodev/logs/` | Each session's full stream-json log (`<role>-<issue>-<time>.jsonl`, with stderr in `.err`). The newest `result` event that carries a report holds what the session reported. A session can log several: one per turn, including an empty one when a background job wakes it after it reported. When the unit ends, systemd writes how it ended into `.exit` (`success`, `exit-code`, or `timeout` at the time limit). The tick deletes logs older than 30 days. |
 | `/tmp/autodev-record.lock` | The machine-wide lock `test/record_test.sh` takes, because a recording films the whole virtual display. Sessions recording at the same time take turns. |
 | `~/.local/state/autodev/sessions/` | One small record per session the dispatcher started: its session id and log path. Once a session's outcome is handled, its record moves to `done/`, marked `"crashed": true` if it crashed (a second crash in a row parks the work; those records are kept past the 30-day clean-up while they still count). `paused-until` holds a usage-limit pause. |
@@ -149,8 +159,10 @@ After the snapshot, the tick logs each action it takes, e.g. `→ Launch(role='g
 A `Needs human` comment ends with a command like this one, which reopens the session interactively exactly where it stopped. `claude --resume` only finds a session from the folder it ran in, so the command starts in that folder: the clone for a grill session, the ticket's worktree for the others.
 
 ```bash
-cd ~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-68 && CLAUDE_CONFIG_DIR=~/.claude-personal claude --resume <session-id>
+cd ~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-68 && (set -a && . ~/.config/autodev/env && set +a && AUTODEV_ROLE=ticket AUTODEV_ISSUE=68 CLAUDE_CONFIG_DIR=~/.claude-personal claude --resume <session-id>)
 ```
+
+The resumed session needs what the dispatcher gave it, or `issue.py` treats it as nobody's and only lets it read: the bot's token (`GH_TOKEN`, from the env file, so `gh` and `git` act as the bot) and its `AUTODEV_ROLE` and `AUTODEV_ISSUE`, plus a merge or fix-up's `AUTODEV_PR` and `AUTODEV_HANDLED_THROUGH`. The command sets them inside the brackets, a subshell, so none of them stays in your own shell. `config.json`'s `resume_command` is the template: `{cwd}`, `{env}` (the `AUTODEV_*` assignments) and `{session_id}` are filled in.
 
 The same command also reopens a session that finished normally, which is handy for reviewing what it did; its session id is the `session_id` field of its record in `~/.local/state/autodev/sessions/done/`.
 
@@ -161,7 +173,7 @@ cd automation && python3 -m unittest
 ```
 
 What they cover:
-- **`test_tick.py`:** replays recorded GitHub responses (`tests/fixtures/`) through a fake `gh`, and checks the board snapshot the tick logs, including each ticket's parent and blockers read from its body.
+- **`test_tick.py`:** replays recorded GitHub responses (`tests/fixtures/`) through a fake `gh`, and checks the board snapshot the tick logs, including each ticket's parent and blockers read from its body. It also checks what the tick reads for each ticket: its PR (with what was said on it, unless the ticket is in `Todo`), and when a parked one with a PR was parked.
 - **`test_decide.py`:** checks every decision (`decide()` is a pure function) against a hand-built state, one test per scenario from #48:
   - parents: D1, D2, and D15, D16 and D24 for grills
   - tickets: D2 (someone else's ticket), D3 (launch), D4 (`Blocked`), D5 (back to `Todo`), D6 (two slots, by priority), D15 (`In review`), D16 (no PR) and D17 (time limit), plus a closed issue never launching
@@ -174,8 +186,10 @@ What they cover:
   - closing: D22 (closed without a PR), the board's own `Done`, a worktree still in use, and D23 (a parent whose tickets are all closed)
   - pausing: D7 (a paused parent or ticket starts nothing; running sessions finish), D8 (resuming a parent with tickets, or a ticket with a PR), and a paused card staying `Paused` when its session ends
   - usage limits and crashes: D18 (pause everything, re-queue, start again after), D19 (a first crash is re-queued, a vanished unit too) and D20 (a second crash parks it)
+  - parked tickets: your `/merge` or feedback on the PR since it was parked, or a PR opened since, brings it back; what came before doesn't, nor does a card with no parked comment or someone else's ticket
+  - resume commands: a parked comment's command sets the session's `AUTODEV_*` variables, and `config.json`'s loads the bot's token in a subshell
 - **`test_sessions.py`:**
-  - pins down the session unit's command line for a grill, a ticket, a merge and a fix-up: the bot's identity, your Claude login, the working folder, the time limit, the role's permissions, the session's issue and role, a merge or fix-up's PR and comment, and the record of how the unit ended
+  - pins down the session unit's command line for a grill, a ticket, a merge and a fix-up: the bot's identity, your Claude login, the working folder, the time limit, the effort level, the role's permissions, the session's issue and role, a merge or fix-up's PR and comment, and the record of how the unit ended
   - checks every role has its prompt, its settings and a way to read its outcome
   - checks what counts as "still running", and how a session's result, end reason and folder are read back
   - reads the usage-limit message in its known forms and works out when the limit resets, and keeps crashes and the pause on disk; crashes count in a row, and a finished run starts the count again
@@ -186,9 +200,9 @@ What they cover:
   - reading a PR shows its reviews and inline comments and marks your unhandled ones
   - a ticket must name its parent, and it is created without labels and linked as a sub-issue
   - a PR comes only from the ticket's own branch, into master, with Fixes #<T> and an @mention of you outside code, and closes no other issue
-  - a merge is a merge commit of the tested commit, refused while master has commits the branch lacks or once you've commented since the `/merge` or deleted it; a reply on the PR @mentions you and names the comment it handled; both act only on the ticket's own PR
+  - a merge is a merge commit of the tested commit, refused while master has commits the branch lacks or once you've commented since the `/merge` or deleted it; a reply on the PR @mentions you and names the comment it handled; both act only on the ticket's own PR, the bot's or yours
   - each role may use only its own commands
-- **`test_github.py`:** checks what the dispatcher accepts as a finished session's work. For a grill: only the bot's comment with the design marker, and only open issues whose `## Parent` names the parent, with their blockers checked. For a ticket: only the bot's open PR from that ticket's branch in this repo. For a merge: whether the PR merged, whether the bot replied naming that `/merge`, and whether you commented since or deleted it. For a fix-up: whether the bot replied naming the comment it was started for. It also reads a PR's comments, reviews and inline comments in time order (an inline comment with its file and line, dated by when its review was submitted), and covers deleting session files older than 30 days.
+- **`test_github.py`:** checks what the dispatcher accepts as a finished session's work. For a grill: only the bot's comment with the design marker, and only open issues whose `## Parent` names the parent, with their blockers checked. For a ticket: only an open PR from that ticket's branch in this repo, opened by the bot or by you, and when it was opened; and when a ticket was last parked (the bot's newest parked comment). For a merge: whether the PR merged, whether the bot replied naming that `/merge`, and whether you commented since or deleted it. For a fix-up: whether the bot replied naming the comment it was started for. It also reads a PR's comments, reviews and inline comments in time order (an inline comment with its file and line, dated by when its review was submitted), and covers deleting session files older than 30 days.
 - **Failures:** if one of a tick's actions fails, the tick logs it and skips the rest of that issue's actions, but carries on with the others.
 
 **Live check:** the grill path (#55) was checked live on 2026-10-19, on issue #67: autodev grilled it and broke it into tickets with nobody watching.

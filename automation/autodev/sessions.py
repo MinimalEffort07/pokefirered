@@ -32,6 +32,12 @@ from autodev import worktrees
 TIME_LIMITS = {"grill": 60 * 60, "ticket": 3 * 60 * 60, "merge": 45 * 60,
                "fixup": 90 * 60}
 
+# Effort level per role (claude --effort), set here so a session never
+# takes the owner's own default. Grilling gets the most: every ticket is
+# built from its design.
+EFFORTS = {"grill": "max", "ticket": "xhigh", "merge": "xhigh",
+           "fixup": "xhigh"}
+
 # What every session must report when it ends. The dispatcher only
 # believes "done" after checking GitHub (decide.py).
 RESULT_SCHEMA = json.dumps({
@@ -120,6 +126,7 @@ def launch_command(config, role, issue, session_id, log_path, prompt,
         "--json-schema", RESULT_SCHEMA,
         "--session-id", session_id,
         "--model", config.model,
+        "--effort", EFFORTS[role],
     ]
 
 

@@ -102,10 +102,12 @@ class PrComment:
 
 @dataclass(frozen=True)
 class PullRequest:
-    """A ticket's open PR: the bot's, from the ticket's own branch."""
+    """A ticket's open PR: the bot's or the owner's, from the ticket's own
+    branch."""
     number: int
     head: str               # its branch
     comments: tuple = ()    # PrComment, oldest first
+    opened: str = ""        # when, as GitHub's ISO time
 
 
 @dataclass(frozen=True)
@@ -120,12 +122,16 @@ class State:
     # Issues known to be closed. A ticket's blocker counts as open unless
     # it is in here, so one GitHub couldn't report keeps the ticket waiting.
     closed: frozenset = frozenset()
-    # PullRequest per ticket in Todo or In review that has one open
+    # PullRequest per ticket in Todo, In review or Needs human that has one
+    # open
     prs: dict = field(default_factory=dict)
+    # When autodev last parked each ticket in Needs human that it parked: the
+    # time of its newest "parked" comment (PARKED), as GitHub's ISO time
+    parked_at: dict = field(default_factory=dict)
     # Tickets that have a worktree
     worktrees: frozenset = frozenset()
-    # How the owner resumes a parked session; {session_id} and {cwd} are
-    # filled in.
+    # How the owner resumes a parked session; {session_id}, {cwd} and {env}
+    # (the session's AUTODEV_* variables, as shell assignments) are filled in.
     resume_command: str = "claude --resume {session_id}"
     now: float = 0.0            # the tick's clock, as seconds since 1970
     paused_until: float = 0.0   # no session starts before this (a usage limit)
@@ -248,6 +254,8 @@ def plan(state):
             new = _waiting_ticket(state, item)
         elif item.has_parent and item.status == IN_REVIEW:
             new = _in_review(state, item)
+        elif item.has_parent and item.status == NEEDS_HUMAN:
+            new = _parked_ticket(state, item)
         elif not item.has_parent and item.status == IN_PROGRESS:
             new = _parent_in_progress(state, item)
         elif item.status == TODO:
@@ -430,10 +438,35 @@ def _in_review(state, item):
     newest = _newest_unhandled(state, pr)
     if newest is None:
         return []
-    role = "merge" if is_merge(newest) else "fixup"
+    return _answer(item, pr, newest)
+
+
+def _answer(item, pr, comment):
+    """Start the session that answers the owner's `comment` on the PR."""
+    role = "merge" if is_merge(comment) else "fixup"
     return [MakeWorktree(item.number, pr.head),
-            Launch(role, item.number, pr=pr.number, handled_through=newest.id),
+            Launch(role, item.number, pr=pr.number, handled_through=comment.id),
             SetStatus(item.number, IN_PROGRESS)]
+
+
+def _parked_ticket(state, item):
+    """A ticket autodev parked in Needs human comes back once the owner has
+    dealt with it. Their comment on its PR since it was parked is answered
+    as in review; a PR opened since it was parked (the resumed session, or
+    the owner, finished the work) sends it to review. Anything from before
+    is what it was parked over, so it never starts the same work again. A
+    card with no "parked" comment is the owner's own, and someone else's
+    ticket stays parked for its author (D2)."""
+    since = state.parked_at.get(item.number)
+    pr = state.prs.get(item.number)
+    if since is None or pr is None or item.author not in (state.owner, state.bot):
+        return []
+    newest = _newest_unhandled(state, pr)
+    if newest is not None and newest.at > since:
+        return _answer(item, pr, newest)
+    if pr.opened > since:
+        return [SetStatus(item.number, IN_REVIEW)]
+    return []
 
 
 def _keep_paused(state, issue, actions):
@@ -638,13 +671,41 @@ def _place_tickets(parent, tickets):
     return actions
 
 
+# How every comment that parks an issue in Needs human starts, after the
+# @mention; the dispatcher finds when a ticket was parked by it.
+PARKED = "autodev parked this issue"
+
+
+# How a parked issue comes back, by role: a grill's parent only when the
+# owner moves it, a ticket also by itself (_parked_ticket).
+HAND_BACK = {
+    "grill": "Once it's sorted, move the card back to `Todo`.",
+    "ticket": ("Once it's sorted, it comes back by itself when its PR is "
+               "opened or you comment on its PR, or move the card back to `Todo`."),
+}
+
+
 def _parked(state, session, problem):
     return _bot_comment(
-        "@%s autodev parked this issue: %s\n\n"
-        "To pick up where %s stopped: `%s`" % (
-            state.owner, problem, _the_session(session.role),
+        "@%s %s: %s\n\n"
+        "To pick up where %s stopped: `%s`\n\n%s" % (
+            state.owner, PARKED, problem, _the_session(session.role),
             state.resume_command.format(session_id=session.session_id,
-                                        cwd=session.cwd)))
+                                        cwd=session.cwd,
+                                        env=_session_env(session)),
+            HAND_BACK.get(session.role, HAND_BACK["ticket"])))
+
+
+def _session_env(session):
+    """The variables a session's issue.py reads to know which session it is
+    (the dispatcher sets them on its unit), as shell assignments, so a
+    resumed session can finish its work through issue.py too."""
+    env = "AUTODEV_ROLE=%s AUTODEV_ISSUE=%d" % (session.role, session.issue)
+    if session.pr is not None:
+        env += " AUTODEV_PR=%d" % session.pr
+    if session.handled_through is not None:
+        env += " AUTODEV_HANDLED_THROUGH=%d" % session.handled_through
+    return env
 
 
 def _bot_comment(text):
