@@ -41,4 +41,15 @@ void ClearFollowerFromSaveBlock(void);
 bool8 CanPlayerSwapWithFollower(u8 direction);
 void StartFollowerSwapStep(u8 direction);
 
+/*
+ * Making way (issue #100): when the player is about to land on tile (x, y)
+ * (object coordinates) moving in `direction`, by a ledge jump or a hop off
+ * the water, GetFollowerMakeWayDirection says which way a follower standing
+ * still there steps off it (DIR_NONE: it isn't there, or can't), and
+ * StartFollowerMakeWayStep takes that step, on the frame the jump or hop
+ * starts. See "MAKING WAY" in pokemon_follower.c.
+ */
+u8 GetFollowerMakeWayDirection(s16 x, s16 y, u8 direction);
+void StartFollowerMakeWayStep(u8 stepDirection);
+
 #endif /* GUARD_POKEMON_FOLLOWER_H */

@@ -4,7 +4,9 @@
 -- Issue #99 (part of #45): walk, run or ride the bicycle into the walking
 -- Pokemon (the "follower") and you swap places with it, as in HeartGold and
 -- SoulSilver, so it never blocks a cave mouth, a door or a one-tile path.
--- Only the follower swaps: NPCs stay solid.
+-- Only the follower swaps: NPCs stay solid. Issue #100 adds MAKING WAY
+-- (L1 to L3 below): where the player lands on its tile instead, from a
+-- ledge or from SURF, it steps aside.
 --
 -- A SWAP (test/lib/follower.lua, new_watch): on one frame the player's tile
 -- becomes the follower's old tile and the follower's tile becomes the
@@ -74,6 +76,33 @@
 --      B: the slope rolls the player back down into Pikachu and they swap
 --      again, 4 frames each.
 -- Every swap above also checks that Pikachu stood still the frame before.
+--
+-- MAKING WAY (issue #100): when the player lands on Pikachu's tile without
+-- walking onto it, by jumping down a ledge or coming ashore from SURF, a
+-- swap is impossible, so Pikachu steps aside as the player takes off: to the
+-- first free tile of the player's left, their right, straight on. Its step
+-- is a fast walk, 8 frames. The every-frame rule holds with no new
+-- exception: Pikachu is never on the ledge, on water or on the player's
+-- tile.
+--   L1 ledge. Viridian City: the player on (28,29) facing south above the
+--      ledge (28,30), Pikachu put on the landing tile (28,31). Press DOWN.
+--      Passes when Pikachu's tile changes no later than the jump's first
+--      frame (the frame the player's tile becomes (28,30)), in an 8-frame
+--      step, and ends on (29,31), the player's left; and the player lands
+--      on (28,31).
+--   L2 ledge, left side blocked. Viridian City's ledge (19,30): the player
+--      on (19,29) facing south, Pikachu put on (19,31); the player's left,
+--      (20,31), is a sign. Passes as L1, with Pikachu ending on (18,31), the
+--      player's right, and the player landing on (19,31).
+--   L3 SURF. The Viridian pond: the player surfs from the east shore (17,28)
+--      to (15,28), so Pikachu walks to the shore tile (17,28) and waits
+--      there, then surfs back to (16,28), facing east. Hold RIGHT. Passes
+--      when the player is on (17,28) and on foot (no longer surfing, the hop
+--      over) within 60 frames, and Pikachu's tile changes no later than the
+--      hop's first frame (the frame the player's tile becomes (17,28)), in
+--      an 8-frame step, ending on (17,27), the player's left.
+-- L1 and L3 fail on master: there the player lands on Pikachu's tile, and
+-- the landing from the water is refused.
 --
 -- SETUP. One fixture per run: a new game with Pikachu in the party and WALK
 -- chosen (follower.ensure_fixture). Pikachu is made level 100 and a Repel
@@ -570,6 +599,161 @@ local function w10()
 end
 
 -------------------------------------------------------------------------------
+-- Making way (issue #100): L1 and L2 at a ledge, L3 coming ashore from SURF
+-------------------------------------------------------------------------------
+
+-- How many frames Pikachu's step aside takes: a fast walk, its catch-up
+-- speed (MOVEMENT_ACTION_WALK_FAST_*, 2 pixels a frame).
+local MAKE_WAY_FRAMES = 8
+
+-- Assert how Pikachu made way in `watch`: it left its start tile
+-- (watch.tiles[0]) no later than frame `takeoff` (the first frame of the
+-- player's jump or hop, or nil if it never started), in one step lasting
+-- MAKE_WAY_FRAMES frames, and stands on (ex, ey), the player's `side`, now.
+local function check_made_way(name, watch, takeoff, side, ex, ey)
+    local moved = follower.first_move(watch)
+    local ended = nil
+    for n = (moved or watch.frame_no + 1), watch.frame_no do
+        if watch.still[n] then
+            ended = n
+            break
+        end
+    end
+    fw.assert_true(moved ~= nil and takeoff ~= nil and moved <= takeoff, string.format(
+        "%s: Pikachu's tile changes no later than the player's take-off (Pikachu's on frame %s,"
+        .. " the take-off on frame %s)", name, tostring(moved), tostring(takeoff)))
+    local length = moved and ended and (ended - moved + 1)
+    fw.assert_true(length == MAKE_WAY_FRAMES, string.format(
+        "%s: Pikachu's step aside lasts %d frames, a fast walk (%s)",
+        name, MAKE_WAY_FRAMES, tostring(length)))
+    local fx, fy = follower_tile()
+    fw.assert_true(fx == ex and fy == ey, string.format(
+        "%s: Pikachu ends on (%d,%d), the player's %s (Pikachu on (%s,%s))",
+        name, ex, ey, side, tostring(fx), tostring(fy)))
+end
+
+-- L1 and L2: the player on (x,29) facing south above the ledge (x,30),
+-- Pikachu put on its landing tile (x,31). Press DOWN: the player jumps the
+-- ledge, and Pikachu steps aside onto (ex,31), the player's `side`.
+local function make_way_ledge(name, x, side, ex)
+    if not arrive(name, VIRIDIAN, x, 29) then return nil end
+    -- After the warp the player faces south and Pikachu is behind them.
+    if not check_start(name, x, 29, follower.DIR_SOUTH, x, 28) then return nil end
+    follower.place(x, 31)
+    if not check_start(name, x, 29, follower.DIR_SOUTH, x, 31) then return nil end
+    follower.set_rng(SEED)
+    local watch = watch_from_here(name)
+
+    -- DOWN until the jump starts: its first frame is the one the player's
+    -- tile becomes the ledge (the 2-tile jump moves it onto the ledge as it
+    -- starts and onto the landing tile halfway).
+    key_down("DOWN")
+    local takeoff = watch.run(30, function(n)
+        local t = watch.player_tiles[n]
+        return t.x == x and t.y == 30
+    end)
+    key_up("DOWN")
+    local landed = takeoff and watch.run(90, function() return follower.player_still_on(x, 31) end)
+    watch.run(30)   -- and both stay put
+    watch.finish()
+    fw.assert_true(takeoff ~= nil, string.format("%s: the player jumps the ledge (%d,30)", name, x))
+    fw.assert_true(landed ~= nil and follower.player_still_on(x, 31), string.format(
+        "%s: the player lands on (%d,31)", name, x))
+    check_made_way(name, watch, takeoff, side, ex, 31)
+    return watch
+end
+
+local function l1()
+    make_way_ledge("L1", 28, "left", 29)
+end
+
+-- L2: the ledge (19,30), whose landing tile's left, (20,31), is a sign.
+local function l2()
+    local watch = make_way_ledge("L2", 19, "right", 18)
+    if watch then
+        fw.assert_true(watch.snap.solid(20, 31), "L2: the player's left, the sign (20,31), is solid")
+    end
+end
+
+-- Hold `key` until the player's tile is (x, y) (at most `frames` frames),
+-- let go, and wait for a still picture. Returns true if they got there.
+local function step_to(key, x, y, frames)
+    local there = fw.hold_until(key, function()
+        local px, py = follower.player()
+        return px == x and py == y
+    end, frames, 1)
+    return there and follower.wait_still(120)
+end
+
+-- L3's setup, from the player on the east shore (17,28) with Pikachu
+-- behind them on (17,27): SURF onto the pond, out to (15,28), and back to
+-- (16,28) once Pikachu waits on the shore tile (17,28). Returns true when
+-- all of it worked.
+local function l3_setup(name)
+    follower.face("LEFT")   -- toward the pond: on land, LEFT into water only turns and bumps
+    if not fw.assert_true(follower.use_surf(16, 28), name .. ": the player surfs onto the pond at (16,28)") then
+        return false
+    end
+    -- One tile further, onto (15,28): Pikachu is 3 tiles away and walks to
+    -- the shore tile (17,28), the one land tile within 2 of the player,
+    -- where it waits, as it does wherever the player sets off from.
+    if not fw.assert_true(step_to("LEFT", 15, 28, 60), name .. ": the player surfs west onto (15,28)") then
+        return false
+    end
+    local waiting = fw.wait_until(function()
+        local f = follower.read()
+        return f ~= nil and not f.held and f.x == 17 and f.y == 28
+    end, 300, "Pikachu waiting on the shore (17,28)")
+    if not fw.assert_true(waiting, name .. ": Pikachu waits on the shore tile (17,28)") then
+        return false
+    end
+    -- Back east onto (16,28): the first frames of RIGHT turn the player,
+    -- then they surf one tile.
+    return fw.assert_true(step_to("RIGHT", 16, 28, 60), name .. ": the player surfs back east onto (16,28)")
+end
+
+-- L3: the Viridian pond (x 11..16, y 26..30). The player surfs on (16,28)
+-- facing east, Pikachu waiting on the shore tile (17,28). Hold RIGHT: the
+-- player comes ashore onto (17,28) and Pikachu steps aside onto (17,27),
+-- the player's left.
+local function l3()
+    local name = "L3"
+    follower.give_surf()
+    -- On the east shore (17,28), Pikachu behind the player on (17,27).
+    if not arrive(name, VIRIDIAN, 17, 28) then return end
+    follower.set_rng(SEED)   -- Pikachu's walk to the shore in the setup is random
+    if not check_start(name, 17, 28, follower.DIR_SOUTH, 17, 27) then return end
+    -- The every-frame rule holds through the setup too.
+    local setup = follower.new_watch(name .. " setup")
+    setup.attach()
+    local ready = l3_setup(name)
+    setup.detach()
+    setup.finish()
+    if not ready then return end
+    if not check_start(name, 16, 28, follower.DIR_EAST, 17, 28) then return end
+    follower.set_rng(SEED)
+    local watch = watch_from_here(name)
+
+    -- Hold RIGHT until the player stands on (17,28) on foot: no longer
+    -- surfing, and the hop off the water over. The hop moves the player's
+    -- tile onto the shore as it starts.
+    key_down("RIGHT")
+    local takeoff = nil
+    local ashore = watch.run(60, function(n)
+        local t = watch.player_tiles[n]
+        if takeoff == nil and t.x == 17 and t.y == 28 then takeoff = n end
+        return not follower.is_surfing() and follower.player_still_on(17, 28)
+    end)
+    key_up("RIGHT")
+    watch.run(30)   -- and Pikachu stays put
+    watch.finish()
+    fw.assert_true(ashore ~= nil, string.format(
+        "L3: the player is on (17,28) and on foot within 60 frames of holding RIGHT%s",
+        ashore and (" (" .. ashore .. " frames)") or ""))
+    check_made_way(name, watch, takeoff, "left", 17, 27)
+end
+
+-------------------------------------------------------------------------------
 -- W7: NPCs stay solid
 -------------------------------------------------------------------------------
 local function w7()
@@ -602,7 +786,7 @@ local function w7()
 end
 
 fw.run(function()
-    fw.log("=== Test: walking into the walking Pokemon swaps places (issue #99) ===")
+    fw.log("=== Test: walking into the walking Pokemon swaps places (issue #99); landing on it, it makes way (issue #100) ===")
     if not follower.ensure_fixture(STATE_PATH) then
         fw.finish()
         return
@@ -627,6 +811,9 @@ fw.run(function()
     end
     w9("walking on rock stairs", "UP")
     w9("running on rock stairs", { "B", "UP" })
+    l1()
+    l2()
+    l3()
     w4()    -- last two: the player is left on the bicycle
     w10()
 

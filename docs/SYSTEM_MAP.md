@@ -186,7 +186,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/lib/warp.lua` | Warps the player straight to a map, for tests and tools that don't need the walk. |
 | `test/lib/character_select.lua` | Boots a new game through Oak's speech to the character list. |
 | `test/lib/frame_capture.lua` | With `MGBA_FRAME_DIR` set, saves every second frame and its caption for a GIF; it can pause, so a warp the demo makes isn't filmed. |
-| `test/lib/follower.lua` | The walking Pokémon harness: a save state with it walking, where it stands, the per-frame walkable-tile rule, and a record of each time you swap places with it (a swap may leave it on a doormat or ladder, which the rule allows until its next step). |
+| `test/lib/follower.lua` | The walking Pokémon harness: a save state with it walking, where it stands, putting it on a tile (its sprite too, so recordings show it there), the per-frame walkable-tile rule, and a record of each time you swap places with it (a swap may leave it on a doormat or ladder, which the rule allows until its next step). |
 | `test/lib/poke_radar.lua` | Reads and writes the Poké Radar chain state, and plays the radar. |
 | `test/lib/route14_battle.lua` | Starts the Kiri and Jan double battle on Route 14, for the type-colour tests. |
 | `test/lib/mt_moon.lua` | The Mt. Moon harness: enter a floor with a chosen random state, read back the generated cave, search it, save and Continue. |
