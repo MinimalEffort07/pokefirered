@@ -128,15 +128,6 @@ local function read_patches()
     return patches
 end
 
--- PATCHES_ACTIVE is 1 and every stored id is a live patch.
-local function patches_live()
-    if not pr.patches_active() then return false end
-    for i = 0, pr.PATCH_COUNT - 1 do
-        if not pr.is_live_patch(pr.get_patch_sprite_id(i)) then return false end
-    end
-    return true
-end
-
 -- USE the radar from the bag where the player stands, and check it worked:
 -- back on the field with control, and four live patches. Returns the
 -- patches (read_patches), or nil.
@@ -146,7 +137,7 @@ local function use_radar(name)
         return nil
     end
     pr.assert_live_patches(name .. ", after USE")
-    if not patches_live() then return nil end
+    if not pr.patches_live() then return nil end
     return read_patches()
 end
 
@@ -158,7 +149,7 @@ end
 local function assert_patches_back(name, before, waited, live_at)
     local frame = waited
     while live_at == nil and frame <= 120 do
-        if patches_live() then
+        if pr.patches_live() then
             live_at = frame
         else
             if frame < 120 then fw.yield() end
@@ -210,10 +201,7 @@ end
 -- menu: wait until it takes input, then B closes it. Returns true once the
 -- player has control.
 local function close_start_menu(name)
-    fw.wait_until(function()
-        local t = pr.task_running("Task_StartMenuHandleInput")
-        return t ~= nil and fw.read16(t + pr.TASK_DATA) == 1
-    end, 300, "START menu back")
+    fw.wait_until(mm.start_menu_ready, 300, "START menu back")
     fw.wait_frames(10)
     fw.press("B")
     return fw.assert_true(fw.wait_until(pr.player_ready, 300, "control after the START menu"),
@@ -286,7 +274,7 @@ local function r3(name)
     local seen, live_at = 0, nil
     local loaded = mm.continue_game(function(frames)
         seen = frames
-        if live_at == nil and patches_live() then live_at = frames end
+        if live_at == nil and pr.patches_live() then live_at = frames end
     end)
     if not fw.assert_true(loaded ~= nil, name .. ": CONTINUE reached the field with control") then return end
     fw.log(string.format("[%s] control %d frames after the field's first frame", name, seen))

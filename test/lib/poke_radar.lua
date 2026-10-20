@@ -32,8 +32,9 @@
 --   * pr.use_from_bag(), pr.register_in_bag(), pr.use_with_select(): the
 --     ways to use the radar, pressing buttons through the menus, and
 --     pr.oak_message_up(): Prof. Oak's "This isn't the time to use that!";
---   * pr.is_live_patch(id), pr.is_patch_tile(x, y), pr.assert_live_patches():
---     what a patch is, and pr.sprite_addr(id): a sprite's struct;
+--   * pr.is_live_patch(id), pr.is_patch_tile(x, y), pr.patches_live(),
+--     pr.assert_live_patches(): what a patch is, and pr.sprite_addr(id): a
+--     sprite's struct;
 --   * pr.assert_not_frozen(label, within, opts, elapsed): the player has
 --     control (its two halves are pr.assert_back_on_field and
 --     pr.assert_step, for a test that checks more in between);
@@ -366,6 +367,16 @@ function pr.is_patch_tile(x, y)
         if px == x and py == y then return true end
     end
     return false
+end
+
+-- The radar is shaking its patches: PATCHES_ACTIVE is set and every stored
+-- sprite id is a live patch.
+function pr.patches_live()
+    if not pr.patches_active() then return false end
+    for i = 0, pr.PATCH_COUNT - 1 do
+        if not pr.is_live_patch(pr.get_patch_sprite_id(i)) then return false end
+    end
+    return true
 end
 
 -- Assert the radar is shaking four patches: PATCHES_ACTIVE is set and every

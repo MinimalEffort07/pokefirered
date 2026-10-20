@@ -1094,11 +1094,19 @@ function mm.task_running(name)
     return nil
 end
 
--- Press START on the field and wait until the START menu takes input: its
--- task Task_StartMenuHandleInput has reached its second step (data[0] = 1)
--- with StartCB_HandleInput as the callback. (sStartMenuCallback alone isn't
--- enough: it keeps StartCB_HandleInput from the last time the menu was
--- open, and a key pressed the frame before that step is lost.)
+-- The START menu takes input: its task Task_StartMenuHandleInput has
+-- reached its second step (data[0] = 1) with StartCB_HandleInput as the
+-- callback. (sStartMenuCallback alone isn't enough: it keeps
+-- StartCB_HandleInput from the last time the menu was open, and a key
+-- pressed the frame before that step is lost.)
+function mm.start_menu_ready()
+    local t = mm.task_running("Task_StartMenuHandleInput")
+    return t ~= nil and emu:read16(t + mm.TASK_DATA) == 1
+        and sym.is_func(emu:read32(sym.addr("sStartMenuCallback")), "StartCB_HandleInput")
+end
+
+-- Press START on the field and wait until the START menu takes input
+-- (mm.start_menu_ready).
 --
 -- The START press itself is lost now and then: the game reads the buttons
 -- once per pass of its main loop, and a pass that runs long can miss a
@@ -1120,11 +1128,7 @@ function mm.open_start_menu(timeout)
         fw.log("[START] the press was lost (the field controls are still unlocked): pressing again")
     end
     if not seen then return false end
-    return fw.wait_until(function()
-        local t = mm.task_running("Task_StartMenuHandleInput")
-        return t ~= nil and emu:read16(t + mm.TASK_DATA) == 1
-            and sym.is_func(emu:read32(sym.addr("sStartMenuCallback")), "StartCB_HandleInput")
-    end, timeout or 120, "START menu open")
+    return fw.wait_until(mm.start_menu_ready, timeout or 120, "START menu open")
 end
 
 -- Save through START > SAVE > YES (and YES again to overwrite an older save).

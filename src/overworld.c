@@ -2336,8 +2336,8 @@ static void ReloadObjectsAndRunReturnToFieldMapScript(void)
     SpawnRemotePlayerSprites();
     SpawnFollowerSprite();
     SpawnRoamingPokemonOnMap();
-    /* As in InitObjectEventsLocal: the POKe RADAR's patches come back
-     * after a menu or Continue on their own map. */
+    /* As in InitObjectEventsLocal: the POKe RADAR's patches come back on
+     * their own map after a menu, a battle or Continue. */
     PokeRadar_OnFieldReload();
     RunOnReturnToFieldMapScript();
 }

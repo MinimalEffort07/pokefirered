@@ -98,6 +98,10 @@
  *       and the slots set to "none", and no sprite is stopped, since none
  *       of the sprites there is ours. Coming back to the first map does
  *       not bring them back.
+ *   (Walking across a map's edge into the next map is not a rebuild: the
+ *   sprites live on and nothing here runs. The patches stay, their tiles
+ *   in the old map's coordinates, until a step off the grass or the next
+ *   rebuild clears them. This was so before #90 and is left as it is.)
  *   And PokeRadar_ClearPatches stops a sprite only if it is one of the
  *   radar's own live patches (IsOwnPatchSprite: in use, and made from the
  *   shaking grass's sprite template). Any other stored slot is just
@@ -230,17 +234,21 @@ static bool8 IsOwnPatchSprite(u8 spriteId)
         && gSprites[spriteId].template == gFieldEffectObjectTemplatePointers[FLDEFFOBJ_UNUSED_GRASS];
 }
 
+/* Forget patch `i` without touching its sprite: no tile, no slot number. */
+static void ForgetPatch(struct PokeRadar *r, u8 i)
+{
+    r->patchSpriteId[i] = PATCH_SPRITE_NONE;
+    r->patchX[i] = 0;
+    r->patchY[i] = 0;
+}
+
 /* Forget every patch without touching any sprite: no patch tiles, no slot
  * numbers, PATCHES_ACTIVE cleared. */
 static void ForgetPatches(struct PokeRadar *r)
 {
     u8 i;
     for (i = 0; i < POKE_RADAR_PATCH_COUNT; i++)
-    {
-        r->patchSpriteId[i] = PATCH_SPRITE_NONE;
-        r->patchX[i] = 0;
-        r->patchY[i] = 0;
-    }
+        ForgetPatch(r, i);
     r->patchMapGroup = 0;
     r->patchMapNum = 0;
     r->flags &= ~POKE_RADAR_FLAG_PATCHES_ACTIVE;
@@ -313,15 +321,9 @@ void PokeRadar_OnFieldReload(void)
             continue;
         r->patchSpriteId[i] = SpawnPatchSprite(r->patchX[i], r->patchY[i]);
         if (r->patchSpriteId[i] != PATCH_SPRITE_NONE)
-        {
             live++;
-        }
         else
-        {
-            /* No free slot: that tile stops being a patch. */
-            r->patchX[i] = 0;
-            r->patchY[i] = 0;
-        }
+            ForgetPatch(r, i);   /* no free slot: that tile stops being a patch */
     }
     if (live == 0)
         ForgetPatches(r);
