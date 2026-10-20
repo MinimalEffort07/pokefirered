@@ -6,6 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pokemon FireRed decompilation (forked from pret/pokefirered) with custom features: real-time 4-player multiplayer via GBA Serial I/O and a procedurally generated Mt. Moon (three seeded cave floors, each drawn in its vanilla style).
 
+## System map
+
+`docs/SYSTEM_MAP.md` is the one-page overview of how the machinery fits together. It covers the autodev loop, the board columns, the session roles and guardrails, how tests and recordings work, one line on every script, and where things live on the machine. The AI writes most of this codebase, and the owner reads the map to keep track of it, so it has to stay true:
+- A change that adds, removes or renames a script, or changes what a script, test runner, workflow step or autodev does, updates the map in the same PR. Name each file by its path from the repo root, in backticks.
+- `test/tests/test_system_map.lua` (part of the suite) fails when a script at the top level, in `automation/` or in `test/` (with `test/lib/` and `test/tools/`) is missing from the map, or when the map names a file that doesn't exist. Whether each line still describes what its script does is for the code review (step 10).
+- Write it for the owner: plain words and what each piece is for. Leave the full rules to the docs it links.
+
 ## Build Commands
 
 Targets live in `Makefile`; variable defaults live in `config.mk`. Add `-j$(nproc)` to any build.
@@ -189,18 +196,18 @@ bash test/record_test.sh test/tests/<relevant_test>.lua
 ```
 Move the recording to `~/recordings/` as per project convention.
 
-**9. Update the README**
-Add or update the feature description and include a demo GIF if the feature has visible in-game behaviour.
+**9. Update the README and the system map**
+Add or update the feature description and include a demo GIF if the feature has visible in-game behaviour. If the change touches a script, a test runner, the workflow or autodev, update `docs/SYSTEM_MAP.md` too (see "System map").
 
 **10. Code review**
-Invoke the `mattpocock-skills:code-review` skill against `master` and address its findings.
+Invoke the `mattpocock-skills:code-review` skill against `master` and address its findings. The review also checks that `docs/SYSTEM_MAP.md` still describes everything the change touched.
 
 **11. Create a PR**
 
 ```bash
 gh pr create --title "Fix #<T>: <short description>" --body "..."
 ```
-PR body must reference the ticket and parent issue numbers, summarise what changed, and list what was tested.
+PR body must reference the ticket and parent issue numbers, summarise what changed, and list what was tested. It also has a `## What changes for you` section: two or three plain sentences telling the owner what is different for them, such as a new command, a new board behaviour, a new rule for tests or a feature to try. When nothing is, it says `Nothing: internal only.`
 
 Once the frontier's PRs are created, post the following in your response to the user, with one `Branch README` line per branch:
 ```
@@ -275,7 +282,7 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - Run `bash test/run_suite.sh` before opening the PR. It takes about 10 minutes, and longer while another session runs its own, which is more than one foreground command may run. So start it in the background with its output in a log file, and before opening the PR wait for it to finish with a loop on that log (e.g. `until grep -q "^SUITE" suite.log; do sleep 15; done`).
 - Report your result once, at the very end, after every step has finished. Never report while a command is still running.
 - `record_test.sh` waits for any other recording on the machine to finish (it takes a machine-wide lock itself), so a recording may start late.
-- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the tests run with the suite result, the "Recordings available at…" and "Branch README" lines (or "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
+- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the tests run with the suite result, the "Recordings available at…" and "Branch README" lines (or "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
 - Push only your own branch: `git push -u origin issue-<T>-<slug>`. Never push to master, force-push or merge.
 - If you can't finish, push the unfinished branch before reporting `failed`.
 
@@ -285,7 +292,7 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
   - `read <PR>` shows the PR's comments, reviews and inline comments (each inline one with its file and line), with an id on each, and marks the owner's unhandled ones `[unhandled]`. `read <T>` shows the ticket.
   - `pr-comment` replies on your PR, with the body on stdin. It adds the handled-through marker naming the comment your prompt names.
 - Address every unhandled comment from the owner up to and including the one your prompt names, in one pass. Leave newer ones alone: they get a follow-up session.
-- For each change: TDD, a clean build, `cd automation && python3 -m unittest` if `automation/` changed, the README if it describes what changed, and a fresh recording if the change is visible in-game. Then run `bash test/run_suite.sh` in the background and wait on its log, as in the ticket role.
+- For each change: TDD, a clean build, `cd automation && python3 -m unittest` if `automation/` changed, the README and `docs/SYSTEM_MAP.md` if they describe what changed, and a fresh recording if the change is visible in-game. Then run `bash test/run_suite.sh` in the background and wait on its log, as in the ticket role.
 - A comment that only asks a question needs no change: answer it in the reply.
 - Push only your own branch (`git push origin <the PR's branch>`), then `pr-comment` what you did about each comment, @mentioning @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it). Report `done` once the reply is posted.
 - Never merge master in (the merge session does that), merge, squash, rebase or force-push.

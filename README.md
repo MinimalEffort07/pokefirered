@@ -2,6 +2,8 @@
 
 This is a fork of the PRET project with custom features. Development is AI-assisted (Claude Code) with human review and direction; [Autodev](#autodev) turns issues into PRs by itself, and each one waits for approval.
 
+**Lost track of how it all works?** [docs/SYSTEM_MAP.md](docs/SYSTEM_MAP.md) shows on one page how autodev, the tests and the recordings fit together, with one line on every script. Every PR that changes them updates it.
+
 ## Added Features
 
 - **Real-Time 4-Player Multiplayer** — Multi-player position sync via GBA Serial I/O, with remote player sprites on shared maps.
