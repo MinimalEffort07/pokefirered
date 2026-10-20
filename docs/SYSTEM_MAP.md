@@ -238,7 +238,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `~/.config/autodev/env` | The bot's token. Mode 600, never committed. |
 | `/tmp/mgba-test.*`, `/tmp/mgba-recordings/` | Per-run test folders, and fresh videos with their notes files. Cleared on reboot. |
 | `~/recordings/` | Videos kept for good, each `<name>.mp4` with its notes file `<name>.json`. Every kept video has one: the videos recorded before notes existed got theirs later from `add-notes`, and their cards say "notes added <date>". |
-| `~/recordings/removed/` | Videos taken off the recordings page (#123): tooling runs, duplicates, and partial or fast-forwarded takes, each with its notes file if it had one. The page doesn't list them. Put one back with `mv ~/recordings/removed/NAME.* ~/recordings/`, or delete the folder (`rm -r ~/recordings/removed`) once you're happy. |
+| `~/recordings/removed/` | Videos taken off the recordings page: tooling runs, duplicates, and partial or fast-forwarded takes, each with its notes file if it had one. The page doesn't list them. Put one back with `mv ~/recordings/removed/NAME.* ~/recordings/`, or delete the folder (`rm -r ~/recordings/removed`) once you're happy. |
 | `~/recordings/originals/` | The full-size originals of the videos `test/tools/shrink_recordings.sh` shrank. The recordings page doesn't list them. Put one back with `mv`, or delete the folder once you're happy. |
 
 ## Check on it
