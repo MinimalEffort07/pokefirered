@@ -12,7 +12,7 @@ How this repo's machinery fits together: autodev, the tests, the recordings, and
 |---|---|---|
 | The game | `src/`, `data/`, `include/`, `Makefile` | The FireRed decompilation plus the fork's features (the generated Mt. Moon, the walking Pokémon, multiplayer and the rest; see `README.md`). `make firered` builds `pokefirered.gba`: `Makefile` and `config.mk` drive it, it compiles the host tools in `tools/` first, and the old compiler, agbcc, sits in `tools/agbcc` (linked into each worktree). |
 | The tests | `test/` | Lua scripts drive a patched mGBA emulator: they press buttons, read game memory and assert. `test/run_suite.sh` must pass before anything merges. |
-| The recordings | `test/record_test.sh`, `test/tools/captioned_gif.py`, `gifs/` | `test/record_test.sh` films a test to video so you can watch what a PR changed. `test/lib/frame_capture.lua` and `test/tools/captioned_gif.py` turn a demo's frames into the README's GIFs. |
+| The recordings | `test/record_test.sh`, `test/serve_recordings.py`, `test/tools/captioned_gif.py`, `gifs/` | `test/record_test.sh` films a test to video so you can watch what a PR changed, and `test/serve_recordings.py` lists the videos on a web page, newest first. `test/lib/frame_capture.lua` and `test/tools/captioned_gif.py` turn a demo's frames into the README's GIFs. |
 | Autodev | `automation/` | A small Python dispatcher plus headless Claude sessions. Together they run CLAUDE.md's GitHub Issue Workflow from issue to merged PR. |
 
 ## The loop
@@ -176,7 +176,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/run_suite.sh` | Runs every top-level test, 4 at a time, in about 10 minutes. Must pass before a merge. |
 | `test/suite_exclude.txt` | The tests the suite skips, each with a one-line reason. The suite refuses to start on a line without one. |
 | `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. |
-| `test/serve_recordings.py` | A web page of the recordings on port 8080, run by `autodev-recordings.service`. The dispatcher restarts it when a merge changes this file, so it must stay one file that imports only Python's standard library. |
+| `test/serve_recordings.py` | The recordings page on port 8080, run by `autodev-recordings.service`: the videos newest first, each with its own page. `--port 8081` previews a branch's page. `test/tests/test_recordings_page.lua` checks it. The dispatcher restarts it when a merge changes this file, so it must stay one file that imports only Python's standard library. |
 | `test/mgba-qt.sh` | Opens the patched mGBA window by hand. |
 | `test/lib/framework.lua` | The test framework: press buttons, wait frames, assert, write results. Every test loads it. |
 | `test/lib/addresses.lua` | Where game variables sit in memory, for the older tests that hard-code addresses. |
