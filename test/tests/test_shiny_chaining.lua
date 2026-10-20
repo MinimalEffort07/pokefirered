@@ -37,8 +37,10 @@
 --      item (its src/data/items.json entry) and USE must reach the radar's
 --      field-use function (that entry's fieldUseFunc): four patches start
 --      shaking, the charge is spent and the 50-step recharge begins. Then
---      the player must be able to walk again, to step into a patch. This is
---      also the README's Shiny Chaining GIF (see RECORD THE GIF below).
+--      the player must be able to walk again, onto tall grass that isn't a
+--      patch: a step into a patch starts a wild battle at once, and this
+--      new game's party is empty (test_poke_radar_patch_battle.lua plays
+--      the patch battle, with a party).
 --
 -- TESTS (requiring a Route 1 save fixture, skipped if fixture missing):
 --
@@ -60,12 +62,9 @@
 -- HOW TO RUN:
 --   bash test/run_test.sh test/tests/test_shiny_chaining.lua
 --
--- RECORD THE GIF (Test G only; frame dumps, see test/lib/frame_capture.lua:
--- every 2nd frame of the 60 fps game, so real time at 30 fps), then burn the
--- captions in with test/tools/captioned_gif.py:
---   FRAMES=$(mktemp -d)
---   MGBA_FRAME_DIR=$FRAMES bash test/run_test.sh test/tests/test_shiny_chaining.lua
---   python3 -I test/tools/captioned_gif.py $FRAMES gifs/shinyChaining.gif
+-- RECORD THE GIF: the README's Shiny Chaining GIF (gifs/shinyChaining.gif)
+-- shows a patch battle, so it comes from test_poke_radar_patch_battle.lua's
+-- P1 now; see RECORD THE GIF in that file's header.
 -------------------------------------------------------------------------------
 
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
@@ -78,7 +77,6 @@ local pr = dofile(project_dir .. "test/lib/poke_radar.lua")
 local warp = dofile(project_dir .. "test/lib/warp.lua")
 local walk = dofile(project_dir .. "test/lib/walk.lua")
 local sym = dofile(project_dir .. "test/lib/symbols.lua")
-local capture = dofile(project_dir .. "test/lib/frame_capture.lua")
 
 -- Optional fixture save state at Route 1 in tall grass. When present,
 -- enables tests E/F. Generate manually via mgba-qt + save-state on
@@ -474,12 +472,9 @@ local function test_use_from_bag_in_grass()
     fw.assert_eq(pr.get_flags() & pr.FLAG_PATCHES_ACTIVE, 0,
         "no patches before use")
 
-    capture.start()
-    capture.caption("Standing in tall grass on Route 1")
     fw.wait_frames(60)
 
     -- New game, empty party: the START menu opens with its cursor on BAG.
-    capture.caption("The POKé RADAR is a KEY ITEM")
     fw.press("START"); fw.wait_frames(40)
     fw.press("A"); fw.wait_frames(90)
     fw.assert_true(main_callback_is("CB2_BagMenuRun"), "the bag is open")
@@ -490,16 +485,13 @@ local function test_use_from_bag_in_grass()
 
     -- A opens the item's menu (USE / REGISTER / CANCEL) with the cursor on
     -- USE; the second A uses it.
-    capture.caption("USE it...")
     fw.press("A"); fw.wait_frames(50)
     fw.assert_eq(fw.read16(sym.addr("gSpecialVar_ItemId")), pr.ITEM_POKE_RADAR,
         "POKE RADAR picked in the KEY ITEMS pocket")
     fw.press("A"); fw.wait_frames(100)
     fw.assert_true(main_callback_is("CB2_Overworld"), "back on the field")
 
-    capture.caption("...and four patches of grass start shaking")
     fw.wait_frames(200)
-    capture.stop()
 
     pr.log_snapshot("after-use")
     fw.assert_true((pr.get_flags() & pr.FLAG_PATCHES_ACTIVE) ~= 0,
@@ -513,18 +505,20 @@ local function test_use_from_bag_in_grass()
             string.format("patch %d is a live shaking-grass sprite (id %d)", i, id))
     end
 
-    -- Now the player must be free to walk into a patch. Step onto the grass
-    -- below, or to the right if that is a patch: a patch starts a forced
-    -- battle, and this new game's party is empty. Opening the START menu
-    -- locked the field controls and froze the map's objects
-    -- (ShowStartMenu), and for an item used from the bag they stay that way
-    -- until the item's field-use callback releases them, as the BICYCLE's
-    -- and the ITEMFINDER's do. If it doesn't, the player is frozen here.
-    local dx, dy = 0, 1
-    if pr.is_patch_tile(ROUTE1_GRASS_X, ROUTE1_GRASS_Y + 1) then dx, dy = 1, 0 end
-    fw.assert_true(walk.step_onto(ROUTE1_GRASS_X + dx, ROUTE1_GRASS_Y + dy),
-        string.format("player can walk after USE (onto %d,%d)",
-            ROUTE1_GRASS_X + dx, ROUTE1_GRASS_Y + dy))
+    -- Now the player must be free to walk. Step onto tall grass next to the
+    -- player that isn't a patch (pr.free_neighbour tries below first, then
+    -- right): a step into a patch starts a wild battle at once, and this new
+    -- game's party is empty. Opening the START menu locked the field
+    -- controls and froze the map's objects (ShowStartMenu), and for an item
+    -- used from the bag they stay that way until the item's field-use
+    -- callback releases them, as the BICYCLE's and the ITEMFINDER's do. If
+    -- it doesn't, the player is frozen here.
+    local tx, ty = pr.free_neighbour(true)
+    if not fw.assert_true(tx ~= nil, "tall grass that isn't a patch is next to the player") then
+        return
+    end
+    fw.assert_true(walk.step_onto(tx, ty),
+        string.format("player can walk after USE (onto %d,%d, not a patch)", tx, ty))
 end
 
 -- ---------- Run everything ----------

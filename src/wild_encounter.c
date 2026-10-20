@@ -515,6 +515,37 @@ bool8 StandardWildEncounter(u32 currMetatileAttrs, u16 previousMetatileBehavior)
     return FALSE;
 }
 
+/*
+ * POKe RADAR patch battle (src/poke_radar.c): the player has just stepped
+ * into one of the radar's shaking grass patches, so a wild Pokemon jumps
+ * out of it now. The patch is the encounter, so unlike StandardWildEncounter
+ * above there is no encounter-rate roll, no Repel check (TryGenerateWildMon
+ * gets no WILD_CHECK_REPEL) and no roaming legendary. The species and level
+ * still come from the map's grass table through the normal slot and level
+ * roll, and GenerateWildMon swaps in the radar's chain species when there
+ * is one. The encounter counters start again as after any wild battle, so
+ * the very next step doesn't roll a random one at a raised rate.
+ *
+ * Returns TRUE once the battle has started. Returns FALSE, starting
+ * nothing, if the map has no grass Pokemon or wild encounters are switched
+ * off (the Quest Log's replay of the last session switches them off).
+ */
+bool8 PokeRadarWildEncounter(void)
+{
+    u16 headerId;
+
+    if (sWildEncountersDisabled == TRUE)
+        return FALSE;
+    headerId = GetCurrentMapWildMonHeaderId();
+    if (headerId == HEADER_NONE || gWildMonHeaders[headerId].landMonsInfo == NULL)
+        return FALSE;
+
+    TryGenerateWildMon(gWildMonHeaders[headerId].landMonsInfo, WILD_AREA_LAND, 0);
+    ResetEncounterRateModifiers();
+    StartWildBattle();
+    return TRUE;
+}
+
 void RockSmashWildEncounter(void)
 {
     u16 headerIdx = GetCurrentMapWildMonHeaderId();

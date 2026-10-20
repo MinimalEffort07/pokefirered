@@ -62,58 +62,16 @@ local fw = dofile(project_dir .. "test/lib/framework.lua")
 local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local cs = dofile(project_dir .. "test/lib/character_select.lua")
 local pr = dofile(project_dir .. "test/lib/poke_radar.lua")
-local warp = dofile(project_dir .. "test/lib/warp.lua")
 local walk = dofile(project_dir .. "test/lib/walk.lua")
 local mm = dofile(project_dir .. "test/lib/mt_moon.lua")
 local follower = dofile(project_dir .. "test/lib/follower.lua")
 follower.bind(fw)
 
--- A tall-grass tile on Route 1 with grass all around, so the radar has
--- plenty of tiles within its 6-tile radius to shake and the player has
--- grass to step onto.
-local GRASS_X, GRASS_Y = 12, 24
+-- gBattleTypeFlags bit set for a trainer battle (see pr.BATTLE_TYPE_TRAINER).
+local BATTLE_TYPE_TRAINER = pr.BATTLE_TYPE_TRAINER
 
--- gBattleTypeFlags bit set for a trainer battle: BATTLE_TYPE_TRAINER,
--- (1 << 3) in include/constants/battle.h.
-local BATTLE_TYPE_TRAINER = 0x08
-
--- Start a scenario: a recharged radar, the player on Route 1's grass at
--- (GRASS_X, GRASS_Y) (with the follower, if it is out), no roaming
--- Pokemon nearby and a Repel. The warp's map load also unlocks the field
--- controls, so a scenario that froze the player doesn't spoil the next.
--- Returns true if the setup worked.
-local function start(name)
-    fw.log("=== " .. name .. " ===")
-    pr.reset(1)
-    pr.set_repel(5000)
-    local warped
-    if follower.object_index() ~= nil then
-        warped = follower.warp(ADDR.MAP_GROUP_KANTO, ADDR.MAP_NUM_ROUTE1, GRASS_X, GRASS_Y)
-    else
-        warped = warp.warp_to_pos(ADDR.MAP_GROUP_KANTO, ADDR.MAP_NUM_ROUTE1, GRASS_X, GRASS_Y)
-    end
-    if not fw.assert_true(warped, name .. ": warped onto Route 1's grass") then return false end
-    fw.assert_true(fw.wait_until(pr.player_ready, 300, "control after the warp"),
-        name .. ": the player has control after the warp")
-    fw.assert_true(follower.clear_roamers(), name .. ": no roaming Pokemon nearby")
-    local x, y = mm.player_tile()
-    -- In the mGBA window (test/record_test.sh), play the rest of the
-    -- scenario in real time so a recording shows it; scenario() speeds up
-    -- again. Headless, this does nothing.
-    fw.slow_down(name)
-    return fw.assert_true(x == GRASS_X and y == GRASS_Y
-            and follower.map_snapshot().behavior(x, y) == pr.MB_TALL_GRASS,
-        string.format("%s: the player stands in tall grass at (%d,%d)", name, x or -1, y or -1))
-end
-
--- Run scenario `fn` and log its own counts.
-local function scenario(name, fn)
-    local pass0, fail0 = fw.counts()
-    fn(name)
-    fw.speed_up()
-    local pass1, fail1 = fw.counts()
-    fw.log(string.format("[%s] %d passed, %d failed", name, pass1 - pass0, fail1 - fail0))
-end
+-- A scenario's setup (pr.start_in_grass) and its counts (pr.scenario).
+local start, scenario = pr.start_in_grass, pr.scenario
 
 -- After the radar was used (`elapsed` frames ago): the player is not frozen
 -- and steps onto tall grass that isn't a patch, and four patches are still
@@ -233,57 +191,13 @@ local function n4(name)
     select_cant_use(name .. ", off the grass", 1)
 end
 
--- Assert the follower's sprite is in use and linked to its object.
-local function assert_follower_sprite(name, when)
-    local i = follower.object_index()
-    if not fw.assert_true(i ~= nil, string.format("%s: the follower is out %s", name, when)) then
-        return
-    end
-    local ok, id = pr.object_sprite_ok(i)
-    fw.assert_true(ok, string.format(
-        "%s: the follower's sprite (id %d) is in use and linked to its object (%d) %s",
-        name, id, i, when))
-end
-
--- START > POKEMON > PIKACHU > WALK. PIKACHU's menu lists SUMMARY first and
--- WALK second (SetPartyMonFieldSelectionActions, src/party_menu.c); the
--- menu's task keeps its cursor in data[0] (at pr.TASK_DATA).
-local WALK_ROW = 1
-local function walk_follower(name)
-    if not pr.choose_start_menu(pr.STARTMENU_POKEMON, name) then return false end
-    if not fw.assert_true(fw.wait_until(function()
-            return pr.task_running("Task_HandleChooseMonInput") ~= nil
-        end, 300, "POKEMON menu"), name .. ": the POKEMON menu opened") then
-        return false
-    end
-    -- A on PIKACHU (the cursor starts on it, the only one) opens its menu.
-    -- The menu ignores input while it fades in, so press until it opens.
-    local menu = nil
-    for _ = 1, 10 do
-        fw.wait_frames(20)
-        menu = pr.task_running("Task_HandleSelectionMenuInput")
-        if menu then break end
-        fw.press("A")
-    end
-    if not fw.assert_true(menu ~= nil, name .. ": PIKACHU's menu opened") then return false end
-    for _ = 1, 5 do
-        if fw.read16(menu + pr.TASK_DATA) == WALK_ROW then break end
-        fw.press("DOWN")
-        fw.wait_frames(6)
-    end
-    fw.press("A")          -- WALK: back to the field, PIKACHU behind the player
-    return fw.assert_true(fw.wait_until(function()
-        return follower.object_index() ~= nil and pr.player_ready()
-    end, 600, "follower out"), name .. ": PIKACHU walks behind the player after WALK")
-end
-
 -- N2: N1 with the follower out.
 local function n2(name)
     if not start(name) then return end
-    if not walk_follower(name) then return end
+    if not pr.walk_follower(name) then return end
     local used, elapsed = pr.use_from_bag(name)
     if not used then return end
-    check_after_use(name, elapsed, function(when) assert_follower_sprite(name, when) end)
+    check_after_use(name, elapsed, function(when) pr.assert_follower_sprite(name, when) end)
 end
 
 -- N5, one battle: USE, then step onto tall grass that isn't a patch until a
