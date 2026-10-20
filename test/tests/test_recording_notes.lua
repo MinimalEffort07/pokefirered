@@ -738,6 +738,10 @@ local PAGE_VIDEOS = {
     { name = "test_wrong_types_20261013_100000.mp4",
       broken = '{"recorded_at": "2026-10-13T10:00:00+00:00", "ticket": "90", "result": {"pass": "x"}}',
       mtime = "2026-10-13 10:00", shows = "2026-10-13 10:00" },
+    { name = "test_bad_added_20261012_100000.mp4",
+      broken = '{"recorded_at": "2026-10-12T10:00:00+00:00", "notes_added_at": "last week", '
+          .. '"notes": {"tested": "t", "problem": "p", "expect": "e"}}',
+      mtime = "2026-10-12 10:00", shows = "2026-10-12 10:00" },
 }
 
 -- Make every page fixture. The fixture repo's README is put back first, so
@@ -776,13 +780,16 @@ local function make_page_fixtures()
         .. " && head -c 4 /dev/zero > " .. sh_quote(SCRATCH .. "/folder_notes_20261012_100000.mp4"))
 end
 
--- What a GET of `path` would return, from serve_recordings.py --print, in
--- UTC. Returns a table: status (a number, or nil if the first line isn't
--- one), body (everything after the first line), code (the exit code) and
--- output (everything printed, for the log).
-local function get(path)
-    local code, output = run("TZ=UTC python3 " .. sh_quote(SERVER) .. " --kept " .. sh_quote(KEPT)
-        .. " --scratch " .. sh_quote(SCRATCH) .. " --print " .. sh_quote(path))
+-- What a GET of `path` would return, from serve_recordings.py --print: on
+-- the page fixtures' folders in UTC, or on `where` ({ kept = K, scratch =
+-- S, tz = TZ }) when given. Returns a table: status (a number, or nil if
+-- the first line isn't one), body (everything after the first line), code
+-- (the exit code) and output (everything printed, for the log).
+local function get(path, where)
+    where = where or { kept = KEPT, scratch = SCRATCH, tz = "UTC" }
+    local code, output = run("TZ=" .. sh_quote(where.tz) .. " python3 " .. sh_quote(SERVER)
+        .. " --kept " .. sh_quote(where.kept) .. " --scratch " .. sh_quote(where.scratch)
+        .. " --print " .. sh_quote(path))
     local first, rest = output:match("^([^\n]*)\n?(.*)$")
     fw.log(string.format("GET %s -> status %s, exit %s, %d bytes", path, tostring(first), tostring(code), #output))
     return { status = tonumber(first), body = rest or "", code = code, output = output }
@@ -1003,6 +1010,378 @@ local function check_bad_notes(page, kept_cards, scratch_cards)
 end
 
 -------------------------------------------------------------------------------
+-- N1 to N7: notes for recordings kept before notes existed
+-------------------------------------------------------------------------------
+
+-- The machine's time zone for these checks: Sydney's, with its rules
+-- written out so no time zone files are needed (UTC+10, and UTC+11 from
+-- the first Sunday of October to the first Sunday of April).
+local SYDNEY = "AEST-10AEDT,M10.1.0,M4.1.0/3"
+
+-- `cmd` run in SYDNEY's time.
+local function in_sydney(cmd)
+    return "TZ=" .. sh_quote(SYDNEY) .. " " .. cmd
+end
+
+-- Set file `path`'s modification time to `mtime`, Sydney time. `date`
+-- turns it into seconds since 1970 first: uutils' touch (this machine's)
+-- reads `touch -d` times as UTC whatever TZ says.
+local function set_mtime(path, mtime)
+    local seconds = first_line(in_sydney("date -d " .. sh_quote(mtime) .. " +%s"))
+    local code, output = run("touch -d @" .. seconds .. " " .. sh_quote(path))
+    if code ~= 0 then fw.log_error("can't set the time of " .. path .. ": " .. output) end
+end
+
+-- Make video `name` (a few zero bytes) in folder `dir`, last modified at
+-- `mtime`, Sydney time. Returns its path.
+local function make_video(dir, name, mtime)
+    local video = dir .. "/" .. name
+    write_file(video, "\0\0\0\0")
+    set_mtime(video, mtime)
+    return video
+end
+
+-- `recording_notes.py add-notes` in Sydney's time on recording `name` in
+-- folder `kept`, with notes file `notes` and `extra` arguments (already
+-- shell-quoted), in `session` (none when nil). Returns its exit code and
+-- what it printed.
+local function add_notes(kept, name, notes, extra, session)
+    return run_as(session or {}, in_sydney("python3 " .. sh_quote(NOTES_TOOL) .. " add-notes --kept "
+        .. sh_quote(kept) .. " " .. (extra or "") .. " " .. sh_quote(name) .. " " .. sh_quote(notes)))
+end
+
+-- Seconds since 1970 of ISO time `iso`, or nil when `date` can't read it.
+local function epoch_of(iso)
+    return tonumber(first_line("date -d " .. sh_quote(iso) .. " +%s"))
+end
+
+-- An old recording's notes, as the owner would write them for #24's video.
+local OLD_TESTED = "Save in a generated Mt. Moon floor, then Continue."
+local OLD_PROBLEM = "Continue could put you inside a rock."
+local OLD_EXPECT = "About 20 s in, the game loads and you stand on open floor."
+local OLD_NOTES = "ticket: 24 Continue puts you back on the cave floor\n"
+    .. "parent: 22 Procedurally generated Mt. Moon\n"
+    .. "pr: 33\n"
+    .. "\n"
+    .. "## What's tested\n" .. OLD_TESTED .. "\n"
+    .. "## The problem\n" .. OLD_PROBLEM .. "\n"
+    .. "## What you should see\n" .. OLD_EXPECT .. "\n"
+local OLD_KEYS = "video recorded_at test branch commit uncommitted_changes result "
+    .. "ticket parent pr notes notes_added_at"
+
+-- Check the facts add-notes writes that nobody knows any more, and that
+-- notes_added_at is now, with this machine's UTC offset; `label` starts
+-- each check's name. `before` is the time (date +%s) just before
+-- add-notes ran.
+local function check_added_facts(label, f, before)
+    local ok = fw.assert_eq(f.keys, OLD_KEYS, label .. ": the notes file has every field, notes_added_at last")
+    for _, key in ipairs({ "branch", "commit", "uncommitted_changes", "result" }) do
+        ok = fw.assert_eq(f[key], "null", label .. ": " .. key .. " is null") and ok
+    end
+    local added = (f.notes_added_at or ""):match('^"(.*)"$') or ""
+    local offset = first_line(in_sydney("date +%:z"))
+    ok = fw.assert_true(added:match("^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%d[+-]%d%d:%d%d$") ~= nil
+        and added:sub(-6) == offset,
+        label .. ": notes_added_at is an ISO time with this machine's offset (" .. offset .. "): " .. added) and ok
+    local at, now = epoch_of(added), tonumber(first_line("date +%s"))
+    ok = fw.assert_true(at ~= nil and before ~= nil and now ~= nil and at >= before - 1 and at <= now,
+        label .. ": notes_added_at is when the notes were added") and ok
+    return ok
+end
+
+-- N1 and N2: when an old recording was recorded.
+local ADD_ONE = WORK .. "/add-notes-one"
+
+local function check_add_notes_time()
+    run("mkdir -p " .. sh_quote(ADD_ONE))
+    local notes = notes_file("old_notes.txt", OLD_NOTES)
+
+    -- N1: the name's stamp, whatever the modification time says. The test
+    -- is given from inside the repo, so it is the path from the repo root.
+    make_video(ADD_ONE, "test_x_20261017_120000.mp4", "2025-03-01 08:00")
+    local before = tonumber(first_line("date +%s"))
+    local code, output = add_notes(ADD_ONE, "test_x_20261017_120000", notes, "--test " .. sh_quote(SOME_TEST))
+    local f = read_json(ADD_ONE .. "/test_x_20261017_120000.json")
+    local ok = fw.assert_eq(code, 0, "N1: add-notes on test_x_20261017_120000.mp4 exits 0")
+    ok = fw.assert_eq(f.recorded_at, '"2026-10-17T12:00:00+11:00"',
+        "N1: recorded_at is the name's stamp, with the offset of that date") and ok
+    ok = fw.assert_eq(f.video, '"test_x_20261017_120000.mp4"', "N1: video is the video's file name") and ok
+    ok = fw.assert_eq(f.test, '"test/tests/test_player_sprite.lua"', "N1: test is --test's path from the repo root") and ok
+    ok = fw.assert_eq(f.ticket, '{"number": 24, "title": "Continue puts you back on the cave floor"}',
+        "N1: ticket is the notes'") and ok
+    ok = fw.assert_eq(f.parent, '{"number": 22, "title": "Procedurally generated Mt. Moon"}',
+        "N1: parent is the notes'") and ok
+    ok = fw.assert_eq(f.pr, "33", "N1: pr is the notes'") and ok
+    ok = fw.assert_eq(f.notes, '{"expect": ' .. json_string(OLD_EXPECT) .. ', "problem": '
+        .. json_string(OLD_PROBLEM) .. ', "tested": ' .. json_string(OLD_TESTED) .. '}',
+        "N1: notes are the notes' three sections") and ok
+    ok = check_added_facts("N1", f, before) and ok
+    if not ok then dump("N1 add-notes", output) end
+
+    -- A stamp in winter gets winter's offset, though the notes are added
+    -- in summer; the name may end in .mp4, and without --test the test is
+    -- null.
+    make_video(ADD_ONE, "test_x_20260715_120000.mp4", "2026-10-21 09:00")
+    code, output = add_notes(ADD_ONE, "test_x_20260715_120000.mp4", notes)
+    f = read_json(ADD_ONE .. "/test_x_20260715_120000.json")
+    ok = fw.assert_eq(code, 0, "N1: add-notes on a name ending in .mp4 exits 0")
+    ok = fw.assert_eq(f.recorded_at, '"2026-07-15T12:00:00+10:00"',
+        "N1: a July stamp gets July's offset, +10:00") and ok
+    ok = fw.assert_eq(f.test, "null", "N1: without --test, test is null") and ok
+    if not ok then dump("N1 add-notes, July", output) end
+
+    -- N2: no stamp, so the video's modification time (when its recording
+    -- ended; mv and the shrink tool keep it). A test outside the repo is
+    -- its full path.
+    make_video(ADD_ONE, "issue-24-safety-net.mp4", "2026-10-05 20:30:15")
+    before = tonumber(first_line("date +%s"))
+    code, output = add_notes(ADD_ONE, "issue-24-safety-net", notes, "--test " .. sh_quote(OUTSIDE_TEST))
+    f = read_json(ADD_ONE .. "/issue-24-safety-net.json")
+    ok = fw.assert_eq(code, 0, "N2: add-notes on issue-24-safety-net.mp4 exits 0")
+    ok = fw.assert_eq(f.recorded_at, '"2026-10-05T20:30:15+11:00"',
+        "N2: recorded_at is the video's modification time") and ok
+    ok = fw.assert_eq(f.test, '"' .. first_line("realpath " .. sh_quote(OUTSIDE_TEST)) .. '"',
+        "N2: a test outside the repo is its full path") and ok
+    ok = check_added_facts("N2", f, before) and ok
+    if not ok then dump("N2 add-notes", output) end
+
+    -- A stamp that isn't a real date and time is no stamp.
+    make_video(ADD_ONE, "test_x_20261399_250000.mp4", "2026-09-01 07:00:00")
+    code, output = add_notes(ADD_ONE, "test_x_20261399_250000", notes)
+    f = read_json(ADD_ONE .. "/test_x_20261399_250000.json")
+    ok = fw.assert_eq(code, 0, "N2: add-notes on test_x_20261399_250000.mp4 exits 0")
+    ok = fw.assert_eq(f.recorded_at, '"2026-09-01T07:00:00+10:00"',
+        "N2: an impossible stamp (month 13, hour 25) gives the modification time") and ok
+    if not ok then dump("N2 add-notes, bad stamp", output) end
+end
+
+-- Every file and folder in `dir`: each one's name, kind, size and
+-- modification time, then each file's SHA-256. Equal snapshots mean
+-- nothing in it changed, not even a hidden file left behind.
+local function snapshot(dir)
+    local q = sh_quote(dir)
+    local _, output = run("find " .. q .. " -printf '%P %y %s %T@\\n' | LC_ALL=C sort"
+        .. " && find " .. q .. " -type f -exec sha256sum {} + | LC_ALL=C sort -k2")
+    return output
+end
+
+-- N5: refusals change nothing.
+local REFUSE_KEPT = WORK .. "/add-notes-refused"
+
+local function check_add_notes_refused()
+    run("mkdir -p " .. sh_quote(REFUSE_KEPT))
+    local notes = notes_file("old_notes.txt", OLD_NOTES)
+    -- A fresh recording, whose notes file record_test.sh wrote with the
+    -- helper's write; a video whose notes file isn't JSON; and a video
+    -- with no notes file.
+    write_notes(REFUSE_KEPT .. "/recorded_20261020_120000.mp4", REPO_TEST,
+        WORK .. "/no_such_results.json", "--notes " .. sh_quote(notes_file("refused_fresh.txt", COMPLETE)))
+    make_video(REFUSE_KEPT, "unreadable_20261020_110000.mp4", "2026-10-20 11:05")
+    write_file(REFUSE_KEPT .. "/unreadable_20261020_110000.json", "{not json")
+    make_video(REFUSE_KEPT, "plain_20261020_100000.mp4", "2026-10-20 10:05")
+    -- Notes the parser refuses twice over: a missing section, and an
+    -- unknown header. Both problems are listed.
+    local bad_notes = notes_file("old_bad.txt",
+        without(without(OLD_NOTES, "## The problem"), OLD_PROBLEM):gsub("^ticket:", "tickt:"))
+
+    for _, case in ipairs({
+        { "a name with no such video", "nothing_20261020_090000", notes,
+          { "nothing_20261020_090000.mp4", "no video" } },
+        { "a video whose notes file record_test.sh wrote", "recorded_20261020_120000", notes,
+          { "record_test.sh" } },
+        { "a video whose notes file can't be read", "unreadable_20261020_110000", notes,
+          { "unreadable_20261020_110000.json", "can't read" } },
+        { "notes missing a section", "plain_20261020_100000", bad_notes,
+          { "The problem", "missing", "tickt" } },
+        { "a path instead of a name", "../add-notes-one/issue-24-safety-net", notes, { "name" } },
+    }) do
+        local before = snapshot(REFUSE_KEPT)
+        local code, output = add_notes(REFUSE_KEPT, case[2], case[3])
+        local ok = fw.assert_eq(code, 1, "N5: add-notes refuses " .. case[1] .. " (exit 1)")
+        for _, word in ipairs(case[4]) do
+            ok = fw.assert_true(has(output, word), "N5: ... saying \"" .. word .. "\"") and ok
+        end
+        ok = fw.assert_true(not has(output, "Traceback"), "N5: ... without a traceback") and ok
+        local after = snapshot(REFUSE_KEPT)
+        ok = fw.assert_true(before ~= "" and after == before, "N5: ... and every file stays as it was") and ok
+        if not ok then
+            dump("N5 " .. case[1], output)
+            dump("before", before)
+            dump("after", after)
+        end
+    end
+end
+
+-- N3 and N4: a folder modelled on ~/recordings, newest first as the page
+-- must list it. `mtime` is each video's modification time (Sydney time);
+-- `fresh` marks the recording whose notes file record_test.sh wrote, with
+-- recorded_at `at`. The others have no notes file yet. A stamped video's
+-- time is when its recording ended, a few minutes after its stamp, except
+-- test_poke_radar_no_freeze's, touched hours later (by a copy, say).
+-- demo_follower_collision_realtime_20261018 has a date but no time, so no
+-- stamp.
+local OLD_KEPT = WORK .. "/add-notes-kept"
+local OLD_SCRATCH = WORK .. "/add-notes-scratch"
+local OLD_VIDEOS = {
+    { name = "issue-111_test_recording_notes_20261020_212036.mp4", fresh = true,
+      at = "2026-10-20T21:20:36+11:00", mtime = "2026-10-20 21:21:10" },
+    { name = "test_follower_swap_20261020_165719.mp4", mtime = "2026-10-20 17:04:30" },
+    { name = "test_poke_radar_no_freeze_20261020_093844.mp4", mtime = "2026-10-20 14:10:00" },
+    { name = "demo_pc_anywhere_20261019_122254.mp4", mtime = "2026-10-19 12:23:40" },
+    { name = "test_shiny_chaining_20261019_122027.mp4", mtime = "2026-10-19 12:21:15" },
+    { name = "demo_follower_collision_realtime_20261018.mp4", mtime = "2026-10-18 13:58:00" },
+    { name = "issue-32-demo.mp4", mtime = "2026-10-10 11:00:00" },
+    { name = "issue-24-safety-net.mp4", mtime = "2026-10-05 20:30:15", test = SOME_TEST },
+    { name = "route4_no_warp.mp4", mtime = "2026-10-01 09:00:00" },
+}
+local OLD_PAGE = { kept = OLD_KEPT, scratch = OLD_SCRATCH, tz = SYDNEY }
+
+-- The kept cards' file names, in page order, joined with ", ".
+local function card_order(page)
+    local scratch_at = page.body:find('id="scratch"', 1, true) or (#page.body + 1)
+    local names = {}
+    for i, c in ipairs(cards(page.body:sub(1, scratch_at - 1))) do names[i] = tostring(c.file) end
+    return table.concat(names, ", ")
+end
+
+local function check_add_notes_page()
+    run("mkdir -p " .. sh_quote(OLD_KEPT) .. " " .. sh_quote(OLD_SCRATCH))
+    local want = {}
+    local fresh_json
+    for i, v in ipairs(OLD_VIDEOS) do
+        want[i] = v.name
+        local video = OLD_KEPT .. "/" .. v.name
+        if v.fresh then
+            write_file(video, "\0\0\0\0")
+            fresh_json = video:gsub("%.mp4$", ".json")
+            local code, output = run("python3 " .. sh_quote(NOTES_TOOL) .. " write " .. sh_quote(video)
+                .. " --test " .. sh_quote(REPO_TEST) .. " --recorded-at " .. v.at
+                .. " --results " .. sh_quote(results_file("old_page_results.json", 12, 0))
+                .. " --repo " .. sh_quote(REPO) .. " --notes " .. sh_quote(notes_file("old_page_fresh.txt", COMPLETE)))
+            if code ~= 0 then fw.log_error("fixture notes failed for " .. v.name .. ": " .. output) end
+        end
+        make_video(OLD_KEPT, v.name, v.mtime)
+    end
+    want = table.concat(want, ", ")
+
+    local page = get("/", OLD_PAGE)
+    local ok = fw.assert_eq(card_order(page), want, "N3: before add-notes, the page lists the folder in this order")
+    if not ok then dump("N3 page before", page.output) end
+    local fresh_before = snapshot(fresh_json)
+
+    -- Notes for every video without a notes file.
+    local notes = notes_file("old_notes.txt", OLD_NOTES)
+    for _, v in ipairs(OLD_VIDEOS) do
+        if not v.fresh then
+            local code, output = add_notes(OLD_KEPT, v.name, notes, v.test and ("--test " .. sh_quote(v.test)))
+            local f = read_json(OLD_KEPT .. "/" .. v.name:gsub("%.mp4$", ".json"))
+            local good = fw.assert_eq(code, 0, "N3: add-notes gives " .. v.name .. " notes (exit 0)")
+            good = fw.assert_true(f.notes_added_at ~= nil and f.notes_added_at ~= "null",
+                "N3: ... and its notes file has notes_added_at") and good
+            if not good then dump("N3 add-notes " .. v.name, output) end
+        end
+    end
+
+    page = get("/", OLD_PAGE)
+    ok = fw.assert_eq(page.status, 200, "N3: after add-notes, the page returns 200")
+    ok = fw.assert_eq(card_order(page), want, "N3: after add-notes, the cards are in the same order") and ok
+    ok = fw.assert_true(not has(page.body, "notes file unreadable") and not has(page.body, "No notes"),
+        "N3: ... and every card has its notes") and ok
+    ok = fw.assert_eq(snapshot(fresh_json), fresh_before,
+        "N3: the notes file record_test.sh wrote stays as it was") and ok
+    if not ok then dump("N3 page after", page.output) end
+
+    -- N4: the card of a recording given notes this way.
+    local scratch_at = page.body:find('id="scratch"', 1, true) or (#page.body + 1)
+    local c = card_named(cards(page.body:sub(1, scratch_at - 1)), "issue-24-safety-net.mp4")
+    ok = fw.assert_true(c ~= nil, "N4: issue-24-safety-net.mp4 has a card")
+    if not c then return end
+    local title, link = title_of(c)
+    ok = fw.assert_eq(title, "#24 Continue puts you back on the cave floor", "N4: its title is its ticket's") and ok
+    ok = fw.assert_eq(link, ISSUES .. "24", "N4: ... linked to the ticket") and ok
+    local text = text_of(c.text)
+    ok = fw.assert_true(has(text, "Part of #22 Procedurally generated Mt. Moon")
+        and has(c.text, 'href="' .. ISSUES .. '22"'), "N4: \"Part of #22 ...\" is under it, linked") and ok
+    ok = fw.assert_true(has(text, "PR #33") and has(c.text, 'href="' .. PULLS .. '33"'),
+        "N4: \"PR #33\" is under it, linked") and ok
+    for _, want_text in ipairs({ OLD_TESTED, OLD_PROBLEM, OLD_EXPECT }) do
+        ok = fw.assert_true(has(text, want_text), "N4: the card shows the note \"" .. want_text .. "\"") and ok
+    end
+    -- The facts line: when it was recorded, its test, and when its notes
+    -- were added, in this machine's time to the minute, as "Recorded" is.
+    local added = (read_json(OLD_KEPT .. "/issue-24-safety-net.json").notes_added_at or ""):match('^"(.*)"$') or ""
+    local added_shows = added:sub(1, 10) .. " " .. added:sub(12, 16)
+    local facts = facts_of(c)
+    for _, part in ipairs({ "Recorded 2026-10-05 20:30", "test/tests/test_player_sprite.lua",
+                            "notes added " .. added_shows }) do
+        ok = fw.assert_true(has(facts, part), "N4: the facts line has \"" .. part .. "\"") and ok
+    end
+    ok = fw.assert_true(not has(c.text, "didn't finish") and not has(facts, "result")
+        and not has(facts, "checks"), "N4: the card says nothing about the run's result") and ok
+    ok = fw.assert_true(not has(facts, "branch") and not has(facts, "commit"),
+        "N4: ... nor a branch or commit") and ok
+    ok = fw.assert_true(not has(c.text, "No notes for this recording."),
+        "N4: the card doesn't say \"No notes for this recording.\"") and ok
+    if not ok then dump("N4 card", c.text) end
+end
+
+-- N6: add-notes may rewrite the notes it wrote, to fix them.
+local function check_add_notes_rewrite()
+    -- N2 gave issue-24-safety-net.mp4 its notes. Its video has since been
+    -- touched, so working the time out again would give a new one.
+    local json = ADD_ONE .. "/issue-24-safety-net.json"
+    local first = read_json(json)
+    set_mtime(ADD_ONE .. "/issue-24-safety-net.mp4", "2026-10-21 09:00")
+    local fixed = "About 25 s in, the game loads and you stand on open floor."
+    local code, output = add_notes(ADD_ONE, "issue-24-safety-net",
+        notes_file("old_fixed.txt", OLD_NOTES:gsub("About 20 s in[^\n]*", fixed)))
+    local f = read_json(json)
+    local ok = fw.assert_eq(code, 0, "N6: add-notes again on a recording it gave notes exits 0")
+    ok = fw.assert_eq(f.recorded_at, '"2026-10-05T20:30:15+11:00"', "N6: ... keeping recorded_at") and ok
+    ok = fw.assert_eq(f.recorded_at, first.recorded_at, "N6: ... which is the first run's") and ok
+    ok = fw.assert_true(has(f.notes or "", json_string(fixed)) and not has(f.notes or "", "About 20 s in"),
+        "N6: ... with the new text") and ok
+    local was, now = epoch_of((first.notes_added_at or ""):match('^"(.*)"$') or ""),
+        epoch_of((f.notes_added_at or ""):match('^"(.*)"$') or "")
+    ok = fw.assert_true(was ~= nil and now ~= nil and now >= was, "N6: ... and notes_added_at is the rewrite's") and ok
+    if not ok then dump("N6 add-notes again", output) end
+end
+
+-- N7: an old video belongs to an old ticket, so a session's rules for its
+-- own recordings don't apply to add-notes. They still apply to recording.
+local function check_add_notes_in_session()
+    local old = notes_file("old_no_parent.txt", without(without(OLD_NOTES,
+        "parent: 22 Procedurally generated Mt. Moon"), "pr: 33"))
+    -- (N5 left plain_20261020_100000.mp4 without notes.)
+    local code, output = add_notes(REFUSE_KEPT, "plain_20261020_100000", old, "", TICKET_SESSION)
+    local f = read_json(REFUSE_KEPT .. "/plain_20261020_100000.json")
+    local ok = fw.assert_eq(code, 0,
+        "N7: in a ticket session for #90, add-notes accepts notes naming ticket: 24 with no parent: (exit 0)")
+    ok = fw.assert_eq(f.ticket, '{"number": 24, "title": "Continue puts you back on the cave floor"}',
+        "N7: ... and writes ticket 24") and ok
+    ok = fw.assert_eq(f.parent, "null", "N7: ... with no parent") and ok
+    if not ok then dump("N7 add-notes", output) end
+
+    -- A fix-up's PR isn't an old video's PR either.
+    make_video(REFUSE_KEPT, "plain_20261020_090000.mp4", "2026-10-20 09:05")
+    code, output = add_notes(REFUSE_KEPT, "plain_20261020_090000", old, "", FIXUP_SESSION)
+    f = read_json(REFUSE_KEPT .. "/plain_20261020_090000.json")
+    ok = fw.assert_eq(code, 0, "N7: in a fix-up session for #90's PR 97, add-notes accepts them too (exit 0)")
+    ok = fw.assert_eq(f.pr, "null", "N7: ... and doesn't give them the fix-up's PR") and ok
+    if not ok then dump("N7 add-notes, fix-up", output) end
+
+    -- The same notes, for a recording in the same session: refused.
+    code, output = check_as(TICKET_SESSION, "--notes " .. sh_quote(old))
+    ok = fw.assert_eq(code, 1, "N7: record_test.sh --check still refuses those notes in the session (exit 1)")
+    if not ok then dump("N7 record_test.sh --check", output) end
+    code, output = run_as(TICKET_SESSION, "python3 " .. sh_quote(NOTES_TOOL) .. " check " .. sh_quote(old))
+    ok = fw.assert_eq(code, 1, "N7: the helper's check, which record_test.sh runs, refuses them (exit 1)")
+    ok = fw.assert_true(has(output, "#90") and has(output, "parent:"),
+        "N7: ... naming the session's ticket, #90, and the missing parent:") and ok
+    if not ok then dump("N7 check", output) end
+end
+
+-------------------------------------------------------------------------------
 -- Test
 -------------------------------------------------------------------------------
 
@@ -1027,5 +1406,12 @@ fw.run(function()
     check_card(page, kept_cards)
     check_order(page, kept_cards)
     check_bad_notes(page, kept_cards, scratch_cards)
+
+    fw.log("=== Notes for recordings kept before notes existed (add-notes) ===")
+    check_add_notes_time()
+    check_add_notes_page()
+    check_add_notes_refused()
+    check_add_notes_rewrite()
+    check_add_notes_in_session()
     fw.finish()
 end)

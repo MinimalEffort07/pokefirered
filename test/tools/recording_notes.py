@@ -134,6 +134,13 @@ PR_VALUE = re.compile(r"#?(\d+)")
 KEPT_DIR = os.path.expanduser("~/recordings")
 SCRATCH_DIR = "/tmp/mgba-recordings"
 
+# The checkout holding this script: a test's path is given from its root.
+REPO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+
+# record_test.sh ends a video's name with the date and time its recording
+# started: _<YYYYMMDD>_<HHMMSS>, e.g. test_x_20261020_134554.
+NAME_STAMP = re.compile(r"_(\d{8}_\d{6})$")
+
 
 def heading_key(heading):
     """The section key of a "## " heading, or None. Case doesn't matter,
@@ -291,10 +298,11 @@ def parse(text, session=None):
     return fields, problems
 
 
-def read_notes(path, save=None):
+def read_notes(path, save=None, session_rules=True):
     """Notes file `path` ("-" for stdin) -> (fields, problems), as parse.
     A file that can't be read is one problem. With `save`, accepted notes
-    are also written to that file, byte for byte."""
+    are also written to that file, byte for byte. session_rules=False
+    leaves out an autodev session's rules (add-notes)."""
     try:
         if path == "-":
             data = sys.stdin.buffer.read()
@@ -310,7 +318,7 @@ def read_notes(path, save=None):
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         return None, [f"notes file {path} isn't UTF-8 text"]
-    fields, problems = parse(text, session_from(os.environ))
+    fields, problems = parse(text, session_from(os.environ) if session_rules else None)
     if save is not None and not problems:
         try:
             with open(save, "wb") as f:
@@ -487,6 +495,21 @@ def cmd_set_result(args):
     return save(record, args.notes_file)
 
 
+def recording_name(given, command):
+    """A recording's name as `command` was given it (with or without .mp4),
+    without the ending, or None, saying why, when it is not a plain name: a
+    path can't lead the command outside its folder."""
+    name = given
+    for ending in (".mp4", ".json"):
+        if name.endswith(ending):
+            name = name[:-len(ending)]
+    if not name or "/" in name or name.startswith("."):
+        print(f'{command} needs a recording\'s name, as record_test.sh prints it '
+              f'(e.g. issue-90_test_x_20261020_134554), not "{given}"', file=sys.stderr)
+        return None
+    return name
+
+
 def cmd_set_pr(args):
     """set-pr: a PR's number into the notes file of a recording, found by
     its name in the kept folder first, then in scratch, as the recordings
@@ -496,13 +519,8 @@ def cmd_set_pr(args):
         print(f'set-pr needs a PR number, as in "set-pr NAME 97" (got "{args.pr}")',
               file=sys.stderr)
         return 1
-    name = args.name
-    for ending in (".mp4", ".json"):
-        if name.endswith(ending):
-            name = name[:-len(ending)]
-    if not name or "/" in name or name.startswith("."):
-        print(f'set-pr needs a recording\'s name, as record_test.sh prints it '
-              f'(e.g. issue-90_test_x_20261020_134554), not "{args.name}"', file=sys.stderr)
+    name = recording_name(args.name, "set-pr")
+    if name is None:
         return 1
     folders = (args.kept, args.scratch)
     for folder in folders:
@@ -519,6 +537,83 @@ def cmd_set_pr(args):
     if save(record, path) != 0:
         return 1
     print(f"PR #{record['pr']} set in {path}")
+    return 0
+
+
+def when_recorded(name, video):
+    """When recording `name` (video file `video`) was recorded, as an ISO
+    time with this machine's UTC offset on that date: when it started, from
+    the stamp its name ends with, or, with no valid stamp, its video's
+    modification time, which is when it ended (mv and the shrink tool keep
+    that time). Never the time now: the page would list it as new."""
+    m = NAME_STAMP.search(name)
+    if m is not None:
+        try:
+            started = datetime.datetime.strptime(m.group(1), "%Y%m%d_%H%M%S")
+            # A naive time's astimezone() takes it as this machine's time,
+            # with the UTC offset in force on that date (summer or not).
+            return started.astimezone().isoformat(timespec="seconds")
+        except (ValueError, OverflowError, OSError):
+            pass        # no such date or time (month 13): no stamp
+    ended = datetime.datetime.fromtimestamp(os.stat(video).st_mtime, datetime.timezone.utc)
+    return ended.astimezone().isoformat(timespec="seconds")
+
+
+def cmd_add_notes(args):
+    """add-notes: notes for a recording kept before notes existed, without
+    moving it on the recordings page (see OLD RECORDINGS)."""
+    name = recording_name(args.name, "add-notes")
+    if name is None:
+        return 1
+    video = os.path.join(args.kept, name + ".mp4")
+    path = notes_file_path(video)
+    if not os.path.isfile(video):
+        print(f"no video {name}.mp4 in {args.kept}: add-notes gives notes to a "
+              f"kept recording, named as the recordings page shows it", file=sys.stderr)
+        return 1
+    # A notes file record_test.sh wrote has the recording's own facts (its
+    # branch, commit and result), and every fresh recording has one: only
+    # a notes file add-notes wrote itself (with notes_added_at) is rewritten,
+    # and it keeps the time it gave the recording then.
+    recorded_at = None
+    if os.path.lexists(path):
+        record = load(path)
+        if record is None:
+            return 1
+        if record.get("notes_added_at") is None:
+            print(f"{path} was written by record_test.sh as it recorded {name}.mp4, so "
+                  f"it is left as it is: add-notes only gives notes to a recording kept "
+                  f"before notes existed", file=sys.stderr)
+            return 1
+        recorded_at = record.get("recorded_at")
+        try:
+            datetime.datetime.fromisoformat(recorded_at)
+        except (TypeError, ValueError):
+            print(f"can't read notes file {path}: its recorded_at, {recorded_at!r}, isn't "
+                  f"a time, so it can't be kept (delete the file to start again)",
+                  file=sys.stderr)
+            return 1
+    fields, problems = read_notes(args.notes, session_rules=False)
+    if problems:
+        report_problems(problems, args.notes)
+        return 1
+    record = {
+        "video": name + ".mp4",
+        "recorded_at": recorded_at or when_recorded(name, video),
+        "test": test_path(args.test, REPO_DIR) if args.test else None,
+        "branch": None,
+        "commit": None,
+        "uncommitted_changes": None,
+        "result": None,
+        "ticket": fields["ticket"],
+        "parent": fields["parent"],
+        "pr": fields["pr"],
+        "notes": fields["notes"],
+        "notes_added_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    if save(record, path) != 0:
+        return 1
+    print(f"Notes added: {path}")
     return 0
 
 
@@ -546,7 +641,7 @@ def main():
                    help="the run's results file (it may not exist; none: "
                         "the result is null)")
     p.add_argument("--notes", help="the notes, already checked (none: no notes)")
-    p.add_argument("--repo", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."),
+    p.add_argument("--repo", default=REPO_DIR,
                    help="the git checkout for the branch and commit "
                         "(default: the one holding this script)")
     p.set_defaults(run=cmd_write)
@@ -565,6 +660,15 @@ def main():
     p.add_argument("--scratch", default=SCRATCH_DIR,
                    help="record_test.sh's folder, looked in next (default: %(default)s)")
     p.set_defaults(run=cmd_set_pr)
+
+    p = commands.add_parser("add-notes",
+                            help="give notes to a recording kept before notes existed")
+    p.add_argument("name", help="the recording's name, e.g. issue-24-safety-net")
+    p.add_argument("notes", help='the notes file, or "-" for stdin')
+    p.add_argument("--test", help="the test it recorded (none: the test is null)")
+    p.add_argument("--kept", default=KEPT_DIR,
+                   help="the folder the recording is kept in (default: %(default)s)")
+    p.set_defaults(run=cmd_add_notes)
 
     args = parser.parse_args()
     sys.exit(args.run(args))

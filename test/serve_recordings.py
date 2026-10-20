@@ -203,7 +203,8 @@ def whole_number(value, least):
 def read_notes_file(path):
     """The notes file at `path`, checked, as a dict (a video's "record")
     with every field of the format (None where the file has null) plus
-    "recorded", recorded_at in seconds since 1970. Its "notes" are the
+    "recorded", recorded_at in seconds since 1970, and "notes_added",
+    notes_added_at in seconds (None when not set). Its "notes" are the
     three notes themselves. None when there is no such file. Raises
     NotesUnreadable when the file is there but can't be used."""
     try:
@@ -245,6 +246,10 @@ def read_notes_file(path):
         for key, _ in NOTE_SECTIONS:
             if not isinstance(record["notes"].get(key), str):
                 raise NotesUnreadable
+    # Set only by `recording_notes.py add-notes`, for a recording kept
+    # before notes existed (see NOTES).
+    added = data.get("notes_added_at")
+    record["notes_added"] = None if added is None else parse_time(added)
     return record
 
 
@@ -399,7 +404,9 @@ def source_text(record):
 def facts(video, page_link):
     """A card's facts line, as HTML: when it was recorded, and, from its
     notes file, the test, where it was run from and the result; then its
-    size, its file name and (on the main page) a link to its own page."""
+    size, its file name and (on the main page) a link to its own page.
+    Notes added to an old recording say when they were added instead of
+    a result: nobody knows how that run ended."""
     items = [f"Recorded {format_time(video.recorded)}"]
     record = video.record
     if record is not None:
@@ -408,7 +415,10 @@ def facts(video, page_link):
         source = source_text(record)
         if source:
             items.append(esc(source))
-        items.append(esc(result_text(record["result"])))
+        if record["notes_added"] is not None:
+            items.append(f"notes added {format_time(record['notes_added'])}")
+        else:
+            items.append(esc(result_text(record["result"])))
     items.append(format_size(video.size))
     items.append(f'<span class="file">{esc(video.filename)}</span>')
     if page_link:
