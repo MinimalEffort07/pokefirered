@@ -12,7 +12,7 @@ How this repo's machinery fits together: autodev, the tests, the recordings, and
 |---|---|---|
 | The game | `src/`, `data/`, `include/`, `Makefile` | The FireRed decompilation plus the fork's features (the generated Mt. Moon, the walking Pokémon, multiplayer and the rest; see `README.md`). `make firered` builds `pokefirered.gba`: `Makefile` and `config.mk` drive it, it compiles the host tools in `tools/` first, and the old compiler, agbcc, sits in `tools/agbcc` (linked into each worktree). |
 | The tests | `test/` | Lua scripts drive a patched mGBA emulator: they press buttons, read game memory and assert. `test/run_suite.sh` must pass before anything merges. |
-| The recordings | `test/record_test.sh`, `test/tools/captioned_gif.py`, `gifs/` | `test/record_test.sh` films a test to video so you can watch what a PR changed. `test/lib/frame_capture.lua` and `test/tools/captioned_gif.py` turn a demo's frames into the README's GIFs. |
+| The recordings | `test/record_test.sh`, `test/tools/captioned_gif.py`, `gifs/` | `test/record_test.sh` films a test to video so you can watch what a PR changed, encoded small enough to stream to a phone. `test/lib/frame_capture.lua` and `test/tools/captioned_gif.py` turn a demo's frames into the README's GIFs. |
 | Autodev | `automation/` | A small Python dispatcher plus headless Claude sessions. Together they run CLAUDE.md's GitHub Issue Workflow from issue to merged PR. |
 
 ## The loop
@@ -128,7 +128,7 @@ flowchart LR
   ROM["pokefirered.gba<br/>make firered"]
   ROM --> RT["run_test.sh<br/>one test"] --> HL["mgba-headless<br/>patched mGBA runs the .lua"] --> OUT["/tmp/mgba-test.XXXXXX<br/>results JSON, screenshots"] --> EX["exit 0 / 1 / 124<br/>pass / fail / timed out"]
   ROM --> RS["run_suite.sh<br/>the gate before every merge"] --> X4["run_test.sh, 4 at a time<br/>1500 s limit each"] --> SUM["summary<br/>exit 0 only if every test passed"]
-  ROM --> RC["record_test.sh<br/>film one test"] --> QT["mgba-qt on Xvfb :1<br/>ffmpeg records the screen"] --> MP4["/tmp/mgba-recordings<br/>then ~/recordings"] --> SRV["port 8080<br/>linked from the PR"]
+  ROM --> RC["record_test.sh<br/>film one test"] --> QT["mgba-qt on Xvfb :1<br/>ffmpeg captures the screen fast"] --> ENC["encode_recording.sh<br/>5 to 8 times smaller"] --> MP4["/tmp/mgba-recordings<br/>then ~/recordings"] --> SRV["port 8080<br/>linked from the PR"]
   ROM --> DM["a demo test<br/>run with MGBA_FRAME_DIR"] --> FC["frame_capture.lua<br/>PNG frames + captions"] --> CG["captioned_gif.py<br/>2x scale, caption bar"] --> GIF["gifs/<br/>shown in the README"]
 ```
 
@@ -137,6 +137,7 @@ All four paths start from the same ROM. The top two prove the change and need no
 - **A test passes only by proving something.** Zero assertions counts as a fail. Demos and probes say so with `fw.allow_no_assertions`, and the suite skips them: `test/suite_exclude.txt` lists each skipped test with its reason.
 - **Each run gets its own folder** (`/tmp/mgba-test.XXXXXX`), so several worktrees can test at the same time. The suite deletes the folders of passing runs and keeps failures with their `run_test.log`.
 - **Recordings take turns.** `test/record_test.sh` films the whole virtual display, so it holds a machine-wide lock (`/tmp/autodev-record.lock`) and a second recording waits.
+- **Recordings are small enough to stream.** The live capture is fast but big (about 3 Mbps). Once it ends and the lock is released, `test/tools/encode_recording.sh` encodes it again, slowly and well, into `/tmp/mgba-recordings`: about 0.4 Mbps, with the scripting log as readable as before. If that encode fails, the capture is kept as the video.
 - **The tests need the patched mGBA** in `~/projects/minimaleffort/mgba/build` (a screenshot fix and a fast-forward scripting API). Stock mGBA won't do.
 - **Autodev has its own unit tests** in `automation/tests/`, run with `cd automation && python3 -m unittest`. About half of them pin down the rules in `automation/autodev/decide.py`.
 
@@ -174,7 +175,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/run_test.sh` | Runs one Lua test in headless mGBA. Exit 0 pass, 1 fail, 124 timed out. |
 | `test/run_suite.sh` | Runs every top-level test, 4 at a time, in about 10 minutes. Must pass before a merge. |
 | `test/suite_exclude.txt` | The tests the suite skips, each with a one-line reason. The suite refuses to start on a line without one. |
-| `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. |
+| `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. It captures fast, then encodes the video small enough to stream with `test/tools/encode_recording.sh`, after it has let the next recording start. |
 | `test/serve_recordings.py` | A web page of the recordings on port 8080, run by `autodev-recordings.service`. |
 | `test/mgba-qt.sh` | Opens the patched mGBA window by hand. |
 | `test/lib/framework.lua` | The test framework: press buttons, wait frames, assert, write results. Every test loads it. |
@@ -195,6 +196,8 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/tests/` | The tests and demos. `test/tests/mt_moon_checks/` holds the Mt. Moon property checks. `suite_fixtures/` and `framework_fixtures/` hold the small scripts that `test/tests/test_run_suite.lua` and `test/tests/test_framework_rules.lua` run to check the runners. |
 | `test/demos/` | A demo kept outside the suite. |
 | `test/tools/captioned_gif.py` | Turns a demo's captured frames into a captioned README GIF. |
+| `test/tools/encode_recording.sh` | Encodes one recording small enough to stream: H.264 High, CRF 28, peaks capped at 1 Mbps. The settings live only here, each explained. `test/record_test.sh` and `test/tools/shrink_recordings.sh` use it. |
+| `test/tools/shrink_recordings.sh` | Shrinks the videos already kept (`~/recordings` by default) the same way, keeping their names and times, and moves each original into `originals/` there. Safe to run again: it only touches videos not shrunk yet. |
 | `test/tools/render_cave.py` | Draws a map, vanilla or a dumped generated cave, to PNG. |
 | `test/tools/dump_mtmoon_grid.lua` | Dumps generated Mt. Moon caves by seed for `test/tools/render_cave.py`. |
 | `test/tools/create_route14_battle_fixture.lua` | Saves a state inside the Route 14 double battle, for checking the colours by hand. |
@@ -227,6 +230,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `~/.config/autodev/env` | The bot's token. Mode 600, never committed. |
 | `/tmp/mgba-test.*`, `/tmp/mgba-recordings/` | Per-run test folders and fresh videos. Cleared on reboot. |
 | `~/recordings/` | Videos kept for good. |
+| `~/recordings/originals/` | The full-size originals of the videos `test/tools/shrink_recordings.sh` shrank. The recordings page doesn't list them. Put one back with `mv`, or delete the folder once you're happy. |
 
 ## Check on it
 

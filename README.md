@@ -77,6 +77,21 @@ bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA
 
 **Recordings don't use the machine's sound.** `record_test.sh` gives mGBA SDL's dummy audio output (`SDL_AUDIODRIVER=dummy`), so a hung or missing audio server can't stop the game before its first frame. The videos have no sound track anyway.
 
+**Recordings are small enough to stream over Tailscale.** `record_test.sh` captures the screen live with fast settings that keep up with it but make big files, about 3 Mbps. Once the test ends and the next recording may start, `test/tools/encode_recording.sh` encodes the capture again, slowly and well, at low CPU priority:
+
+- H.264 High profile, CRF 28, peaks capped at 1 Mbps, the same 1280×618 at 30 fps, with the index at the front so playback starts at once. The script explains each setting.
+- The result is 5 to 8 times smaller, and the scripting window's log reads the same. #99's 104-second recording went from 39.9 MB to 4.9 MB (0.38 Mbps on average, 1.07 Mbps in its busiest second). The encode takes about 6 to 11 seconds per 100 seconds of video.
+- The script's last lines say what it did, e.g. `captured 39.9 MB, kept 4.9 MB (0.38 Mbps)`. If the encode fails, the capture is kept as the video, and the script says so: no recording is lost.
+
+**Shrinking videos kept before this.** `bash test/tools/shrink_recordings.sh [FOLDER]` (default `~/recordings`) encodes each `.mp4` directly in the folder that isn't H.264 High profile yet, with the same settings:
+
+- Each video keeps its name and modification time, so the recordings page's order doesn't change.
+- Each original moves into `originals/` in that folder, unchanged; the page doesn't list it. Put one back with `mv ~/recordings/originals/NAME ~/recordings/`, or delete them all with `rm -r ~/recordings/originals` once you're happy.
+- A video it can't encode is left as it is, with a message. A second run changes nothing.
+- Run it again after merging a branch made before #108: those branches still record the old way.
+
+`test/tests/test_recording_size.lua` checks both scripts on synthetic captures made like the real one: the encode's profile, picture size, frame rate, index position and file size, a broken input, and the shrink tool's names, times, originals and second run.
+
 **The whole suite.** `test/run_suite.sh` is the check a change must pass before it is merged:
 
 - It runs every top-level `test/tests/*.lua` file through `run_test.sh`, 4 at a time, each with a time limit of 1500 seconds (`MGBA_TEST_TIMEOUT=1500`), and leaves out the tests listed in `test/suite_exclude.txt`. The whole run takes about 10 minutes.
