@@ -8,7 +8,9 @@ Autodev runs this repo's GitHub Issue Workflow (CLAUDE.md steps 1–13) on its o
 
 1. **On the next tick** (at most 2 minutes), the dispatcher sees your issue on the board with no Status (or `Todo`). An issue with no `## Parent` heading is a **parent**:
    - It starts a grill session for it and moves the card to `Grilling`.
-   - At most 2 sessions run at once, of any kind; the rest wait their turn. Merges go first, then fix-ups, then tickets, then parents: finishing work beats starting more. Among tickets, the oldest parent's go first, then the lowest number; among parents, the oldest issue first.
+   - At most 2 sessions run at once, of any kind; the rest wait their turn. Merges go first, then fix-ups, then tickets, then parents: finishing work beats starting more.
+   - Within merges, within fix-ups and within tickets, the parent grilled first goes first, then the lowest ticket number, so one feature's tickets finish before a later feature's start. Which parent was grilled first is judged by its first ticket's number, not its own: issue numbers only go up, so an old issue you add to the board late lines up behind the features already in flight. Only tickets written by you or the bot count.
+   - That is a priority, not a limit: a later feature's tickets start whenever the earlier ones have none ready (blocked, running, or in review waiting for you). Running sessions are never stopped. Among parents, the oldest issue goes first, and a parent is grilled whenever a slot is free and nothing above wants it.
    - An issue written by anyone but you is never handed to a session. It goes to `Needs human`, and the bot comments: "Autodev only runs issues written by @MinimalEffort07; restate it as your own issue to run it."
 2. **The grill session** follows CLAUDE.md's "Autonomous mode" for the grill role:
    - It grills the issue by itself, taking every recommended answer, and posts the design comment. That comment has a "Least-confident defaults" list and every round in a collapsed `<details>` block.
@@ -22,7 +24,7 @@ Autodev runs this repo's GitHub Issue Workflow (CLAUDE.md steps 1–13) on its o
 
 An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions write them, as the bot; you can write one too. A ticket written by anyone else goes to `Needs human`, like a parent.
 
-1. **It waits for its blockers.** On every tick, a ticket in `Todo` with an open issue under its `## Blocked by` heading moves to `Blocked`. Once all of them are closed, it moves back to `Todo`. A closed issue counts as done whether a PR closed it or you did, so closing a ticket is how you skip it.
+1. **It waits for its blockers.** On every tick, a ticket in `Todo` with an open issue under its `## Blocked by` heading moves to `Blocked`. Once all of them are closed, it moves back to `Todo`. On that tick it also holds a free slot, so a later feature's ticket or a grill can't take the slot first, and it starts on the next tick; a ticket whose parent is `Paused`, still being grilled, or waiting to be grilled again holds nothing. A closed issue counts as done whether a PR closed it or you did, so closing a ticket is how you skip it.
 2. **A ticket in `Todo` with nothing open blocking it** gets its own worktree, `~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-<T>`, beside the clone. The worktree is on a new branch, `issue-<T>-<slug>`, cut from master, with `tools/agbcc` linked. The slug is the title's first five words, or fewer if five would go over 40 characters. If the folder is gone but the branch is still there, the worktree is made again on that branch. A ticket session starts in it, and the card moves to `In progress`.
 3. **The ticket session** follows CLAUDE.md's "Autonomous mode" for the ticket role, steps 7–11:
    - TDD, a clean build and `bash test/run_suite.sh`

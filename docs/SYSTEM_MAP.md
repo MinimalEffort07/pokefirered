@@ -109,7 +109,7 @@ A parent you write is grilled into tickets. Each ticket waits for its blockers, 
 | fix-up | Your newest unhandled PR comment is anything but `/merge` | Handles all your unhandled comments at once, runs the tests again, pushes, and replies on the PR saying what it did about each one. | the ticket's worktree | 90 min, xhigh |
 | merge | Your newest unhandled PR comment is exactly `/merge` | Merges master in, builds, runs the unit tests and the suite on that tree, then merges with a merge commit. On a conflict it resolves it, explains on the PR, and waits for a fresh `/merge`. | the ticket's worktree | 45 min, xhigh |
 
-At most 2 sessions run at once, all on Opus (`automation/config.json`). When more are waiting, merges go first, then fix-ups, then tickets, then new issues, so finishing work beats starting more. Time limits and effort levels are set in `automation/autodev/sessions.py`.
+At most 2 sessions run at once, all on Opus (`automation/config.json`). When more are waiting, merges go first, then fix-ups, then tickets, then new issues, so finishing work beats starting more. Within merges, fix-ups and tickets, the feature grilled first goes first, so its tickets finish before a later feature's start. A new issue is still grilled whenever a slot is free and nothing above wants it. Time limits and effort levels are set in `automation/autodev/sessions.py`.
 
 ## Guardrails
 
