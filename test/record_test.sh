@@ -156,7 +156,19 @@ FFMPEG_PID=$!
 # WAYLAND_DISPLAY (e.g. wayland-0), and Qt prefers Wayland when it is set, so
 # without this the mGBA window opens on the WSLg desktop instead of Xvfb's
 # DISPLAY=:1 and ffmpeg's x11grab records a black screen.
-DISPLAY=:1 QT_QPA_PLATFORM=xcb XDG_CONFIG_HOME="$RECORDING_XDG" LD_LIBRARY_PATH="$MGBA_BUILD" \
+#
+# SDL_AUDIODRIVER=dummy gives mGBA SDL's fake sound output, which plays
+# nothing and never contacts the host's audio server (PipeWire, PulseAudio,
+# ALSA). mGBA paces the game by its sound: each frame it hands over a
+# frame's worth of audio and waits until the output has used it up. When
+# no real output opens (on 2026-10-20 WSLg's PulseAudio was hung), this
+# mgba-qt build never starts its own fallback output, nothing uses up the
+# audio, and the game stops before frame 1: the recording shows a blank
+# window until the timeout. SDL's dummy output uses audio at real playback
+# speed, so the game still runs at 60 fps (and faster under the tests'
+# fast-forward, which turns the waiting off). The video loses nothing:
+# ffmpeg records only the screen.
+DISPLAY=:1 QT_QPA_PLATFORM=xcb SDL_AUDIODRIVER=dummy XDG_CONFIG_HOME="$RECORDING_XDG" LD_LIBRARY_PATH="$MGBA_BUILD" \
     "$MGBA_BUILD/qt/mgba-qt" "${SAVE_OPTIONS[@]}" "$ROM" --script "$TEST_SCRIPT" \
     > "$RUN_DIR/mgba-gui.log" 2>&1 9>&- &
 MGBA_PID=$!

@@ -73,6 +73,8 @@ bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA
 
 **Recordings run one at a time.** `record_test.sh` films the whole virtual display and closes any other mGBA window, so it takes a machine-wide lock (`/tmp/autodev-record.lock`) first. A second recording started meanwhile, from any worktree, prints "Waiting for another recording to finish…" and starts once the first is done. `run_test.sh` and `run_suite.sh` don't need the display, so they run alongside a recording.
 
+**Recordings don't use the machine's sound.** `record_test.sh` gives mGBA SDL's dummy audio output (`SDL_AUDIODRIVER=dummy`), so a hung or missing audio server can't stop the game before its first frame. The videos have no sound track anyway.
+
 **The whole suite.** `test/run_suite.sh` is the check a change must pass before it is merged:
 
 - It runs every top-level `test/tests/*.lua` file through `run_test.sh`, 4 at a time, each with a time limit of 1500 seconds (`MGBA_TEST_TIMEOUT=1500`), and leaves out the tests listed in `test/suite_exclude.txt`. The whole run takes about 10 minutes.
