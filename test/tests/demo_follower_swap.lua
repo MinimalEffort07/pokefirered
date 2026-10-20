@@ -1,10 +1,11 @@
 -------------------------------------------------------------------------------
 -- demo_follower_swap.lua: the README's swap demo (gifs/FollowerSwap.gif),
--- issue #99
+-- issues #99 and #100
 -------------------------------------------------------------------------------
 --
--- Walking into the walking Pokemon swaps places with it, in three beats,
--- each with a caption (map coordinates as in data/maps/<Map>/map.json):
+-- Walking into the walking Pokemon swaps places with it, and landing on its
+-- tile makes it step aside, in five beats, each with a caption (map
+-- coordinates as in data/maps/<Map>/map.json):
 --   1. "Pikachu waits in the cave mouth when you come out": the player walks
 --      down out of Diglett's Cave (north entrance) onto Route 2. The game
 --      steps them out of the cave mouth (17,11) onto (17,12); Pikachu
@@ -15,12 +16,24 @@
 --      arrives at (8,14) facing south with Pikachu behind them on (8,13),
 --      and runs north (B+UP) through it: they swap at running speed and the
 --      player runs on up the path, Pikachu following.
--- Between beats 2 and 3 the video cuts (the test's warp to Viridian City
--- isn't filmed).
+--   4. "Jump down onto it and it hops aside": Viridian City, the player on
+--      (28,29) above the ledge (28,30), Pikachu on its landing tile (28,31).
+--      The player jumps down; Pikachu steps aside onto (29,31), the
+--      player's left, as the jump starts.
+--   5. "Come ashore where it waits and it steps aside": the Viridian pond.
+--      The player surfs off the east shore (17,28) and out to (15,28), two
+--      tiles out; Pikachu walks to the shore tile (17,28) and waits there. The
+--      player surfs back east and comes ashore onto (17,28); Pikachu steps
+--      aside onto (17,27), the player's left, as the hop starts.
+-- The video cuts before beats 3, 4 and 5: the test's warps aren't filmed,
+-- nor is the setup of beats 4 and 5 (putting Pikachu on the landing tile,
+-- the SURF prompt).
 --
 -- Every step is a real D-pad press. Pikachu is level 100 and a Repel is
 -- running, so no wild battle starts; on Route 2 the roaming Pokemon are
--- moved away.
+-- moved away. Pikachu is put on the ledge's landing tile for beat 4
+-- (follower.place): it always follows the player, so it can't be left
+-- below a ledge while the player stands above it.
 --
 -- PASS (the demo is a test too, so the GIF's story is checked, not just
 -- watched):
@@ -34,7 +47,14 @@
 --     way) with both 16-frame steps ending on the same frame, and the map
 --     becomes Diglett's Cave north entrance within 180 frames;
 --   * beat 3: they swap at running speed (8 frames each) and the player
---     reaches (8,9) within 90 frames, with Pikachu behind them.
+--     reaches (8,9) within 90 frames, with Pikachu behind them;
+--   * beat 4: Pikachu's tile changes no later than the jump's first frame
+--     (the frame the player's tile becomes the ledge (28,30)) and ends on
+--     (29,31); the player lands on (28,31);
+--   * beat 5: Pikachu waits on (17,28) before the player turns back; its
+--     tile changes no later than the hop's first frame (the frame the
+--     player's tile becomes (17,28)) and ends on (17,27); the player is on
+--     (17,28) on foot within 90 frames of turning back.
 --
 -- RECORD THE GIF (frame dumps, see test/lib/frame_capture.lua: every 2nd
 -- frame of the 60 fps game, so real time at 30 fps), then burn the captions
@@ -80,6 +100,20 @@ local function check_swap(what, s, frames)
     fw.assert_true(fl == frames and pl == frames and s.follower_end == s.player_end,
         string.format("%s: both steps last %d frames and end together (Pikachu %s, player %s)",
             what, frames, tostring(fl), tostring(pl)))
+end
+
+-- Assert that Pikachu made way in `watch`: counting from frame `from` (0 if
+-- nil), its tile first changed no later than frame `takeoff` (the first
+-- frame of the player's jump or hop), and it stands on (ex, ey) now.
+local function check_made_way(what, watch, takeoff, ex, ey, from)
+    local moved = follower.first_move(watch, from)
+    fw.assert_true(moved ~= nil and takeoff ~= nil and moved <= takeoff, string.format(
+        "%s: Pikachu steps aside no later than the player takes off (frame %s, take-off %s)",
+        what, tostring(moved), tostring(takeoff)))
+    local f = follower.read()
+    fw.assert_true(f ~= nil and f.x == ex and f.y == ey, string.format(
+        "%s: Pikachu ends on (%d,%d), the player's left (Pikachu on (%s,%s))",
+        what, ex, ey, tostring(f and f.x), tostring(f and f.y)))
 end
 
 -- End the demo early after a failed beat.
@@ -189,6 +223,83 @@ fw.run(function()
     fw.assert_true(f4 ~= nil and f4.x == 8 and py ~= nil and f4.y > py, string.format(
         "beat 3: Pikachu follows behind the player (Pikachu on (%s,%s), the player on (%s,%s))",
         tostring(f4 and f4.x), tostring(f4 and f4.y), tostring(px), tostring(py)))
+
+    -- 4. Viridian City's ledge (28,30): the warp and putting Pikachu on the
+    -- landing tile aren't filmed.
+    capture.pause()
+    if not (fw.assert_true(follower.warp(VIRIDIAN[1], VIRIDIAN[2], 28, 29),
+                "warped to Viridian City (28,29), above the ledge")
+            and fw.assert_true(follower.wait_still(300), "standing still above the ledge")) then
+        return stop()
+    end
+    follower.place(28, 31)
+    follower.set_rng(SEED)
+    watch = follower.new_watch("demo ledge")
+    capture.caption("Jump down onto it and it hops aside")
+    capture.resume()
+    watch.run(40)
+    emu:addKey(fw.KEY.DOWN)
+    local jump = watch.run(30, function(n)
+        local t = watch.player_tiles[n]
+        return t.x == 28 and t.y == 30
+    end)
+    emu:clearKey(fw.KEY.DOWN)
+    local landed = jump and watch.run(90, function() return follower.player_still_on(28, 31) end)
+    watch.run(50)
+    watch.finish()
+    fw.assert_true(landed ~= nil and follower.player_still_on(28, 31), "beat 4: the player jumps the ledge and lands on (28,31)")
+    check_made_way("beat 4", watch, jump, 29, 31)
+
+    -- 5. The Viridian pond. The warp and the SURF prompt aren't filmed.
+    capture.pause()
+    follower.give_surf()
+    if not (fw.assert_true(follower.warp(VIRIDIAN[1], VIRIDIAN[2], 17, 28),
+                "warped to the pond's east shore (17,28)")
+            and fw.assert_true(follower.wait_still(300), "standing still on the shore")) then
+        return stop()
+    end
+    follower.set_rng(SEED)
+    follower.face("LEFT")
+    if not fw.assert_true(follower.use_surf(16, 28), "beat 5: the player surfs onto the pond at (16,28)") then
+        return stop()
+    end
+    fw.wait_frames(20)
+    watch = follower.new_watch("demo pond")
+    watch.attach()   -- checks every frame while the helpers below press keys
+    capture.caption("Come ashore where it waits and it steps aside")
+    capture.resume()
+    fw.wait_frames(20)
+    -- One tile out: Pikachu walks to the shore tile (17,28) and waits.
+    local out = fw.hold_until("LEFT", function()
+        local x, y = follower.player()
+        return x == 15 and y == 28
+    end, 60, 1)
+    local waiting = out and fw.wait_until(function()
+        local f = follower.read()
+        return f ~= nil and not f.held and f.x == 17 and f.y == 28 and walk.ready()
+    end, 300, "Pikachu waiting on the shore (17,28)")
+    watch.detach()
+    if not fw.assert_true(waiting, "beat 5: the player surfs onto (15,28); Pikachu waits on the shore (17,28)") then
+        watch.finish()
+        return stop()
+    end
+    watch.run(30)
+    -- Back east and ashore onto (17,28).
+    local start5 = watch.frame_no
+    emu:addKey(fw.KEY.RIGHT)
+    local hop = nil
+    local ashore = watch.run(90, function(n)
+        local t = watch.player_tiles[n]
+        if hop == nil and t.x == 17 and t.y == 28 then hop = n end
+        return not follower.is_surfing() and follower.player_still_on(17, 28)
+    end)
+    emu:clearKey(fw.KEY.RIGHT)
+    watch.run(60)
+    watch.finish()
+    fw.assert_true(ashore ~= nil, string.format(
+        "beat 5: the player is on (17,28) on foot within 90 frames of turning back%s",
+        ashore and (" (" .. (ashore - start5) .. " frames)") or ""))
+    check_made_way("beat 5", watch, hop, 17, 27, start5)
 
     capture.stop()
     fw.finish()

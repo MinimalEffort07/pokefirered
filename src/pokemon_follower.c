@@ -59,6 +59,35 @@
  *   - No Random() call, so the random sequence tests and Mt. Moon's seed
  *     rolls depend on is untouched.
  *
+ * MAKING WAY (issue #100):
+ * Two moves land the player on a tile without walking onto it, so they
+ * can't be swaps: the follower can't go where the player came from.
+ *   - Jumping down a ledge: the follower can't jump back up it. Without
+ *     making way the player would land on its tile and share it.
+ *   - Coming ashore from SURF: the follower never goes on water. While the
+ *     player surfs it waits on the shore, often on the very tile they left,
+ *     and the game refuses to land the player on an object, so without
+ *     making way they could never come back to that spot (on a one-tile dock
+ *     there is no other landing).
+ * In both, a follower standing still on the landing tile steps off it as
+ * the player takes off: to the first free tile of the player's left, the
+ * player's right, and straight on (away from the player); never back toward
+ * the ledge or the water. "Free" is IsFollowerWalkableTile, the rule every
+ * follower step follows. It walks fast (8 frames a tile, its catch-up
+ * speed), so it has left long before the player arrives.
+ *   - The player's code asks GetFollowerMakeWayDirection where it would go,
+ *     then calls StartFollowerMakeWayStep on the frame the player's jump or
+ *     hop starts: PlayerJumpLedge (every ledge jump: on foot, on the bicycle,
+ *     forced) and CanStopSurfing (the check that starts the player's own
+ *     hop off the water, when they surf, or a sea current carries them,
+ *     into the shore), both in field_player_avatar.c. The two hops the game
+ *     starts by itself without that check, a scripted landing in Seafoam
+ *     Islands and the Quest Log's replay, don't make way.
+ *   - A follower in the middle of a step, or with no free tile, stays put:
+ *     the ledge jump goes ahead and they share the tile as before, and the
+ *     landing from the water is refused as before.
+ *   - No Random() call, as with swapping.
+ *
  * LIFECYCLE:
  * - ActivateFollower(): Called from party menu "WALK" option. Stores
  *   the chosen Pokemon's identity (PID + OTID, see IsFollowerPokemon) so
@@ -1109,6 +1138,21 @@ static u8 GetCollisionWithout(struct ObjectEvent *ignored, struct ObjectEvent *m
 }
 
 /**
+ * Is the follower standing still on tile (x, y)? Its current tile is (x, y),
+ * its previous tile is too (a step moves the current tile as it starts and
+ * the previous one when it ends), and no movement of its own is under way.
+ * A held movement that has finished but not been cleared yet counts as
+ * standing still.
+ */
+static bool8 IsFollowerStandingStillOn(struct ObjectEvent *followerObj, s16 x, s16 y)
+{
+    return followerObj->currentCoords.x == x && followerObj->currentCoords.y == y
+        && followerObj->previousCoords.x == x && followerObj->previousCoords.y == y
+        && !followerObj->singleMovementActive
+        && !(followerObj->heldMovementActive && !followerObj->heldMovementFinished);
+}
+
+/**
  * FUNCTION: CanPlayerSwapWithFollower
  *
  * PURPOSE: Decide whether the player's step in `direction`, which their step
@@ -1149,10 +1193,7 @@ bool8 CanPlayerSwapWithFollower(u8 direction)
         return FALSE;
 
     MoveCoords(direction, &x, &y);
-    if (followerObj->currentCoords.x != x || followerObj->currentCoords.y != y
-     || followerObj->previousCoords.x != x || followerObj->previousCoords.y != y
-     || followerObj->singleMovementActive
-     || (followerObj->heldMovementActive && !followerObj->heldMovementFinished))
+    if (!IsFollowerStandingStillOn(followerObj, x, y))
         return FALSE;
 
     if (GetCollisionWithout(followerObj, playerObj, x, y, direction) != COLLISION_NONE)
@@ -1215,4 +1256,86 @@ void StartFollowerSwapStep(u8 direction)
 
     ObjectEventClearHeldMovementIfFinished(followerObj);
     ObjectEventSetHeldMovement(followerObj, action);
+}
+
+/*
+ * ============================================================================
+ * MAKING WAY (issue #100): see the top of this file
+ * ============================================================================
+ */
+
+/**
+ * FUNCTION: GetFollowerMakeWayDirection
+ *
+ * PURPOSE: The player is about to land on tile (x, y), moving in `direction`
+ *          (the landing tile of a ledge jump, or the shore tile of a hop off
+ *          the water). If the follower stands still on that tile, find the
+ *          way it steps off it to make room. Returns that direction, or
+ *          DIR_NONE when the follower isn't standing still there or no tile
+ *          is free; then nothing should change.
+ *
+ * (x, y) are object coordinates (map coordinates plus MAP_OFFSET).
+ *
+ * Candidates, in this order: the player's left, the player's right (seen
+ * from someone moving in `direction`), then straight on, one tile further in
+ * `direction`. Never back toward the player: that is the ledge or the water.
+ * Left comes before straight on so that the follower ends up beside the
+ * player, not in front of them. The first candidate that passes
+ * IsFollowerWalkableTile wins: not solid, no warp, not water, nobody on it.
+ * The player can't be on a candidate: they are two tiles back on the ledge,
+ * or one tile back on the water.
+ *
+ * Only reads; StartFollowerMakeWayStep takes the step. Calls no Random().
+ */
+u8 GetFollowerMakeWayDirection(s16 x, s16 y, u8 direction)
+{
+    struct ObjectEvent *followerObj = GetFollowerObjectEvent();
+    u8 candidates[3];
+    u8 i;
+    s16 stepX, stepY;
+
+    if (followerObj == NULL || !IsFollowerStandingStillOn(followerObj, x, y))
+        return DIR_NONE;
+
+    candidates[0] = GetLeftOfDirection(direction);
+    candidates[1] = GetOppositeDirection(candidates[0]);
+    candidates[2] = direction;
+
+    for (i = 0; i < NELEMS(candidates); i++)
+    {
+        stepX = x;
+        stepY = y;
+        MoveCoords(candidates[i], &stepX, &stepY);
+        if (IsFollowerWalkableTile(followerObj, stepX, stepY, candidates[i]))
+            return candidates[i];
+    }
+    return DIR_NONE;
+}
+
+/**
+ * FUNCTION: StartFollowerMakeWayStep
+ *
+ * PURPOSE: Start the follower's step off the player's landing tile, in
+ *          `stepDirection` (what GetFollowerMakeWayDirection returned).
+ *          Called on the frame the player's jump or hop starts, so the sprite
+ *          callbacks start both later in that same frame.
+ *
+ * A fast walk: 8 frames for the tile, the follower's catch-up speed. Its
+ * ObjectEvent moves to the new tile as the step starts, so from the jump's
+ * or hop's first frame on the landing tile is free.
+ *
+ * As in StartFollowerSwapStep, a previous step that has ended but not been
+ * cleared yet is cleared first: the engine refuses a new held movement while
+ * an old one is still stored. Setting a held movement also unfreezes the
+ * follower (ObjectEventSetHeldMovement): the hop off the water freezes every
+ * object but the player as it starts, and this step must still play.
+ */
+void StartFollowerMakeWayStep(u8 stepDirection)
+{
+    struct ObjectEvent *followerObj = GetFollowerObjectEvent();
+
+    if (followerObj == NULL)
+        return;
+    ObjectEventClearHeldMovementIfFinished(followerObj);
+    ObjectEventSetHeldMovement(followerObj, GetWalkFastMovementAction(stepDirection));
 }
