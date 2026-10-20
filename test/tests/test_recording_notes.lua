@@ -410,6 +410,26 @@ local function check_notes_file()
     ok = fw.assert_eq(f.result, "null", "C3: no results file: result is null") and ok
     if not ok then dump("write, no results", output) end
 
+    -- record_test.sh writes the notes file when the recording starts (the
+    -- branch and commit are the ones recorded, whatever happens to the
+    -- checkout meanwhile) and adds the result once the test has finished,
+    -- with set-result. The rest of the file stays as it was.
+    local before = read_json(video:gsub("%.mp4$", ".json"))
+    code, output = run("python3 " .. sh_quote(NOTES_TOOL) .. " set-result "
+        .. sh_quote(video:gsub("%.mp4$", ".json")) .. " --results " .. sh_quote(passed))
+    f = read_json(video:gsub("%.mp4$", ".json"))
+    ok = fw.assert_eq(code, 0, "C3: set-result exits 0")
+    ok = fw.assert_eq(f.result, '{"fail": 0, "pass": 215}', "C3: set-result adds the result: 215 and 0") and ok
+    for _, key in ipairs({ "video", "recorded_at", "test", "branch", "commit", "uncommitted_changes",
+                           "ticket", "parent", "pr", "notes", "keys" }) do
+        ok = fw.assert_eq(f[key], before[key], "C3: set-result leaves " .. key .. " as it was") and ok
+    end
+    code, output = run("python3 " .. sh_quote(NOTES_TOOL) .. " set-result "
+        .. sh_quote(video:gsub("%.mp4$", ".json")) .. " --results " .. sh_quote(WORK .. "/no_such_results.json"))
+    f = read_json(video:gsub("%.mp4$", ".json"))
+    ok = fw.assert_eq(f.result, "null", "C3: set-result with no results file: result is null") and ok
+    if not ok then dump("set-result", output) end
+
     -- A demo's 0 and 0, and no notes at all: the notes' fields are null.
     video = WORK .. "/demo_0_0.mp4"
     code, output, f = write_notes(video, REPO_TEST, results_file("demo.json", 0, 0))

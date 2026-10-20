@@ -41,9 +41,10 @@
 # name a ticket, the video's name starts with it (issue-90_test_x_...).
 #
 # THE NOTES FILE: every recording, with notes or without, gets <name>.json
-# beside <name>.mp4, written by test/tools/recording_notes.py once the video
-# is in place. It holds the notes and what this script knows itself: when
-# it was recorded, the test, the branch and commit, and the run's result.
+# beside <name>.mp4, written by test/tools/recording_notes.py. It holds the
+# notes and what this script knows itself: when it was recorded, the test,
+# the branch and commit (as the recording starts), and the run's result.
+# It goes beside the video only once the video is in place.
 # The recordings page (test/serve_recordings.py) shows it on the
 # recording's card. The last two lines printed are the command that keeps
 # both files, and the recording's own page:
@@ -218,10 +219,25 @@ mkdir -p "$RECORDINGS_DIR"
 # When the recording starts: the video's name holds it, and its notes file
 # too, with this machine's UTC offset (e.g. 2026-10-20T13:45:54+11:00).
 STARTED="$(date +%s)"
-NAME="$(video_name "$STARTED")"
+VIDEO_NAME="$(video_name "$STARTED")"
 RECORDED_AT="$(date -d "@$STARTED" --iso-8601=seconds)"
-OUTPUT="$RECORDINGS_DIR/$NAME.mp4"
-NOTES_FILE="$RECORDINGS_DIR/$NAME.json"
+OUTPUT="$RECORDINGS_DIR/$VIDEO_NAME.mp4"
+NOTES_FILE="$RECORDINGS_DIR/$VIDEO_NAME.json"
+
+# The notes file (see THE NOTES FILE), written now into the run's own
+# directory, so its branch, commit and uncommitted changes are the
+# checkout's as the recording starts, whatever happens to the checkout
+# while it runs. Step 7 adds the result and moves it beside the video.
+DRAFT_NOTES="$RUN_DIR/$VIDEO_NAME.json"
+NOTES_ARGS=()
+if [ -n "$NOTES" ]; then
+    NOTES_ARGS=(--notes "$RUN_DIR/notes.txt")
+fi
+if ! python3 "$NOTES_TOOL" write "$RUN_DIR/$VIDEO_NAME.mp4" --test "$TEST_SCRIPT" \
+        --recorded-at "$RECORDED_AT" --repo "$PROJECT_DIR" "${NOTES_ARGS[@]}"; then
+    echo "ERROR: the notes file couldn't be written in $RUN_DIR; nothing was recorded"
+    exit 1
+fi
 # The live capture, in the run's own directory until it is encoded into
 # $OUTPUT (see CAPTURE FAST, THEN ENCODE SMALL).
 CAPTURE="$RUN_DIR/capture.mp4"
@@ -392,23 +408,20 @@ if [ ! -f "$OUTPUT" ]; then
 fi
 echo "Recording saved: $OUTPUT"
 
-# Step 7: the notes file beside the video (see THE NOTES FILE), with or
-# without notes. It is written only now that the video is in place, so the
-# recordings page never lists notes without their video.
-NOTES_ARGS=()
-if [ -n "$NOTES" ]; then
-    NOTES_ARGS=(--notes "$RUN_DIR/notes.txt")
-fi
-if ! python3 "$NOTES_TOOL" write "$OUTPUT" --test "$TEST_SCRIPT" \
-        --recorded-at "$RECORDED_AT" --results "$RESULTS_FILE" \
-        --repo "$PROJECT_DIR" "${NOTES_ARGS[@]}"; then
-    echo "ERROR: the notes file couldn't be written; the video is at $OUTPUT"
+# Step 7: the notes file gets the run's result (null when the test didn't
+# finish) and goes beside the video, with or without notes. It moves only
+# now that the video is in place, so the recordings page never lists notes
+# without their video.
+if ! python3 "$NOTES_TOOL" set-result "$DRAFT_NOTES" --results "$RESULTS_FILE" \
+        || ! mv "$DRAFT_NOTES" "$NOTES_FILE"; then
+    echo "ERROR: the notes file couldn't be saved; the video is at $OUTPUT"
     exit 1
 fi
+echo "Notes file saved: $NOTES_FILE"
 
 # The last two lines: the command that keeps both files, and the
 # recording's own page (its name URL-encoded, as the page links it).
-PAGE_NAME="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$NAME")"
+PAGE_NAME="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$VIDEO_NAME")"
 echo ""
 echo "To keep it (both files), and to watch it:"
 echo "mv $(printf '%q' "$OUTPUT") $(printf '%q' "$NOTES_FILE") $KEPT_DIR"

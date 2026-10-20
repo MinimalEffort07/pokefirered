@@ -16,8 +16,19 @@ record_test.sh:
       Print the ticket number NOTES names (nothing when it names none).
       Exits 1, printing the problems, when the notes are refused.
   python3 test/tools/recording_notes.py write VIDEO --test TEST
-          --recorded-at TIME --results RESULTS [--notes NOTES] [--repo DIR]
-      Write VIDEO's notes file: VIDEO with .mp4 replaced by .json.
+          --recorded-at TIME [--results RESULTS] [--notes NOTES] [--repo DIR]
+      Write VIDEO's notes file: VIDEO with .mp4 replaced by .json. VIDEO
+      itself needn't exist yet.
+  python3 test/tools/recording_notes.py set-result NOTES_FILE --results RESULTS
+      Put the result from RESULTS into notes file NOTES_FILE, leaving the
+      rest as it was.
+
+record_test.sh writes the notes file into its run's own directory as the
+recording starts, so the branch, commit and uncommitted changes are those
+of the checkout it recorded, even if the checkout changes while the
+recording waits for its turn or runs. Once the test has finished it adds
+the result with set-result, and once the video is in place it moves the
+notes file beside it.
 
 THE NOTES, as a person writes them (the ticket and the PR are examples):
 
@@ -321,6 +332,22 @@ def notes_file_path(video):
     return video[:-len(".mp4")] + ".json"
 
 
+def save(record, path):
+    """Write notes file `path`. It is written beside its final place under
+    a hidden name, then renamed into place in one step, so the recordings
+    page never reads half a file. Returns an exit code."""
+    part = os.path.join(os.path.dirname(path), "." + os.path.basename(path) + ".part")
+    try:
+        with open(part, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(part, path)
+    except OSError as e:
+        print(f"can't write {path}: {e.strerror}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_write(args):
     if not args.video.endswith(".mp4"):
         print(f"not a video (.mp4): {args.video}", file=sys.stderr)
@@ -339,26 +366,27 @@ def cmd_write(args):
         "branch": git(args.repo, "symbolic-ref", "--short", "-q", "HEAD"),
         "commit": git(args.repo, "rev-parse", "--short=9", "HEAD"),
         "uncommitted_changes": None if status is None else status != "",
-        "result": read_result(args.results),
+        "result": read_result(args.results) if args.results else None,
         "ticket": fields["ticket"],
         "parent": fields["parent"],
         "pr": fields["pr"],
         "notes": fields["notes"],
     }
-    # Written beside the video under a hidden name, then renamed into place
-    # in one step, so the recordings page never reads half a file.
-    path = notes_file_path(args.video)
-    part = os.path.join(os.path.dirname(path), "." + os.path.basename(path) + ".part")
+    return save(record, notes_file_path(args.video))
+
+
+def cmd_set_result(args):
     try:
-        with open(part, "w", encoding="utf-8") as f:
-            json.dump(record, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        os.replace(part, path)
-    except OSError as e:
-        print(f"can't write {path}: {e.strerror}", file=sys.stderr)
+        with open(args.notes_file, encoding="utf-8") as f:
+            record = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"can't read notes file {args.notes_file}: {e}", file=sys.stderr)
         return 1
-    print(f"Notes file saved: {path}")
-    return 0
+    if not isinstance(record, dict):
+        print(f"not a notes file: {args.notes_file}", file=sys.stderr)
+        return 1
+    record["result"] = read_result(args.results)
+    return save(record, args.notes_file)
 
 
 def main():
@@ -381,13 +409,20 @@ def main():
     p.add_argument("--test", required=True, help="the test file recorded")
     p.add_argument("--recorded-at", required=True, metavar="TIME",
                    help="when the recording started, e.g. 2026-10-20T13:45:54+11:00")
-    p.add_argument("--results", required=True,
-                   help="the run's results file (it may not exist)")
+    p.add_argument("--results",
+                   help="the run's results file (it may not exist; none: "
+                        "the result is null)")
     p.add_argument("--notes", help="the notes, already checked (none: no notes)")
     p.add_argument("--repo", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."),
                    help="the git checkout for the branch and commit "
                         "(default: the one holding this script)")
     p.set_defaults(run=cmd_write)
+
+    p = commands.add_parser("set-result", help="put the run's result into a notes file")
+    p.add_argument("notes_file", help="the notes file, VIDEO.json")
+    p.add_argument("--results", required=True,
+                   help="the run's results file (it may not exist: the result is null)")
+    p.set_defaults(run=cmd_set_result)
 
     args = parser.parse_args()
     sys.exit(args.run(args))
