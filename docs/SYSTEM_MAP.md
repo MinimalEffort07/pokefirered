@@ -99,6 +99,7 @@ A parent you write is grilled into tickets. Each ticket waits for its blockers, 
 - **Usage limit.** When a session hits the Claude usage limit, no session of any kind starts until 5 minutes after the reset, and the interrupted work is queued again.
 - **Crashes.** The first crash re-queues the work. A second crash in a row for the same role and issue parks it in `Needs human`.
 - **Closing a ticket yourself** counts as done: its worktree is removed and the tickets it blocked move on.
+- **Closed cards leave the board.** The board's "Auto-archive items" workflow archives a card within seconds of its issue closing. Autodev counts a parent's tickets from its sub-issues on GitHub, so the parent still closes once they all have.
 
 ## Session roles
 

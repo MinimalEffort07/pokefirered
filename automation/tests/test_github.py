@@ -72,6 +72,19 @@ class Tickets(unittest.TestCase):
         ])
 
 
+class SubIssues(unittest.TestCase):
+    def test_a_parents_tickets_among_its_sub_issues_and_whether_each_is_open(self):
+        # A parent's tickets as GitHub links them, which outlasts their
+        # cards: the board archives a card as its issue closes. A sub-issue
+        # counts only if it's a ticket of this parent, as on the board.
+        gets = {ISSUES + "/45/sub_issues": [
+            ticket(98, 45, state="closed"), ticket(99, 45),
+            ticket(101, 48),                                # another parent's
+            issue(102, "MinimalEffort07", "Linked by hand.")]}  # not a ticket
+        self.assertEqual(GitHub(FakeRest(gets), CONFIG, BOARD).sub_issues(45),
+                         {98: False, 99: True})
+
+
 PULLS = "repos/MinimalEffort07/pokefirered/pulls?state=open"
 
 

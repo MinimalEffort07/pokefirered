@@ -47,6 +47,15 @@ class GitHub:
     def is_open(self, number):
         return self._issue(number)["state"] == "open"
 
+    def sub_issues(self, parent):
+        """{number: is_open} for each of `parent`'s sub-issues that is one of
+        its tickets: its "## Parent" section names `parent`, as on the
+        board. A sub-issue the owner linked by hand isn't one."""
+        subs = self.gh.rest_list("repos/%s/issues/%d/sub_issues"
+                                 % (self.config.repo, parent))
+        return {s["number"]: s["state"] == "open" for s in subs
+                if parent in issue_numbers(section(s["body"], "Parent"))}
+
     # ── actions ───────────────────────────────────────────────────────────
 
     def set_status(self, issue, status):

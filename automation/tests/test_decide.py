@@ -32,11 +32,12 @@ def ticket(number, status="Todo", parent=67, blocked_by=(), author=BOT,
 
 
 def state(items=(), sessions=(), outcomes=None, max_sessions=2, closed=(),
-          prs=None, worktrees=()):
+          prs=None, worktrees=(), sub_issues=None):
     return State(owner=OWNER, bot=BOT, items=list(items),
                  sessions=list(sessions), outcomes=outcomes or {},
                  max_sessions=max_sessions, closed=frozenset(closed),
-                 prs=prs or {}, worktrees=frozenset(worktrees))
+                 prs=prs or {}, worktrees=frozenset(worktrees),
+                 sub_issues=sub_issues or {})
 
 
 class Plans(unittest.TestCase):
@@ -461,13 +462,29 @@ class ClosedTickets(unittest.TestCase):
         self.assertEqual(decide(state([ticket(70, "In progress", is_open=False)],
                                       sessions=running, worktrees=[70])), [])
 
+    def test_a_closed_tickets_worktree_goes_after_its_card_left_the_board(self):
+        # The board's "Auto-archive items" workflow archives a card as its
+        # issue closes, and archived cards aren't read, so #70 is known only
+        # from its worktree and GitHub saying it's closed (#103, #45).
+        self.assertEqual(decide(state(closed=[70], worktrees=[70])),
+                         [RemoveWorktree(70)])
+
+    def test_an_off_board_worktree_stays_while_open_or_in_use(self):
+        # Open, or GitHub couldn't say: the owner may have taken the card
+        # off the board and still want the work.
+        self.assertEqual(decide(state(worktrees=[70])), [])
+        running = [Session("ticket", 70, "sid-70", running=True)]
+        self.assertEqual(decide(state(sessions=running, closed=[70],
+                                      worktrees=[70])), [])
+
 
 class Parents(unittest.TestCase):
     def test_D23_a_parent_whose_tickets_are_all_closed_is_done(self):
         self.assertEqual(decide(state([
             item(67, status="In progress"),
             ticket(68, "Done", parent=67, is_open=False),
-            ticket(72, "Done", parent=67, is_open=False)])), [
+            ticket(72, "Done", parent=67, is_open=False)],
+            sub_issues={67: {68: False, 72: False}})), [
             # Closed first: if that fails, the next tick tries again without
             # having @mentioned the owner twice.
             CloseIssue(67),
@@ -476,18 +493,45 @@ class Parents(unittest.TestCase):
             SetStatus(67, "Done"),
         ])
 
+    def test_D23_tickets_whose_cards_left_the_board_still_count(self):
+        # The board archives each ticket's card as it closes, and archived
+        # cards aren't read. Its sub-issues on GitHub still name them all.
+        self.assertEqual(decide(state(
+            [item(45, status="In progress")],
+            sub_issues={45: {98: False, 99: False, 100: False}})), [
+            CloseIssue(45),
+            Comment(45, "@MinimalEffort07 every ticket of this issue is closed "
+                        "(#98, #99, #100), so autodev is done with it."
+                        "\n\n<!-- autodev -->"),
+            SetStatus(45, "Done"),
+        ])
+
     def test_only_the_owners_parents_are_closed(self):
         self.assertEqual(decide(state([
             item(67, status="In progress", author="someone-else"),
-            ticket(68, "Done", parent=67, is_open=False)])), [])
+            ticket(68, "Done", parent=67, is_open=False)],
+            sub_issues={67: {68: False}})), [])
 
-    def test_a_parent_with_an_open_ticket_or_none_on_the_board_stays(self):
-        for tickets in ([ticket(68, "Done", parent=67, is_open=False),
-                         ticket(72, "In review", parent=67)],
-                        [ticket(68, "Done", parent=48, is_open=False)]):
-            with self.subTest(tickets=tickets):
+    def test_a_parent_with_an_open_ticket_or_none_stays(self):
+        for tickets, subs in (
+                # An open sub-issue, on the board or not.
+                ([ticket(68, "Done", parent=67, is_open=False),
+                  ticket(72, "In review", parent=67)], {68: False, 72: True}),
+                ([], {68: False, 72: True}),
+                # An open ticket on the board that isn't linked as one.
+                ([ticket(72, "In review", parent=67)], {68: False}),
+                # No tickets at all.
+                ([ticket(68, "Done", parent=48, is_open=False)], {})):
+            with self.subTest(tickets=tickets, subs=subs):
                 self.assertEqual(decide(state(
-                    [item(67, status="In progress")] + tickets)), [])
+                    [item(67, status="In progress")] + tickets,
+                    sub_issues={67: subs})), [])
+
+    def test_a_parent_whose_sub_issues_couldnt_be_read_waits(self):
+        # Its board tickets are all closed, but GitHub may know an open one.
+        self.assertEqual(decide(state([
+            item(67, status="In progress"),
+            ticket(68, "Done", parent=67, is_open=False)])), [])
 
 
 class Pausing(unittest.TestCase):
@@ -513,6 +557,12 @@ class Pausing(unittest.TestCase):
             MakeWorktree(68, "issue-68-do-the-thing"),
             Launch("ticket", 68), SetStatus(68, "In progress"),
         ])
+
+    def test_D8_a_resumed_parent_whose_cards_all_left_the_board_isnt_regrilled(self):
+        # Its tickets all closed while it was paused, and the board archived
+        # their cards. Its sub-issues show it was grilled.
+        self.assertEqual(decide(state([item(67)], sub_issues={67: {68: False}})),
+                         [SetStatus(67, "In progress")])
 
     def test_a_requeued_grill_is_grilled_again_though_some_tickets_exist(self):
         # The grill crashed or hit the usage limit after creating #68; the
@@ -697,10 +747,10 @@ class Crashes(unittest.TestCase):
 
 class FinishedMerges(unittest.TestCase):
     def run_finished(self, result, merged=False, replied=False, ticket_open=True,
-                     ended_by="success", superseded=False):
+                     ended_by="success", superseded=False, on_board=True):
         return decide(State(
             owner=OWNER, bot=BOT,
-            items=[ticket(68, "In progress", is_open=ticket_open)],
+            items=[ticket(68, "In progress", is_open=ticket_open)] if on_board else [],
             sessions=[Session("merge", 68, "sid-m68", running=False,
                               result=result, ended_by=ended_by,
                               cwd="/clone-worktrees/issue-68", pr=73,
@@ -719,6 +769,15 @@ class FinishedMerges(unittest.TestCase):
             Finish("merge", 68)])
         self.assertEqual(self.run_finished(done, merged=True, ticket_open=False), [
             RemoveWorktree(68), SetStatus(68, "Done"), Finish("merge", 68)])
+
+    def test_a_merged_pr_whose_card_left_the_board_is_still_finished(self):
+        # The board archived #68's card the moment the merge closed it. A
+        # card that isn't read has no Status to set; setting one failed
+        # the rest of the group, so the session was never finished and
+        # every tick tried again (2026-10-20).
+        done = {"outcome": "done", "links": [73]}
+        self.assertEqual(self.run_finished(done, merged=True, on_board=False), [
+            CloseIssue(68), RemoveWorktree(68), Finish("merge", 68)])
 
     def test_a_merged_pr_counts_even_if_the_session_then_failed(self):
         # It merged, then timed out or crashed before reporting. GitHub

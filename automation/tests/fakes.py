@@ -4,7 +4,9 @@ FakeGh replays recorded GraphQL responses. Fixtures are JSON files in
 tests/fixtures/. Each one maps a GraphQL operation name (the word after
 `query` in the request, e.g. `FindBoard`) to the response GitHub sent
 back. Paged operations map the page cursor they were asked for ("" for
-the first page) to that page's response.
+the first page) to that page's response. A fixture's "rest" entry maps a
+REST path to the list GitHub returns for it, for the tests that run a
+whole tick.
 
 Every request is recorded, so a test can prove the tick only read from
 GitHub: `mutations` lists any request that would have changed something.
@@ -44,6 +46,10 @@ class FakeGh:
         if "cursor" in variables:
             response = response[variables["cursor"] or ""]
         return response
+
+    def rest_list(self, path):
+        self.requests.append(("rest", path, {}))
+        return self.responses["rest"][path]
 
     @property
     def mutations(self):

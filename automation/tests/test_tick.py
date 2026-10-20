@@ -6,11 +6,14 @@ and checks the exact lines the tick logs.
 """
 
 import io
+import os
+import tempfile
 import unittest
 
 from autodev.config import Config
 from autodev.board import read_board
 from autodev.dispatcher import log_board
+from autodev.gh import GhError
 from tests.fakes import FakeGh, FakeRegistry
 
 CONFIG = Config(
@@ -111,10 +114,13 @@ class TickLogsTheBoard(unittest.TestCase):
 
 class FakeGitHub:
     """read_state's view of GitHub: each ticket's PR and when it was parked,
-    recording what was asked for."""
+    each parent's sub-issues and which issues are open, recording what was
+    asked for. An issue in `failing` can't be read."""
 
-    def __init__(self, prs, parked):
-        self.prs, self.parked, self.asked = prs, parked, []
+    def __init__(self, prs=None, parked=None, subs=None, open_issues=(),
+                 failing=()):
+        self.prs, self.parked, self.asked = prs or {}, parked or {}, []
+        self.subs, self.open_issues, self.failing = subs or {}, open_issues, failing
 
     def ticket_pr(self, number, comments=True):
         self.asked.append(("pr", number, comments))
@@ -123,6 +129,16 @@ class FakeGitHub:
     def parked_at(self, number):
         self.asked.append(("parked_at", number))
         return self.parked.get(number, "")
+
+    def sub_issues(self, number):
+        self.asked.append(("sub_issues", number))
+        if number in self.failing:
+            raise GhError("HTTP 502")
+        return self.subs.get(number, {})
+
+    def is_open(self, number):
+        self.asked.append(("is_open", number))
+        return number in self.open_issues
 
 
 class ReadState(unittest.TestCase):
@@ -150,6 +166,54 @@ class ReadState(unittest.TestCase):
             ("pr", 90, False), ("pr", 91, True)])
         self.assertEqual(state.prs, {88: pr})
         self.assertEqual(state.parked_at, {88: "2026-10-19T21:05:37Z"})
+
+    def test_the_owners_open_parents_sub_issues_are_read(self):
+        # Their tickets' cards leave the board as they close (the board's
+        # "Auto-archive items"), so whether a parent is done, or was grilled
+        # already, comes from its sub-issues. Only parents in Todo or In
+        # progress need it; one that can't be read is left out and logged.
+        from autodev.board import Board, Item
+        from autodev.dispatcher import read_state
+        github = FakeGitHub(subs={45: {98: False, 100: False}}, failing=(46,))
+        snapshot = Board(3, "pokefirered autodev", [
+            Item(45, "MinimalEffort07", "In progress", False),
+            Item(46, "MinimalEffort07", "In progress", False),
+            Item(61, "MinimalEffort07", "Todo", False),
+            Item(62, "MinimalEffort07", "Grilling", False),
+            Item(63, "MinimalEffort07", "In progress", False, is_open=False),
+            Item(64, "someone-else", "Todo", False),
+        ], 0)
+        config = Config(owner="MinimalEffort07", repo="MinimalEffort07/pokefirered",
+                        board_title="pokefirered autodev", clone="/nonexistent/clone")
+        log = io.StringIO()
+        code, state = read_state(github, config, snapshot, FakeRegistry(), log)
+        self.assertEqual(code, 1)
+        self.assertEqual(github.asked, [
+            ("sub_issues", 45), ("sub_issues", 46), ("sub_issues", 61)])
+        self.assertEqual(state.sub_issues, {45: {98: False, 100: False}, 61: {}})
+        self.assertEqual(log.getvalue().splitlines(),
+                         ["error: reading #46's sub-issues: HTTP 502"])
+
+    def test_a_worktree_whose_card_left_the_board_is_checked_on_github(self):
+        # #70 closed and the board archived its card; #71 is open but off
+        # the board; #72's card is still there, so the board says.
+        from autodev.board import Board, Item
+        from autodev.dispatcher import read_state
+        with tempfile.TemporaryDirectory() as root:
+            clone = os.path.join(root, "clone")
+            for n in (70, 71, 72):
+                os.makedirs(os.path.join(clone + "-worktrees", "issue-%d" % n))
+            config = Config(owner="MinimalEffort07", repo="MinimalEffort07/pokefirered",
+                            board_title="pokefirered autodev", clone=clone)
+            github = FakeGitHub(open_issues=(71,))
+            snapshot = Board(3, "pokefirered autodev", [
+                Item(72, "MinimalEffort07-Autodev", "Done", True, is_open=False)], 0)
+            code, state = read_state(github, config, snapshot, FakeRegistry(),
+                                     io.StringIO())
+        self.assertEqual(code, 0)
+        self.assertEqual(github.asked, [("is_open", 70), ("is_open", 71)])
+        self.assertEqual(state.closed, frozenset([70]))
+        self.assertEqual(state.worktrees, frozenset([70, 71, 72]))
 
 
 if __name__ == "__main__":

@@ -119,8 +119,9 @@ class State:
     outcomes: dict = field(default_factory=dict)
     max_sessions: int = 2   # Claude sessions allowed to run at once
     bot: str = ""           # autodev's own account; its tickets are trusted
-    # Issues known to be closed. A ticket's blocker counts as open unless
-    # it is in here, so one GitHub couldn't report keeps the ticket waiting.
+    # Issues known to be closed: waiting tickets' blockers, and tickets with
+    # a worktree whose card has left the board. One GitHub couldn't report
+    # counts as open, so its ticket keeps waiting and its worktree stays.
     closed: frozenset = frozenset()
     # PullRequest per ticket in Todo, In review or Needs human that has one
     # open
@@ -130,6 +131,13 @@ class State:
     parked_at: dict = field(default_factory=dict)
     # Tickets that have a worktree
     worktrees: frozenset = frozenset()
+    # {number: is_open} for the tickets among each sub-issue of the owner's
+    # open parents in Todo or In progress, by parent. The board's
+    # "Auto-archive items" workflow archives a ticket's card as it closes,
+    # and archived cards aren't read, so these are how a parent's closed
+    # tickets are known. A parent GitHub couldn't report this tick is
+    # missing.
+    sub_issues: dict = field(default_factory=dict)
     # How the owner resumes a parked session; {session_id}, {cwd} and {env}
     # (the session's AUTODEV_* variables, as shell assignments) are filled in.
     resume_command: str = "claude --resume {session_id}"
@@ -231,8 +239,8 @@ def plan(state):
     groups = []
     for session in state.sessions:
         if not session.running and session.role in DONE_CHECKS:
-            groups.append(_keep_paused(state, session.issue,
-                                       _finished(state, session)))
+            groups.append(_on_board(state, _keep_paused(
+                state, session.issue, _finished(state, session))))
     free = state.max_sessions - sum(1 for s in state.sessions if s.running)
     has_session = {s.issue for s in state.sessions}
     # A paused parent stops all of its tickets from starting (a paused
@@ -278,6 +286,11 @@ def plan(state):
             # it will need, with nothing in it, so a later feature's ticket
             # or a grill can't start there first.
             ready.append((_priority("ticket", item, places), []))
+    # A ticket closed by hand usually leaves the board before any tick sees
+    # its card closed, so its worktree is found from the worktrees instead.
+    on_board = {i.number for i in state.items}
+    groups += [[RemoveWorktree(n)] for n in sorted(state.worktrees - on_board)
+               if n in state.closed and n not in has_session]
     # While a usage limit lasts nothing starts, including the moment it is
     # found; the board is still kept up to date.
     limit_ends = max([state.paused_until] + [a.until for g in groups for a in g
@@ -330,7 +343,7 @@ def _new_parent(state, item):
     if item.author != state.owner:
         return _untrusted(state, item)
     if (("grill", item.number) not in state.requeued
-            and any(i.has_parent and i.parent == item.number for i in state.items)):
+            and _tickets(state, item.number)):
         # It has tickets and its grill wasn't cut short, so it was grilled
         # already: the owner moved it from Paused back to Todo, which means
         # "carry on" (D8).
@@ -438,13 +451,24 @@ def merge_cancelled(owner, comments, merge_id):
     return None
 
 
+def _tickets(state, parent):
+    """A parent's tickets, as {number: is_open}: the issues whose
+    "## Parent" names it, among its sub-issues on GitHub (the grill links
+    every ticket as one) and on the board. The board alone isn't enough: it archives a
+    ticket's card as the ticket closes, and archived cards aren't read."""
+    tickets = dict(state.sub_issues.get(parent, {}))
+    tickets.update((i.number, i.is_open) for i in state.items
+                   if i.has_parent and i.parent == parent)
+    return tickets
+
+
 def _parent_in_progress(state, item):
     """Once every one of a parent's tickets is closed, autodev is done with
-    the parent (#48, "Flow" step 7). Its tickets are the board's issues
-    whose "## Parent" names it: the grill puts every ticket on the board."""
-    tickets = [i for i in state.items if i.has_parent and i.parent == item.number]
-    if (item.author != state.owner or not tickets
-            or any(t.is_open for t in tickets)):
+    the parent (#48, "Flow" step 7). Until GitHub has reported its
+    sub-issues this tick, it may have an open ticket nobody can see."""
+    tickets = _tickets(state, item.number)
+    if (item.author != state.owner or item.number not in state.sub_issues
+            or not tickets or any(tickets.values())):
         return []
     # Closed before the comment: if closing fails, the next tick tries
     # again without having @mentioned the owner twice.
@@ -452,7 +476,7 @@ def _parent_in_progress(state, item):
             Comment(item.number, _bot_comment(
                 "@%s every ticket of this issue is closed (%s), so autodev is "
                 "done with it." % (state.owner, ", ".join(
-                    "#%d" % t.number for t in sorted(tickets, key=lambda t: t.number))))),
+                    "#%d" % n for n in sorted(tickets))))),
             SetStatus(item.number, DONE)]
 
 
@@ -508,6 +532,17 @@ def _parked_ticket(state, item):
     if pr.opened > since:
         return [SetStatus(item.number, IN_REVIEW)]
     return []
+
+
+def _on_board(state, actions):
+    """A finished session's actions, less the Status of any card no longer
+    on the board: the board archives a ticket's card as it closes, often
+    while its merge session is still finishing, and an archived card isn't
+    read, so there is nothing to set. Trying failed the rest of the group,
+    Finish included, so every tick tried again (2026-10-20)."""
+    on_board = {i.number for i in state.items}
+    return [a for a in actions
+            if not (isinstance(a, SetStatus) and a.issue not in on_board)]
 
 
 def _keep_paused(state, issue, actions):
