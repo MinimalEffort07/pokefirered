@@ -124,8 +124,9 @@ Four patches shake. The BAG opens and closes, and the same four still shake.
   mv /tmp/mgba-recordings/<name>.mp4 /tmp/mgba-recordings/<name>.json ~/recordings/
   http://100.116.114.81:8080/r/<name>
   ```
+- **Autodev's sessions must write them.** In a session autodev started, `record_test.sh` (`--check` included) refuses to record without notes, and refuses notes whose `ticket:` isn't the session's own ticket or that have no `parent:`. So every recording on a PR says what it's for. A fix-up's notes get its PR's number by themselves. A ticket session records before its PR exists, so once it's open the session runs `python3 test/tools/recording_notes.py set-pr <name> <PR>`, which puts the number into that recording's notes file (in `~/recordings`, or else `/tmp/mgba-recordings`). Its PR links each recording's own page. When you record, notes stay optional.
 
-`test/tests/test_recording_notes.lua` checks the notes `--check` accepts and refuses, the name, the notes file the helper writes, and how the page shows notes files, including broken ones.
+`test/tests/test_recording_notes.lua` checks the notes `--check` accepts and refuses, the name, the notes file the helper writes, and how the page shows notes files, including broken ones. It also checks the rules for autodev's sessions, and `set-pr`.
 
 **The recordings page.** `test/serve_recordings.py` shows the videos at http://100.116.114.81:8080 (`autodev-recordings.service` runs it):
 
@@ -160,7 +161,7 @@ Autodev takes an issue from the board to a PR that is ready to merge, with nobod
 **What it does.** Add one of your issues to the **pokefirered autodev** board. Every 2 minutes a systemd user timer runs one *tick* of the dispatcher, which looks at the board and moves each card on:
 
 1. A grill session designs the issue by itself, taking every recommended answer, posts the design on the issue, and breaks it into tickets.
-2. Each ticket whose blockers are all closed gets its own worktree (a separate checkout of the repo on the ticket's own branch) and a ticket session: TDD, a clean build, `run_suite.sh`, a recording if the game changes, the README and the system map, a code review, then a PR that @mentions you and says what changes for you.
+2. Each ticket whose blockers are all closed gets its own worktree (a separate checkout of the repo on the ticket's own branch) and a ticket session: TDD, a clean build, `run_suite.sh`, a recording with notes if the game changes, the README and the system map, a code review, then a PR that @mentions you, says what changes for you and links each recording's page.
 3. Your feedback on the PR starts a fix-up session. Your `/merge` starts a merge session, which merges master in, tests that exact tree again, and merges with a merge commit. If merging master in conflicts, it resolves the conflict, explains how on the PR, and waits for a fresh `/merge` from you instead of merging.
 4. Once every ticket of the issue is closed, the issue is closed too.
 
