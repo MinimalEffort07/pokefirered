@@ -20,6 +20,10 @@
 -- (0,0 -> 480x320 on the 1920x640 virtual display) when turning it into
 -- a GIF, so the scripting window is not visible in the final asset.
 --
+-- MOMENTS (see MOMENTS in test/lib/framework.lua): in the mGBA window the
+-- demo fast-forwards except for one moment, the four patches shaking after
+-- USE (fw.show).
+--
 -- HOW TO RUN (recording):
 --   bash test/record_test.sh test/demos/demo_shiny_chaining.lua
 -------------------------------------------------------------------------------
@@ -55,9 +59,6 @@ end
 local ROUTE1_STATE = "/tmp/pokefirered-route1-grass.ss"
 
 fw.run(function()
-    fw.slow_down("demo recording runs at real-time for visibility")
-    fw.wait_frames(30)
-
     fw.log("=== PokeRadar Shiny Chaining — Visual Demo ===")
 
     -- 1) Load the pre-built Route 1 save state. This is a shared fixture
@@ -120,6 +121,7 @@ fw.run(function()
         "PATCHES_ACTIVE flag set after radar use")
     fw.assert_eq(pr.get_charges(), 0,
         "charge consumed by radar use")
+    fw.show("after USE, four patches of grass shake around the player")
 
     fw.log(">>> Walking into a patch...")
     fw.hold("UP",   24); fw.wait_frames(20)
