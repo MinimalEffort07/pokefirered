@@ -15,8 +15,8 @@
 --   0x09    charges             u8    0 or 1
 --   0x0A    flags               u8    bit0 = patches active
 --                                     bit1 = from-patch encounter latch
---   0x0B    chainMapGroup       u8    diagnostic only
---   0x0C    chainMapNum         u8    diagnostic only
+--   0x0B    patchMapGroup       u8    the map the live patches are on
+--   0x0C    patchMapNum         u8      (only meaningful while bit0 is set)
 --   0x0D    padding             u8
 --   0x0E    patchX[0..3]        s16x4 8 bytes
 --   0x16    patchY[0..3]        s16x4 8 bytes
@@ -33,7 +33,7 @@
 --     ways to use the radar, pressing buttons through the menus, and
 --     pr.oak_message_up(): Prof. Oak's "This isn't the time to use that!";
 --   * pr.is_live_patch(id), pr.is_patch_tile(x, y), pr.assert_live_patches():
---     what a patch is;
+--     what a patch is, and pr.sprite_addr(id): a sprite's struct;
 --   * pr.assert_not_frozen(label, within, opts, elapsed): the player has
 --     control (its two halves are pr.assert_back_on_field and
 --     pr.assert_step, for a test that checks more in between);
@@ -81,8 +81,8 @@ pr.OFF_CHAIN_SPECIES     = 0x06
 pr.OFF_STEPS_UNTIL_CHG   = 0x08
 pr.OFF_CHARGES           = 0x09
 pr.OFF_FLAGS             = 0x0A
-pr.OFF_CHAIN_MAP_GROUP   = 0x0B
-pr.OFF_CHAIN_MAP_NUM     = 0x0C
+pr.OFF_PATCH_MAP_GROUP   = 0x0B
+pr.OFF_PATCH_MAP_NUM     = 0x0C
 pr.OFF_PATCH_X           = 0x0E  -- s16[4]
 pr.OFF_PATCH_Y           = 0x16  -- s16[4]
 pr.OFF_PATCH_SPRITE_ID   = 0x1E  -- u8[4]
@@ -315,13 +315,16 @@ end
 -- Patches
 -------------------------------------------------------------------------------
 
--- struct Sprite (include/sprite.h), 0x44 bytes: s16 data[8] starts at 0x2E,
--- and bit 0 of the byte at 0x3E is inUse.
+-- struct Sprite (include/sprite.h), 0x44 bytes: the template it was made
+-- from (a pointer) at 0x14, s16 data[8] starts at 0x2E, and bit 0 of the
+-- byte at 0x3E is inUse.
+local SPRITE_OFF_TEMPLATE = 0x14
 local SPRITE_OFF_DATA0 = 0x2E
 
 local function sprite_addr(id)
     return sym.addr("gSprites") + id * ADDR.SPRITE_STRUCT_SIZE
 end
+pr.sprite_addr = sprite_addr
 
 function pr.sprite_in_use(id)
     if id >= ADDR.MAX_SPRITES then return false end
@@ -335,11 +338,16 @@ end
 -- Is sprite `id` a live shaking-grass patch? The radar keeps each patch's
 -- sprite id in its struct, but an id alone proves nothing: before the radar
 -- runs those slots hold 0 (a live sprite, usually the player's) or whatever
--- a test wrote. FldEff_UnusedGrass marks its sprites by storing the field
--- effect number (FLDEFF_UNUSED_GRASS) in data[0], so check the sprite is in
--- use and marked so.
+-- a test wrote, and after the field is rebuilt the slot may hold another
+-- sprite. So check the sprite is in use, was made from the shaking grass's
+-- template (gFieldEffectObjectTemplate_UnusedGrass, the check the radar
+-- itself makes before it stops a sprite, issue #90), and is marked as
+-- FldEff_UnusedGrass marks its sprites: the field effect number
+-- (FLDEFF_UNUSED_GRASS) in data[0].
 function pr.is_live_patch(id)
-    return pr.sprite_in_use(id) and sprite_data0(id) == pr.FLDEFF_UNUSED_GRASS
+    return pr.sprite_in_use(id)
+        and fw.read32(sprite_addr(id) + SPRITE_OFF_TEMPLATE) == sym.addr("gFieldEffectObjectTemplate_UnusedGrass")
+        and sprite_data0(id) == pr.FLDEFF_UNUSED_GRASS
 end
 
 function pr.patches_active()
@@ -490,25 +498,11 @@ end
 -- Menus
 -------------------------------------------------------------------------------
 
--- struct Task (include/task.h), 0x28 bytes: TaskFunc func at 0x00, bool8
--- isActive at 0x04, s16 data[16] at 0x08. gTasks has 16. Menus keep their
--- state in data[], so tests read pr.TASK_DATA + 2 * i for data[i].
-local TASK_SIZE, NUM_TASKS, TASK_DATA = 0x28, 16, 0x08
-pr.TASK_DATA = TASK_DATA
-
--- The address of an active task running function `name`, or nil. Menus
--- are tasks, so this says which menu is waiting for input. A stored
--- function pointer has bit 0 set (the Thumb-mode flag, see symbols.lua),
--- which `& ~1` clears before comparing it with the symbol's address.
-function pr.task_running(name)
-    local tasks = sym.addr("gTasks")
-    local func = sym.addr(name)
-    for i = 0, NUM_TASKS - 1 do
-        local t = tasks + i * TASK_SIZE
-        if fw.read8(t + 4) ~= 0 and (fw.read32(t) & ~1) == func then return t end
-    end
-    return nil
-end
+-- Menus are tasks: pr.task_running(name) is the address of an active task
+-- running function `name`, or nil (mm.task_running), and pr.TASK_DATA the
+-- offset of its s16 data[16], where menus keep their state.
+pr.TASK_DATA = mm.TASK_DATA
+pr.task_running = mm.task_running
 
 local function wait_task(name, timeout, what)
     return fw.wait_until(function() return pr.task_running(name) ~= nil end,
@@ -522,18 +516,7 @@ pr.STARTMENU_BAG     = 2
 -- Open the START menu and choose `entry` (pr.STARTMENU_*). Returns true
 -- once A was pressed on it.
 function pr.choose_start_menu(entry, label)
-    fw.press("START")
-    -- The menu takes input once Task_StartMenuHandleInput reaches its
-    -- second step (data[0] = 1) with StartCB_HandleInput as the callback.
-    -- (sStartMenuCallback alone isn't enough: it keeps StartCB_HandleInput
-    -- from the last time the menu was open, and a key pressed the frame
-    -- before that step is lost.)
-    local open = fw.wait_until(function()
-        local t = pr.task_running("Task_StartMenuHandleInput")
-        return t ~= nil and fw.read16(t + TASK_DATA) == 1
-            and sym.is_func(fw.read32(sym.addr("sStartMenuCallback")), "StartCB_HandleInput")
-    end, 120, "START menu open")
-    if not fw.assert_true(open, label .. ": the START menu opened") then return false end
+    if not fw.assert_true(mm.open_start_menu(120), label .. ": the START menu opened") then return false end
     -- The list remembers its cursor from the last entry chosen, so move
     -- from there (as mm.save_game does).
     local order = sym.addr("sStartMenuOrder")
@@ -670,7 +653,7 @@ function pr.use_with_select(label)
     fw.press("SELECT")
     local open = fw.wait_until(function()
         local t = pr.task_running("Task_QuickSelectMenu")
-        return t ~= nil and fw.read16(t + TASK_DATA) == QS_STATE_INPUT
+        return t ~= nil and fw.read16(t + pr.TASK_DATA) == QS_STATE_INPUT
     end, 120, "SELECT menu open")
     if not fw.assert_true(open, label .. ": the SELECT menu opened") then return false end
     local target = nil
@@ -1057,10 +1040,17 @@ end
 
 -- Walk to the nearest tile off the tall grass (plain ground: MB_NORMAL, not
 -- solid and not a warp) without spoiling the patches on the way, and step
--- onto it (pr.walk_on_grass_onto).
+-- onto it (pr.walk_on_grass_onto). A tile another object stands on (the
+-- follower, waiting behind the player, or an NPC) doesn't count: the
+-- player would only bump into it.
 function pr.walk_off_grass(label)
+    local taken = {}
+    for _, o in ipairs(mm.live_objects()) do
+        if not o.is_player then taken[mm.key(o.x, o.y)] = true end
+    end
     return pr.walk_on_grass_onto(label, "plain ground off the grass", function(x, y, snap)
         return not snap.solid(x, y) and not snap.warp(x, y) and snap.behavior(x, y) == MB.MB_NORMAL
+            and not taken[mm.key(x, y)]
     end)
 end
 

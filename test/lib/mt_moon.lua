@@ -1074,6 +1074,59 @@ end
 
 local STARTMENU_SAVE = 4  -- enum in src/start_menu.c
 
+-- struct Task (include/task.h), 0x28 bytes: TaskFunc func at 0x00, bool8
+-- isActive at 0x04, s16 data[16] at 0x08. gTasks has 16. Menus keep their
+-- state in data[], so tests read mm.TASK_DATA + 2 * i for data[i].
+local TASK_SIZE, NUM_TASKS = 0x28, 16
+mm.TASK_DATA = 0x08
+
+-- The address of an active task running function `name`, or nil. Menus
+-- are tasks, so this says which menu is waiting for input. A stored
+-- function pointer has bit 0 set (the Thumb-mode flag, see symbols.lua),
+-- which `& ~1` clears before comparing it with the symbol's address.
+function mm.task_running(name)
+    local tasks = sym.addr("gTasks")
+    local func = sym.addr(name)
+    for i = 0, NUM_TASKS - 1 do
+        local t = tasks + i * TASK_SIZE
+        if emu:read8(t + 4) ~= 0 and (emu:read32(t) & ~1) == func then return t end
+    end
+    return nil
+end
+
+-- Press START on the field and wait until the START menu takes input: its
+-- task Task_StartMenuHandleInput has reached its second step (data[0] = 1)
+-- with StartCB_HandleInput as the callback. (sStartMenuCallback alone isn't
+-- enough: it keeps StartCB_HandleInput from the last time the menu was
+-- open, and a key pressed the frame before that step is lost.)
+--
+-- The START press itself is lost now and then: the game reads the buttons
+-- once per pass of its main loop, and a pass that runs long can miss a
+-- press that lasts a single frame. The field locks its controls
+-- (sLockFieldControls) on the frame it opens the menu, so while they stay
+-- unlocked START is pressed again, up to 3 times. Returns true once the
+-- menu takes input, within `timeout` frames (default 120) of the press it
+-- saw.
+function mm.open_start_menu(timeout)
+    local lock = sym.addr("sLockFieldControls")
+    local seen = false
+    for _ = 1, 3 do
+        fw.press("START")
+        for _ = 1, 20 do
+            if emu:read8(lock) ~= 0 then seen = true break end
+            fw.yield()
+        end
+        if seen then break end
+        fw.log("[START] the press was lost (the field controls are still unlocked): pressing again")
+    end
+    if not seen then return false end
+    return fw.wait_until(function()
+        local t = mm.task_running("Task_StartMenuHandleInput")
+        return t ~= nil and emu:read16(t + mm.TASK_DATA) == 1
+            and sym.is_func(emu:read32(sym.addr("sStartMenuCallback")), "StartCB_HandleInput")
+    end, timeout or 120, "START menu open")
+end
+
 -- Save through START > SAVE > YES (and YES again to overwrite an older save).
 -- Returns true once the game reports the save finished and the menu closed.
 function mm.save_game()
@@ -1082,8 +1135,10 @@ function mm.save_game()
     end
     local counter_before = emu:read32(sym.addr("gSaveCounter"))
 
-    fw.press("START")
-    fw.wait_frames(30)
+    if not mm.open_start_menu() then
+        fw.log_error("the START menu never opened")
+        return false
+    end
 
     -- Find SAVE in the menu and move the cursor onto it. The list remembers
     -- its cursor between openings, so start from wherever it is now.
@@ -1141,8 +1196,10 @@ end
 -- Returns a snapshot taken on the very first frame the overworld runs, before
 -- any NPC has had a chance to take a step (so positions can be compared with
 -- the save exactly), or nil on failure. Returns only after the player has
--- control again.
-function mm.continue_game()
+-- control again. `on_frame` (optional) is called on every frame from that
+-- first one until the player has control, with the frames since the first
+-- (0 on it), for a test that checks what the field shows by then.
+function mm.continue_game(on_frame)
     emu:reset()
     -- Intro and title screen: A skips ahead until the main menu is up.
     local ok = false
@@ -1161,14 +1218,15 @@ function mm.continue_game()
     -- The replay also runs in the overworld, so "in the overworld" only
     -- counts once gQuestLogState says no replay is playing.
     local quest_log_state = sym.addr("gQuestLogState")
-    local first = nil
-    for _ = 1, 2400 do
+    local first, first_at = nil, nil
+    for i = 1, 2400 do
         local state = emu:read8(quest_log_state)
         if state >= 2 then  -- QL_STATE_PLAYBACK / QL_STATE_PLAYBACK_LAST
             fw.press("B")   -- B ends the replay
             fw.wait_frames(20)
         elseif mm.in_overworld() and mm.player_tile() ~= nil then
-            first = first or mm.snapshot()
+            if first == nil then first, first_at = mm.snapshot(), i end
+            if on_frame then on_frame(i - first_at) end
             if mm.player_has_control() then return first end
         end
         fw.yield()
