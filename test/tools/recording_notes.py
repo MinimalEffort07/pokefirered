@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""A recording's notes: checking them, and writing its notes file.
+
+test/record_test.sh --notes FILE takes notes saying what a recording is
+for, and keeps them beside the video as <name>.json, its "notes file",
+which the recordings page (test/serve_recordings.py) shows on the
+recording's card. This helper does both halves of that for
+record_test.sh:
+
+  python3 test/tools/recording_notes.py check [--save COPY] NOTES
+      Check notes file NOTES ("-" reads stdin). Prints "Notes OK: ..." and
+      exits 0, or prints every problem and exits 1. --save COPY also
+      writes accepted notes to COPY, as they were read: that is how
+      record_test.sh keeps notes it was given on stdin.
+  python3 test/tools/recording_notes.py ticket NOTES
+      Print the ticket number NOTES names (nothing when it names none).
+      Exits 1, printing the problems, when the notes are refused.
+  python3 test/tools/recording_notes.py write VIDEO --test TEST
+          --recorded-at TIME --results RESULTS [--notes NOTES] [--repo DIR]
+      Write VIDEO's notes file: VIDEO with .mp4 replaced by .json.
+
+THE NOTES, as a person writes them (the ticket and the PR are examples):
+
+  ticket: 90 Shaking patches survive a field reload
+  parent: 87 The Poke Radar
+  pr: 97
+
+  ## What's tested
+  The radar's four patches after closing the BAG, after Continue, ...
+  ## The problem
+  Rebuilding the field destroyed the patch sprites, ...
+  ## What you should see
+  Four patches shake. ...
+
+  - The lines before the first "## " heading are headers, each optional
+    and allowed once: ticket: and parent: take an issue number (with or
+    without #), a space and its title; pr: takes a number. Any other key
+    is refused, naming it.
+  - The three sections are all required, each once and each with text, in
+    any order. Any other "## " heading is refused, naming it.
+  - Plain text: the page keeps the line breaks and renders no Markdown.
+
+THE NOTES FILE is JSON. What the notes don't give is null:
+
+  {
+    "video": "issue-90_test_x_20261020_134554.mp4",
+    "recorded_at": "2026-10-20T13:45:54+11:00",
+    "test": "test/tests/test_x.lua",
+    "branch": "issue-90-shaking-patches-survive-a-field",
+    "commit": "cae067302",
+    "uncommitted_changes": false,
+    "result": {"pass": 215, "fail": 0},
+    "ticket": {"number": 90, "title": "Shaking patches survive a field reload"},
+    "parent": {"number": 87, "title": "The Poke Radar"},
+    "pr": 97,
+    "notes": {"tested": "...", "problem": "...", "expect": "..."}
+  }
+
+  - "recorded_at" is when the recording started, with this machine's UTC
+    offset; the video's name holds the same time.
+  - "test" is the test file's path from the repo root when it is inside
+    the repo, else its full path.
+  - "branch" and "commit" are the repo's (null on a detached HEAD or
+    outside git), and "uncommitted_changes" is true when tracked files
+    differ from that commit.
+  - "result" is the test's own pass and fail counts, from the results file
+    test/lib/framework.lua writes when a test finishes, and null when there
+    is none: the test didn't finish.
+
+The recordings page reads this format itself, without importing this
+file (see its ONE SELF-CONTAINED FILE), so test/tests/
+test_recording_notes.lua writes notes files with this helper and reads
+them back through the page: that keeps the two halves agreeing.
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+
+# The three sections: the key each has in the notes file, and its heading.
+SECTIONS = [
+    ("tested", "What's tested"),
+    ("problem", "The problem"),
+    ("expect", "What you should see"),
+]
+HEADERS = ("ticket", "parent", "pr")
+
+SECTION_LIST = '"## What\'s tested", "## The problem" and "## What you should see"'
+HEADER_LIST = "ticket:, parent: and pr:"
+
+# A header line: a key, a colon, then its value.
+HEADER_LINE = re.compile(r"([^\s:]+):(.*)")
+# An issue and its title: "90 Shaking patches", or "#90 Shaking patches".
+ISSUE_VALUE = re.compile(r"#?(\d+)\s+(\S.*)")
+PR_VALUE = re.compile(r"#?(\d+)")
+
+
+def heading_key(heading):
+    """The section key of a "## " heading, or None. Case doesn't matter,
+    and a typographic apostrophe (What’s) counts as a plain one."""
+    wanted = heading.strip().replace("’", "'").casefold()
+    for key, title in SECTIONS:
+        if wanted == title.casefold():
+            return key
+    return None
+
+
+def section_text(lines):
+    """A section's text: its lines as written, without the blank lines
+    around them or spaces at the ends of lines."""
+    lines = [line.rstrip() for line in lines]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
+
+
+def parse_issue(key, value, number):
+    """A ticket: or parent: header's value as {"number", "title"}, or a
+    problem (a string)."""
+    m = ISSUE_VALUE.fullmatch(value)
+    if m is None or int(m.group(1)) == 0:
+        return (f'line {number}: {key}: needs an issue number and its title, '
+                f'as in "{key}: 90 Shaking patches survive a field reload" '
+                f'(got "{value}")')
+    return {"number": int(m.group(1)), "title": m.group(2).strip()}
+
+
+def parse_pr(value, number):
+    """A pr: header's value as a number, or a problem (a string)."""
+    m = PR_VALUE.fullmatch(value)
+    if m is None or int(m.group(1)) == 0:
+        return (f'line {number}: pr: needs a PR number, as in "pr: 97" '
+                f'(got "{value}")')
+    return int(m.group(1))
+
+
+def parse(text):
+    """Notes text -> (fields, problems). `fields` has "ticket", "parent",
+    "pr" and "notes" as the notes file holds them (None when not given);
+    `problems` lists what is wrong, in plain words, and is empty when the
+    notes are accepted."""
+    problems = []
+    headers = {}
+    sections = {}           # key -> the section's lines
+    current = None          # where lines go: None = the headers, else a key
+    SKIP = object()         # under a refused heading: lines are dropped
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.startswith("## ") or line.rstrip() == "##":
+            heading = line[3:].strip()
+            key = heading_key(heading)
+            if key is None:
+                problems.append(f'line {number}: unknown heading "## {heading}" '
+                                f'(the sections are {SECTION_LIST})')
+                current = SKIP
+            elif key in sections:
+                problems.append(f'line {number}: section "## {dict(SECTIONS)[key]}" '
+                                f'is given twice')
+                current = SKIP
+            else:
+                sections[key] = []
+                current = key
+            continue
+        if current is SKIP:
+            continue
+        if current is not None:
+            sections[current].append(line)
+            continue
+        # Before the first heading: headers and blank lines only.
+        stripped = line.strip()
+        if not stripped:
+            continue
+        m = HEADER_LINE.fullmatch(stripped)
+        if m is None:
+            problems.append(f'line {number}: "{stripped}" is not a header '
+                            f'({HEADER_LIST}); text goes under one of the '
+                            f'sections, {SECTION_LIST}')
+            continue
+        key, value = m.group(1), m.group(2).strip()
+        if key not in HEADERS:
+            problems.append(f'line {number}: unknown header "{key}:" '
+                            f'(the headers are {HEADER_LIST})')
+            continue
+        if key in headers:
+            problems.append(f'line {number}: header "{key}:" is given twice')
+            continue
+        parsed = parse_pr(value, number) if key == "pr" else parse_issue(key, value, number)
+        if isinstance(parsed, str):
+            problems.append(parsed)
+        else:
+            headers[key] = parsed
+
+    notes = {}
+    for key, title in SECTIONS:
+        if key not in sections:
+            problems.append(f'missing section "## {title}"')
+            continue
+        notes[key] = section_text(sections[key])
+        if not notes[key]:
+            problems.append(f'section "## {title}" is empty')
+
+    fields = {key: headers.get(key) for key in HEADERS}
+    fields["notes"] = notes
+    return fields, problems
+
+
+def read_notes(path, save=None):
+    """Notes file `path` ("-" for stdin) -> (fields, problems), as parse.
+    A file that can't be read is one problem. With `save`, accepted notes
+    are also written to that file, byte for byte."""
+    try:
+        if path == "-":
+            data = sys.stdin.buffer.read()
+        else:
+            with open(path, "rb") as f:
+                data = f.read()
+    except FileNotFoundError:
+        return None, [f"notes file not found: {path}"]
+    except OSError as e:
+        return None, [f"can't read notes file {path}: {e.strerror}"]
+    try:
+        # utf-8-sig drops the byte-order mark some editors start a file with.
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None, [f"notes file {path} isn't UTF-8 text"]
+    fields, problems = parse(text)
+    if save is not None and not problems:
+        with open(save, "wb") as f:
+            f.write(data)
+    return fields, problems
+
+
+def summary(fields):
+    """One line saying what accepted notes hold."""
+    parts = []
+    for key, label in (("ticket", "ticket"), ("parent", "part of")):
+        issue = fields[key]
+        parts.append(f'{label} #{issue["number"]}' if issue else f"no {key}")
+    parts.append(f'PR #{fields["pr"]}' if fields["pr"] else "no PR")
+    return "Notes OK: " + ", ".join(parts) + ", and all three sections."
+
+
+def report_problems(problems, path):
+    where = "stdin" if path == "-" else path
+    print(f"The notes ({where}) can't be used:", file=sys.stderr)
+    for problem in problems:
+        print(f"  - {problem}", file=sys.stderr)
+
+
+def cmd_check(args):
+    fields, problems = read_notes(args.notes, args.save)
+    if problems:
+        report_problems(problems, args.notes)
+        return 1
+    print(summary(fields))
+    return 0
+
+
+def cmd_ticket(args):
+    fields, problems = read_notes(args.notes)
+    if problems:
+        report_problems(problems, args.notes)
+        return 1
+    if fields["ticket"]:
+        print(fields["ticket"]["number"])
+    return 0
+
+
+def read_result(path):
+    """The test's pass and fail counts from its results file, as
+    {"pass", "fail"}, or None when there is no such file (the test didn't
+    finish) or it holds no counts. test/lib/framework.lua writes an error
+    message's line breaks as they are, which strict JSON forbids, so they
+    are allowed here (strict=False)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            data = json.loads(f.read(), strict=False)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    counts = {key: data.get(key) for key in ("pass", "fail")}
+    for value in counts.values():
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return None
+    return counts
+
+
+def git(repo, *args):
+    """What `git -C repo ARGS` prints, without the final line break, or
+    None when it fails (not a git repo, a detached HEAD for symbolic-ref).
+    --no-optional-locks: git status would otherwise rewrite the repo's
+    index, which a session building in that checkout may be using."""
+    try:
+        done = subprocess.run(["git", "--no-optional-locks", "-C", repo] + list(args),
+                              capture_output=True, text=True)
+    except OSError:
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout.rstrip("\n")
+
+
+def test_path(test, repo):
+    """The test file's path from the repo's root when it is inside the
+    repo, else its full path. Links are followed first, so a test reached
+    through a symlinked folder still counts as inside."""
+    test = os.path.realpath(test)
+    root = os.path.realpath(repo)
+    if os.path.commonpath([test, root]) == root:
+        return os.path.relpath(test, root)
+    return test
+
+
+def notes_file_path(video):
+    """The notes file of video VIDEO.mp4: VIDEO.json beside it."""
+    return video[:-len(".mp4")] + ".json"
+
+
+def cmd_write(args):
+    if not args.video.endswith(".mp4"):
+        print(f"not a video (.mp4): {args.video}", file=sys.stderr)
+        return 1
+    fields = {key: None for key in ("ticket", "parent", "pr", "notes")}
+    if args.notes is not None:
+        fields, problems = read_notes(args.notes)
+        if problems:
+            report_problems(problems, args.notes)
+            return 1
+    status = git(args.repo, "status", "--porcelain", "--untracked-files=no")
+    record = {
+        "video": os.path.basename(args.video),
+        "recorded_at": args.recorded_at,
+        "test": test_path(args.test, args.repo),
+        "branch": git(args.repo, "symbolic-ref", "--short", "-q", "HEAD"),
+        "commit": git(args.repo, "rev-parse", "--short=9", "HEAD"),
+        "uncommitted_changes": None if status is None else status != "",
+        "result": read_result(args.results),
+        "ticket": fields["ticket"],
+        "parent": fields["parent"],
+        "pr": fields["pr"],
+        "notes": fields["notes"],
+    }
+    # Written beside the video under a hidden name, then renamed into place
+    # in one step, so the recordings page never reads half a file.
+    path = notes_file_path(args.video)
+    part = os.path.join(os.path.dirname(path), "." + os.path.basename(path) + ".part")
+    try:
+        with open(part, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(part, path)
+    except OSError as e:
+        print(f"can't write {path}: {e.strerror}", file=sys.stderr)
+        return 1
+    print(f"Notes file saved: {path}")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Check a recording's notes, or write its notes file.")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    p = commands.add_parser("check", help="check notes; exit 0 if accepted")
+    p.add_argument("--save", metavar="COPY",
+                   help="also write accepted notes to COPY, as read")
+    p.add_argument("notes", help='the notes file, or "-" for stdin')
+    p.set_defaults(run=cmd_check)
+
+    p = commands.add_parser("ticket", help="print the ticket number notes name")
+    p.add_argument("notes", help='the notes file, or "-" for stdin')
+    p.set_defaults(run=cmd_ticket)
+
+    p = commands.add_parser("write", help="write a video's notes file")
+    p.add_argument("video", help="the video, VIDEO.mp4; its notes file is VIDEO.json")
+    p.add_argument("--test", required=True, help="the test file recorded")
+    p.add_argument("--recorded-at", required=True, metavar="TIME",
+                   help="when the recording started, e.g. 2026-10-20T13:45:54+11:00")
+    p.add_argument("--results", required=True,
+                   help="the run's results file (it may not exist)")
+    p.add_argument("--notes", help="the notes, already checked (none: no notes)")
+    p.add_argument("--repo", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."),
+                   help="the git checkout for the branch and commit "
+                        "(default: the one holding this script)")
+    p.set_defaults(run=cmd_write)
+
+    args = parser.parse_args()
+    sys.exit(args.run(args))
+
+
+if __name__ == "__main__":
+    main()
