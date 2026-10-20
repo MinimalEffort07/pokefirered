@@ -60,6 +60,11 @@
 --   D5  A fix-up session for #90 with PR 97, notes without pr:: --check says
 --       PR #97, and the notes file the helper writes has "pr": 97. With
 --       pr: 97 in the notes, it's kept, and so is a pr: 98.
+--   D4 and D5 run --check on a copy of record_test.sh in a fixture repo
+--   whose branch changes src/ (test/lib/record_fixture.lua): in a session,
+--   record_test.sh refuses a branch that changes nothing in the game (#121,
+--   test_record_game_changes.lua), and these checks must pass whichever
+--   branch the suite runs on.
 --   D6  No session variables, no notes: accepted, as in C1.
 --   D7  set-pr sets "pr" in an existing notes file in either folder (kept
 --       first, as on the page), leaving the rest as it was. It refuses a
@@ -139,6 +144,7 @@
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
 local project_dir = script_dir .. "../../"
 local fw = dofile(project_dir .. "test/lib/framework.lua")
+local record_fixture = dofile(project_dir .. "test/lib/record_fixture.lua")
 
 local RECORD = project_dir .. "test/record_test.sh"
 local NOTES_TOOL = project_dir .. "test/tools/recording_notes.py"
@@ -590,9 +596,26 @@ local TICKET_SESSION = { ROLE = "ticket", ISSUE = 90 }
 local FIXUP_SESSION = { ROLE = "fixup", ISSUE = 90, PR = 97, HANDLED_THROUGH = 1234 }
 
 -- `record_test.sh --check` with `args` (already shell-quoted), on SOME_TEST,
--- in `session`.
-local function check_as(session, args)
-    return run_as(session, "bash " .. sh_quote(RECORD) .. " --check " .. args .. " " .. sh_quote(SOME_TEST))
+-- in `session`. `record` is the record_test.sh to run, RECORD if not given.
+local function check_as(session, args, record)
+    return run_as(session, "bash " .. sh_quote(record or RECORD) .. " --check " .. args .. " " .. sh_quote(SOME_TEST))
+end
+
+-- A copy of record_test.sh on a fixture branch that changes the game, for
+-- D4 and D5 (see the header). When the fixture can't be made, that fails
+-- the test, and the path returned doesn't exist, so D4 and D5 fail too.
+local function game_change_record()
+    local repo, err = record_fixture.make(WORK .. "/game-change", project_dir)
+    if not fw.assert_true(repo ~= nil, "D4, D5: the fixture repo is made") then
+        fw.log_error(err)
+        return WORK .. "/no_fixture/record_test.sh"
+    end
+    local code, output = run("echo 'int y;' >> " .. sh_quote(repo.dir .. "/src/x.c")
+        .. " && " .. repo.git .. "commit -qam src")
+    if not fw.assert_eq(code, 0, "D4, D5: the fixture branch commits a src/ change") then
+        dump("fixture", output)
+    end
+    return repo.record
 end
 
 local function check_sessions()
@@ -624,16 +647,17 @@ local function check_sessions()
     if not ok then dump("D3", output) end
 
     -- D4: complete notes for #90, as a ticket session writes them before
-    -- its PR exists.
+    -- its PR exists, on a branch that changes the game.
+    local game_record = game_change_record()
     local no_pr = without(COMPLETE, "pr: 97")
-    code, output = check_as(TICKET_SESSION, "--notes " .. sh_quote(notes_file("d4.txt", no_pr)))
+    code, output = check_as(TICKET_SESSION, "--notes " .. sh_quote(notes_file("d4.txt", no_pr)), game_record)
     ok = fw.assert_eq(code, 0, "D4: a ticket session for #90 accepts complete notes for #90 (exit 0)")
     ok = fw.assert_true(has(output, "issue-90_test_player_sprite_"), "D4: ... named for ticket 90") and ok
     if not ok then dump("D4", output) end
 
     -- D5: a fix-up's notes get its PR when they name none, in --check's
     -- verdict and in the notes file record_test.sh writes with the helper.
-    code, output = check_as(FIXUP_SESSION, "--notes " .. sh_quote(notes_file("d5.txt", no_pr)))
+    code, output = check_as(FIXUP_SESSION, "--notes " .. sh_quote(notes_file("d5.txt", no_pr)), game_record)
     ok = fw.assert_eq(code, 0, "D5: a fix-up session for #90 accepts notes without pr: (exit 0)")
     ok = fw.assert_true(has(output, "PR #97"), "D5: ... and --check says PR #97") and ok
     if not ok then dump("D5 --check", output) end

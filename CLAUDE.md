@@ -147,7 +147,8 @@ gh issue view <N> --comments | cat
 Read every referenced file, related code, and relevant test patterns, then invoke the `mattpocock-skills:grilling` skill with a description of the change the issue asks for (`grill-me` is the user-typed alias for the same skill). The grilling is done when the user has agreed, in writing, on:
 - Scope limits and design choices
 - Every scenario the automated test must cover (happy path, failure modes, edge cases — e.g. "what if the box is full?", "what if party is at minimum?")
-- The exact visual flow the demo GIF must show (which menus, which transitions, what on-screen text confirms success)
+- Whether the change shows in the game: does something on the GBA screen look or behave differently? When it doesn't, there is no recording and no demo GIF (step 8).
+- For a change that shows, the exact visual flow the demo GIF and the recording must show (which menus, which transitions, what on-screen text confirms success)
 - The pass/fail criteria for each check (what value is read, from which address, expected vs. actual)
 
 Under-specified tests are the single biggest source of rework on this project.
@@ -172,6 +173,7 @@ Tracker settings for this repo:
 - Reference `#<N>` under the ticket's `## Parent` heading and list each blocker as `#<M>` under `## Blocked by`. These body sections are the blocking edges.
 - Leave labels off; this repo has no triage labels.
 - Each ticket's acceptance criteria carry its share of the test scenarios, demo flow, and pass/fail criteria from step 2.
+- Each ticket's acceptance criteria say whether it records: "Recording: <test>, showing …" only for a change you can see in the game (step 8), otherwise "No recording: no in-game behaviour changes."
 - A ticket that adds, removes or changes a script, the workflow or autodev lists updating `docs/SYSTEM_MAP.md` among its acceptance criteria.
 
 **5. Implement the frontier in parallel**
@@ -191,8 +193,16 @@ ln -s "$(git worktree list | head -1 | cut -d' ' -f1)/tools/agbcc" tools/agbcc
 - Write a failing test first, then implement until it passes.
 - Build must be clean: `make -j$(nproc) firered`
 
-**8. Record a test run**
-Write the recording's notes first, then record with them on stdin (`--notes -`), as a heredoc:
+**8. Record a test run, only for a change you can see in the game**
+A recording is made only when the change makes something on the GBA screen look or behave differently. These get no recording, even when a test of them runs in the game:
+- a change to tests, tooling, autodev, docs, the recordings page or the recorder itself;
+- a new test of behaviour the game already had.
+
+Their PR says "No recording: no in-game behaviour changes." and the rest of this step is skipped.
+
+In a session autodev started, `record_test.sh` backs the rule up: it refuses to record (and so does `--check`) when the branch changes no file the ROM is built from. That is every file that differs from where the branch left master (`git merge-base HEAD origin/master`): commits, staged and unstaged edits, untracked new files, deletions and renames. The game is anything under `src/`, `include/`, `asm/`, `data/`, `graphics/`, `sound/`, `constants/` or `tools/`, plus the top-level `Makefile`, `config.mk`, `*.mk`, `ld_script*.ld`, `sym_*.txt` and `charmap.txt`. With no `origin/master` or no commit shared with it, it can't tell, so it refuses too. It judges paths, not the screen: a `src/` change you can't see, such as a refactor, gets past it, and the rule above still says not to record it. Your own recordings are never refused.
+
+For a change you can see, write the recording's notes first, then record with them on stdin (`--notes -`), as a heredoc:
 ```bash
 bash test/record_test.sh --notes - test/tests/<relevant_test>.lua <<'EOF'
 ticket: <T> <the ticket's title>
@@ -231,7 +241,7 @@ With a recording, the PR body links each recording's own page: one `Recording: h
 python3 test/tools/recording_notes.py set-pr <name> <PR>
 ```
 
-Once the frontier's PRs are created, post the following in your response to the user, with one `Recording` line per recording (the same lines as in the PR bodies) and one `Branch README` line per branch:
+Once the frontier's PRs are created, post the following in your response to the user, with one `Branch README` line per branch. The first three lines are only for recordings: list them, with one `Recording` line per recording (the same lines as in the PR bodies), only when there are any.
 ```
 Recordings available at: http://100.76.129.86:8080
 (run: python3 test/serve_recordings.py)
@@ -304,9 +314,10 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
   - `open-pr --title "Fix #<T>: …"` opens your PR into master from the branch checked out here, with the body on stdin. It refuses a body without Fixes #<T> and @MinimalEffort07 written as plain text: GitHub ignores both inside code, so the ticket wouldn't close and the owner wouldn't be notified. It also refuses a body without a `## What changes for you` section (step 11).
 - Run `bash test/run_suite.sh` before opening the PR. It takes about 10 minutes, and longer while another session runs its own, which is more than one foreground command may run. So start it in the background with its output in a log file, and before opening the PR wait for it to finish with a loop on that log (e.g. `until grep -q "^SUITE" suite.log; do sleep 15; done`).
 - Report your result once, at the very end, after every step has finished. Never report while a command is still running.
+- Record only a change you can see in the game (step 8). In your session `record_test.sh` (`--check` too) refuses when your branch changes no file the ROM is built from, and its message says what to do instead. When your ticket's acceptance criteria ask for a recording that the rule or that refusal rules out, leave the recording out, say "No recording: no in-game behaviour changes." in the PR, name the criterion there, and carry on: that isn't a failure, because the rule is newer than any ticket written before it.
 - `record_test.sh` waits for any other recording on the machine to finish (it takes a machine-wide lock itself), so a recording may start late.
 - Every recording you make has notes (step 8). In an autodev session, `record_test.sh` refuses to record without them, and refuses notes whose `ticket:` isn't your ticket or that have no `parent:` (your ticket's `## Parent`). Your settings deny any command naming the session variables, heredocs included, so if your notes must name them, write the notes to a file with the Write tool and pass `--notes FILE`.
-- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the tests run with the suite result, the "Recordings available at…" and "Branch README" lines with a `Recording: http://100.76.129.86:8080/r/<name>` line under them for each recording (or "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
+- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the tests run with the suite result, the "Branch README" line, the "Recordings available at…" lines with a `Recording: http://100.76.129.86:8080/r/<name>` line under them for each recording only when there are any (otherwise "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
 - `open-pr` prints the PR's number (`#97 <its URL>`). Then run `python3 test/tools/recording_notes.py set-pr <name> <PR>` for each recording (step 11).
 - Push only your own branch: `git push -u origin issue-<T>-<slug>`. Never push to master, force-push or merge.
 - If you can't finish, push the unfinished branch before reporting `failed`.
@@ -317,7 +328,7 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
   - `read <PR>` shows the PR's comments, reviews and inline comments (each inline one with its file and line), with an id on each, and marks the owner's unhandled ones `[unhandled]`. `read <T>` shows the ticket.
   - `pr-comment` replies on your PR, with the body on stdin. It adds the handled-through marker naming the comment your prompt names.
 - Address every unhandled comment from the owner up to and including the one your prompt names, in one pass. Leave newer ones alone: they get a follow-up session.
-- For each change: TDD, a clean build, `cd automation && python3 -m unittest` if `automation/` changed, the README and `docs/SYSTEM_MAP.md` if they describe what changed, and a fresh recording if the change is visible in-game. A fresh recording gets notes too (step 8), and its PR's number is filled in by itself, so it needs no `set-pr`; link its page in your reply with a `Recording:` line. Then run `bash test/run_suite.sh` in the background and wait on its log, as in the ticket role.
+- For each change: TDD, a clean build, `cd automation && python3 -m unittest` if `automation/` changed, the README and `docs/SYSTEM_MAP.md` if they describe what changed, and a fresh recording only if the change makes something on the GBA screen look or behave differently (step 8). `record_test.sh` refuses to record when the branch changes no file the ROM is built from; when the owner asks for a recording that it refuses, leave the recording out, say so in your reply, and carry on rather than fail. A fresh recording gets notes too (step 8), and its PR's number is filled in by itself, so it needs no `set-pr`; link its page in your reply with a `Recording:` line. Then run `bash test/run_suite.sh` in the background and wait on its log, as in the ticket role.
 - A comment that only asks a question needs no change: answer it in the reply.
 - Push only your own branch (`git push origin <the PR's branch>`), then `pr-comment` what you did about each comment (and, if that changes what's different for the owner, an updated "What changes for you"), @mentioning @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it). Report `done` once the reply is posted.
 - Never merge master in (the merge session does that), merge, squash, rebase or force-push.
