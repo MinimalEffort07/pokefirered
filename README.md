@@ -73,6 +73,7 @@ Every test is a Lua script in `test/tests/` that boots the ROM in mGBA's headles
 bash test/run_suite.sh                                    # the whole suite: exit code 0 = every test passed
 bash test/run_test.sh test/tests/test_pc_anywhere.lua     # one test: exit code 0 = pass, 1 = fail, 124 = timed out
 bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA window, recorded to video
+bash test/record_test.sh --notes notes.txt test/tests/test_pc_anywhere.lua  # recorded, with notes saying what it's for
 ```
 
 **Recordings run one at a time.** `record_test.sh` films the whole virtual display and closes any other mGBA window, so it takes a machine-wide lock (`/tmp/autodev-record.lock`) first. A second recording started meanwhile, from any worktree, prints "Waiting for another recording to finish…" and starts once the first is done. `run_test.sh` and `run_suite.sh` don't need the display, so they run alongside a recording.
@@ -94,14 +95,47 @@ bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA
 
 `test/tests/test_recording_size.lua` checks both scripts on synthetic captures made like the real one: the encode's profile, picture size, frame rate, index position, settings and file size; a broken or cut-short input; and the shrink tool's names, times, originals and second run.
 
+**Recordings carry notes.** `--notes FILE` (or `--notes -` for stdin) gives a recording notes that say which ticket, feature (the parent issue) and PR it belongs to, what it tests, what the problem was and what you should see. The recordings page shows them on the recording's card:
+
+```
+ticket: 90 Shaking patches survive a field reload
+parent: 87 The Poke Radar
+pr: 97
+
+## What's tested
+The radar's four patches after closing the BAG or POKéMON, after Continue, and after a warp.
+
+## The problem
+Rebuilding the field destroyed the patch sprites, but the radar still counted them as live.
+
+## What you should see
+Four patches shake. The BAG opens and closes, and the same four still shake.
+```
+
+- **Headers.** The lines before the first `## ` heading are optional headers, each allowed once. `ticket:` and `parent:` take an issue number (with or without `#`), a space and its title; `pr:` takes a number. Any other key is refused, naming it.
+- **Sections.** With notes, all three sections are required: each once, each with text, in any order. Any other `## ` heading is refused, naming it.
+- **Plain text.** The page keeps the notes' line breaks and doesn't render Markdown.
+- **Checked first.** `record_test.sh` checks the arguments and the notes before it waits for the recording lock or starts anything, and lists every problem it finds, so bad notes cost a second, not a recording. `bash test/record_test.sh --check --notes FILE TEST` only checks: it prints the verdict and the name the video would get, and exits 0 or 1 without recording. A test must never run `record_test.sh` without `--check`: a real recording closes every mGBA window on the machine.
+- **The ticket in the name.** When the notes name a ticket, the video's name starts with it: `issue-90_test_poke_radar_patch_reload_20261020_134554.mp4`.
+- **The notes file.** Every recording, with notes or without, gets `<name>.json` beside `<name>.mp4`, written by `test/tools/recording_notes.py`. It holds the notes and what the recorder knows itself: when it started, the test, the branch and commit as it started (and whether tracked files differed from that commit), and the run's pass and fail counts (`null` when the test didn't finish). The helper's header has the format.
+- **The last two lines** are the command that keeps both files, and the recording's own page:
+
+  ```
+  mv /tmp/mgba-recordings/<name>.mp4 /tmp/mgba-recordings/<name>.json ~/recordings/
+  http://100.116.114.81:8080/r/<name>
+  ```
+
+`test/tests/test_recording_notes.lua` checks the notes `--check` accepts and refuses, the name, the notes file the helper writes, and how the page shows notes files, including broken ones.
+
 **The recordings page.** `test/serve_recordings.py` shows the videos at http://100.116.114.81:8080 (`autodev-recordings.service` runs it):
 
-- **Two sections, each newest first.** Kept recordings (`~/recordings`, kept for good) come first, then scratch ones (`/tmp/mgba-recordings`, not kept yet and cleared on reboot). "Newest" goes by when a recording ended: its video's modification time, which `mv` keeps. Videos in subfolders aren't listed.
-- **A card per video.** Its title comes from the file name: `issue-24-safety-net.mp4` is "#24 safety net", linked to issue #24, and `issue-90_test_x_20261020_134554.mp4` is "#90 test_x". Other names lose only their `_<date>_<time>` ending: `test_follower_swap_20261020_145947.mp4` is "test_follower_swap". Under the title come when it was recorded (this machine's time), its size, its file name, and a link to its own page.
+- **Two sections, each newest first.** Kept recordings (`~/recordings`, kept for good) come first, then scratch ones (`/tmp/mgba-recordings`, not kept yet and cleared on reboot). "Newest" goes by when a recording was made: the time in its notes file, or, for a video without one, its modification time (when its recording ended, which `mv` keeps). Videos in subfolders aren't listed, and nor is a notes file without its video.
+- **A card per video, from its notes file.** The title is the ticket, "#90 Shaking patches survive a field reload", linked to it; with no ticket in the notes, the test's name. Under it come "Part of #87 …" and "PR #97", each linked, when the notes name them. Then the three notes, under "What's tested", "The problem" and "What you should see": beside the video on a wide screen, above it on a phone. A small facts line says when it was recorded (this machine's time), the test, the branch and commit ("with uncommitted changes" when so), the result ("215 of 215 checks passed", "3 of 215 checks failed", "no checks: a demo or probe" or "no result: the test didn't finish"), the size, the file name, and a link to its own page. A recording made without notes says "No notes for this recording."
+- **A card for a video without a notes file** (one recorded before notes existed) takes its title from the file name: `issue-24-safety-net.mp4` is "#24 safety net", linked to issue #24, and `issue-90_test_x_20261020_134554.mp4` is "#90 test_x". Other names lose only their `_<date>_<time>` ending: `test_follower_swap_20261020_145947.mp4` is "test_follower_swap". Its facts are when it was recorded, its size and its file name, and it says "No notes for this recording." A notes file that can't be read gets the same card, saying "notes file unreadable": no single file can break the page.
 - **A page per recording.** `/r/<name>`, where `<name>` is the file name without `.mp4`, shows just that video, so a phone loads one video instead of all of them. It looks in `~/recordings` first, then `/tmp/mgba-recordings`, so a link made before a video was moved still works.
 - **Videos stream.** The page answers requests in parallel and sends each video in pieces, so a seek, a second video or the page itself never waits behind a slow download.
 - **Previewing a branch's page.** Port 8080 runs master's page. To see a branch's, run `python3 test/serve_recordings.py --port 8081` in that checkout and open http://100.116.114.81:8081. `--kept DIR` and `--scratch DIR` point it at other folders. `--print PATH` prints what a GET of `PATH` (`/` or `/r/<name>`) would return, status code first, without opening a port; `test/tests/test_recordings_page.lua` checks the page that way, on fixture folders of its own.
-- **One file.** The server imports only Python's standard library, because autodev restarts the page when a merge changes that one file.
+- **One file.** The server imports only Python's standard library, and reads the notes files itself rather than through the helper, because autodev restarts the page when a merge changes that one file.
 
 **The whole suite.** `test/run_suite.sh` is the check a change must pass before it is merged:
 

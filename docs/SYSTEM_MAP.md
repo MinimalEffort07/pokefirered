@@ -12,7 +12,7 @@ How this repo's machinery fits together: autodev, the tests, the recordings, and
 |---|---|---|
 | The game | `src/`, `data/`, `include/`, `Makefile` | The FireRed decompilation plus the fork's features (the generated Mt. Moon, the walking Pokémon, multiplayer and the rest; see `README.md`). `make firered` builds `pokefirered.gba`: `Makefile` and `config.mk` drive it, it compiles the host tools in `tools/` first, and the old compiler, agbcc, sits in `tools/agbcc` (linked into each worktree). |
 | The tests | `test/` | Lua scripts drive a patched mGBA emulator: they press buttons, read game memory and assert. `test/run_suite.sh` must pass before anything merges. |
-| The recordings | `test/record_test.sh`, `test/serve_recordings.py`, `test/tools/captioned_gif.py`, `gifs/` | `test/record_test.sh` films a test to video so you can watch what a PR changed, encoded small enough to stream to a phone, and `test/serve_recordings.py` lists the videos on a web page, newest first. `test/lib/frame_capture.lua` and `test/tools/captioned_gif.py` turn a demo's frames into the README's GIFs. |
+| The recordings | `test/record_test.sh`, `test/tools/recording_notes.py`, `test/serve_recordings.py`, `test/tools/captioned_gif.py`, `gifs/` | `test/record_test.sh` films a test to video so you can watch what a PR changed, encoded small enough to stream to a phone. Beside each video it keeps a notes file: which ticket, feature and PR the recording is for, what it tests, what the problem was, what you should see, and the run's result. `test/serve_recordings.py` lists the videos on a web page, newest first, each card titled with its ticket and showing its notes. `test/lib/frame_capture.lua` and `test/tools/captioned_gif.py` turn a demo's frames into the README's GIFs. |
 | Autodev | `automation/` | A small Python dispatcher plus headless Claude sessions. Together they run CLAUDE.md's GitHub Issue Workflow from issue to merged PR. |
 
 ## The loop
@@ -128,7 +128,7 @@ flowchart LR
   ROM["pokefirered.gba<br/>make firered"]
   ROM --> RT["run_test.sh<br/>one test"] --> HL["mgba-headless<br/>patched mGBA runs the .lua"] --> OUT["/tmp/mgba-test.XXXXXX<br/>results JSON, screenshots"] --> EX["exit 0 / 1 / 124<br/>pass / fail / timed out"]
   ROM --> RS["run_suite.sh<br/>the gate before every merge"] --> X4["run_test.sh, 4 at a time<br/>1500 s limit each"] --> SUM["summary<br/>exit 0 only if every test passed"]
-  ROM --> RC["record_test.sh<br/>film one test"] --> QT["mgba-qt on Xvfb :1<br/>ffmpeg captures the screen fast"] --> ENC["encode_recording.sh<br/>5 to 8 times smaller"] --> MP4["/tmp/mgba-recordings<br/>then ~/recordings"] --> SRV["port 8080<br/>linked from the PR"]
+  ROM --> RC["record_test.sh --notes<br/>film one test"] --> QT["mgba-qt on Xvfb :1<br/>ffmpeg captures the screen fast"] --> ENC["encode_recording.sh<br/>5 to 8 times smaller"] --> MP4["/tmp/mgba-recordings<br/>video + notes file,<br/>then ~/recordings"] --> SRV["port 8080<br/>a card per video, with its notes,<br/>linked from the PR"]
   ROM --> DM["a demo test<br/>run with MGBA_FRAME_DIR"] --> FC["frame_capture.lua<br/>PNG frames + captions"] --> CG["captioned_gif.py<br/>2x scale, caption bar"] --> GIF["gifs/<br/>shown in the README"]
 ```
 
@@ -138,6 +138,7 @@ All four paths start from the same ROM. The top two prove the change and need no
 - **Each run gets its own folder** (`/tmp/mgba-test.XXXXXX`), so several worktrees can test at the same time. The suite deletes the folders of passing runs and keeps failures with their `run_test.log`.
 - **Recordings take turns.** `test/record_test.sh` films the whole virtual display, so it holds a machine-wide lock (`/tmp/autodev-record.lock`) and a second recording waits.
 - **Recordings are small enough to stream.** The live capture is fast but big (about 3 Mbps). Once it ends and the lock is released, `test/tools/encode_recording.sh` encodes it again, slowly and well, into `/tmp/mgba-recordings`: 5 to 8 times smaller, with the scripting log as readable as before. If that encode fails, the capture is kept as the video.
+- **Recordings carry notes.** `record_test.sh --notes FILE` takes a few lines saying which ticket, feature and PR the recording is for, what it tests, what the problem was and what you should see. It checks them before it waits for the lock, so bad notes cost a second, not a recording (`--check` only checks). Every video then gets `<name>.json` beside it, with the notes, when it was recorded, the test, the branch and commit, and the run's result; the script's last lines are the `mv` that keeps both files and the recording's own page.
 - **The tests need the patched mGBA** in `~/projects/minimaleffort/mgba/build` (a screenshot fix and a fast-forward scripting API). Stock mGBA won't do.
 - **Autodev has its own unit tests** in `automation/tests/`, run with `cd automation && python3 -m unittest`. About half of them pin down the rules in `automation/autodev/decide.py`.
 
@@ -176,8 +177,8 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/run_test.sh` | Runs one Lua test in headless mGBA. Exit 0 pass, 1 fail, 124 timed out. |
 | `test/run_suite.sh` | Runs every top-level test, 4 at a time, in about 10 minutes. Must pass before a merge. |
 | `test/suite_exclude.txt` | The tests the suite skips, each with a one-line reason. The suite refuses to start on a line without one. |
-| `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. It captures fast, then encodes the video small enough to stream with `test/tools/encode_recording.sh`, after it has let the next recording start. |
-| `test/serve_recordings.py` | The recordings page on port 8080, run by `autodev-recordings.service`: the videos newest first, each with its own page. `--port 8081` previews a branch's page. `test/tests/test_recordings_page.lua` checks it. The dispatcher restarts it when a merge changes this file, so it must stay one file that imports only Python's standard library. |
+| `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. It captures fast, then encodes the video small enough to stream with `test/tools/encode_recording.sh`, after it has let the next recording start. `--notes FILE` says what the recording is for; the notes are checked before anything starts (`--check` only checks), a ticket they name starts the video's name, and every video gets a notes file beside it. It ends with the `mv` that keeps both files and the recording's page. |
+| `test/serve_recordings.py` | The recordings page on port 8080, run by `autodev-recordings.service`: the videos newest first, each with its own page. A card shows its notes file: the ticket as its title, the parent and PR, the three notes, and when, the test, the branch and commit and the result. A video without a notes file gets a title from its file name. `--port 8081` previews a branch's page. `test/tests/test_recordings_page.lua` and `test/tests/test_recording_notes.lua` check it. The dispatcher restarts it when a merge changes this file, so it must stay one file that imports only Python's standard library, and it reads the notes files itself. |
 | `test/mgba-qt.sh` | Opens the patched mGBA window by hand. |
 | `test/lib/framework.lua` | The test framework: press buttons, wait frames, assert, write results. Every test loads it. |
 | `test/lib/addresses.lua` | Where game variables sit in memory, for the older tests that hard-code addresses. |
@@ -197,6 +198,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/tests/` | The tests and demos. `test/tests/mt_moon_checks/` holds the Mt. Moon property checks. `suite_fixtures/` and `framework_fixtures/` hold the small scripts that `test/tests/test_run_suite.lua` and `test/tests/test_framework_rules.lua` run to check the runners. |
 | `test/demos/` | A demo kept outside the suite. |
 | `test/tools/captioned_gif.py` | Turns a demo's captured frames into a captioned README GIF (`--font-size` for long captions). |
+| `test/tools/recording_notes.py` | A recording's notes for `test/record_test.sh`: `check` checks them, `ticket` gives the ticket number for the video's name, `write` writes the notes file beside the video with what the recorder knows (when, the test, the branch and commit), and `set-result` adds the run's result once the test has finished. Its header has the notes' rules and the file's format. |
 | `test/tools/encode_recording.sh` | Encodes one recording small enough to stream, 5 to 8 times smaller than the live capture. The settings live only here, each explained. `test/record_test.sh` and `test/tools/shrink_recordings.sh` use it. |
 | `test/tools/shrink_recordings.sh` | Shrinks the videos already kept (`~/recordings` by default) the same way, keeping their names and times, and moves each original into `originals/` there. Safe to run again: it only touches videos not shrunk yet. |
 | `test/tools/render_cave.py` | Draws a map, vanilla or a dumped generated cave, to PNG. |
@@ -229,8 +231,8 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `~/autodev/logs/` | Each session's full log, `<role>-<issue>-<time>.jsonl`, kept 30 days. |
 | `~/.local/state/autodev/sessions/` | The dispatcher's records. Delete `paused-until` there to lift a usage-limit pause early. |
 | `~/.config/autodev/env` | The bot's token. Mode 600, never committed. |
-| `/tmp/mgba-test.*`, `/tmp/mgba-recordings/` | Per-run test folders and fresh videos. Cleared on reboot. |
-| `~/recordings/` | Videos kept for good. |
+| `/tmp/mgba-test.*`, `/tmp/mgba-recordings/` | Per-run test folders, and fresh videos with their notes files. Cleared on reboot. |
+| `~/recordings/` | Videos kept for good, each `<name>.mp4` with its notes file `<name>.json` (videos recorded before notes existed have none). |
 | `~/recordings/originals/` | The full-size originals of the videos `test/tools/shrink_recordings.sh` shrank. The recordings page doesn't list them. Put one back with `mv`, or delete the folder once you're happy. |
 
 ## Check on it

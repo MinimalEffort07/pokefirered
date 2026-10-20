@@ -8,8 +8,8 @@ first:
              before it is moved to be kept. Cleared on reboot.
 
 Pages:
-  /                  every video, as a card: its title, when it was
-                     recorded, its size and its file name.
+  /                  every video, as a card: its title, its notes, when it
+                     was recorded, its size and its file name.
   /r/<name>          one recording's own page (<name> is its file name
                      without .mp4). It looks in the kept folder first,
                      then scratch, so a link made before a video was
@@ -17,6 +17,16 @@ Pages:
   /final/<file>.mp4    a kept video file, and
   /scratch/<file>.mp4  a scratch one. Browsers ask for them in pieces,
                        to start playing early and to seek.
+
+NOTES: record_test.sh writes <name>.json beside each <name>.mp4, the
+video's notes file (test/tools/recording_notes.py has its format). It
+holds the ticket, the parent issue and the PR the recording belongs to,
+three short notes (what's tested, the problem, what you should see) and
+what the recorder knew itself: when, the test, the branch and commit, and
+the run's result. A card shows all of it. A video without a notes file
+(one recorded before notes existed) gets a card made from its file name.
+A notes file that can't be read or used gets that card too, saying so: no
+single file can break the page.
 
 Run with no arguments it serves port 8080, as autodev-recordings.service
 does. To preview a branch's page, run it in that checkout on a spare port:
@@ -35,6 +45,7 @@ import argparse
 import datetime
 import html
 import http.server
+import json
 import os
 import re
 import sys
@@ -45,6 +56,19 @@ DEFAULT_KEPT = "~/recordings"
 DEFAULT_SCRATCH = "/tmp/mgba-recordings"
 
 ISSUE_URL = "https://github.com/MinimalEffort07/pokefirered/issues/{}"
+PULL_URL = "https://github.com/MinimalEffort07/pokefirered/pull/{}"
+
+# A notes file is a few hundred bytes. One bigger than this isn't read, so
+# a stray huge file can't slow the page down.
+NOTES_LIMIT = 1000 * 1000
+
+# A recording's three notes: their key in the notes file, and the heading
+# the card shows them under, in the card's order.
+NOTE_SECTIONS = [
+    ("tested", "What's tested"),
+    ("problem", "The problem"),
+    ("expect", "What you should see"),
+]
 
 # How much of a video is read from disk and sent at a time. A video is sent
 # piece by piece rather than read whole, so the server's memory stays the
@@ -69,8 +93,20 @@ h2 {{ color: #00c0ff; margin-top: 1.5em; margin-bottom: 0.2em; font-size: 1em; }
 .card {{ background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 6px;
          margin-bottom: 1.5em; padding: 1em; }}
 .title {{ color: #00ff88; font-size: 1em; margin-bottom: 0.4em; }}
+.links {{ color: #bbb; font-size: 0.85em; margin-bottom: 0.4em; }}
 .facts {{ color: #888; font-size: 0.8em; margin-bottom: 0.8em; }}
+.no-notes {{ color: #777; font-size: 0.8em; margin-bottom: 0.8em; }}
 video {{ width: 100%; border-radius: 4px; background: #000; }}
+/* The notes sit above the video on a phone, and beside it on a wide
+   screen: a grid of one column, or of two (notes, then video). */
+.main {{ display: grid; gap: 1em; }}
+@media (min-width: 900px) {{
+  .main {{ grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-items: start; }}
+}}
+.notes h3 {{ color: #00c0ff; font-size: 0.85em; margin: 0.9em 0 0.2em; }}
+.notes h3:first-child {{ margin-top: 0; }}
+/* pre-wrap keeps the notes' own line breaks, and still wraps long lines. */
+.notes p {{ white-space: pre-wrap; font-size: 0.85em; line-height: 1.4; }}
 </style>
 </head>
 <body>
@@ -127,26 +163,137 @@ def title_of(name):
     return base, None
 
 
-class Video:
-    """One .mp4 file in a source folder."""
+class NotesUnreadable(Exception):
+    """A notes file is there but can't be used: it can't be read, isn't
+    JSON, is too big, or holds a field of the wrong kind."""
 
-    def __init__(self, source, filename, size, mtime):
+
+def parse_time(text):
+    """recorded_at, e.g. "2026-10-20T13:45:54+11:00", as seconds since
+    1970. A time without a UTC offset is taken as this machine's. The time
+    must also be one this machine can show (year 1 can't, in Sydney)."""
+    if not isinstance(text, str):
+        raise NotesUnreadable
+    try:
+        seconds = datetime.datetime.fromisoformat(text).timestamp()
+        format_time(seconds)
+    except (ValueError, OverflowError, OSError):
+        raise NotesUnreadable
+    return seconds
+
+
+def optional(data, key, kind):
+    """data[key] when it is a `kind`, None when it is null or missing."""
+    value = data.get(key)
+    if value is None:
+        return None
+    # JSON's true and false are Python bools, which also count as ints.
+    if not isinstance(value, kind) or (kind is int and isinstance(value, bool)):
+        raise NotesUnreadable
+    return value
+
+
+def whole_number(value, least):
+    """`value` when it is a whole number of at least `least`."""
+    if not isinstance(value, int) or isinstance(value, bool) or value < least:
+        raise NotesUnreadable
+    return value
+
+
+def read_notes_file(path):
+    """The notes file at `path`, checked, as a dict (a video's "record")
+    with every field of the format (None where the file has null) plus
+    "recorded", recorded_at in seconds since 1970. Its "notes" are the
+    three notes themselves. None when there is no such file. Raises
+    NotesUnreadable when the file is there but can't be used."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(NOTES_LIMIT + 1)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise NotesUnreadable
+    if len(raw) > NOTES_LIMIT:
+        raise NotesUnreadable
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):    # UnicodeDecodeError is a ValueError
+        raise NotesUnreadable
+    if not isinstance(data, dict):
+        raise NotesUnreadable
+
+    record = {"recorded": parse_time(data.get("recorded_at"))}
+    for key in ("test", "branch", "commit"):
+        record[key] = optional(data, key, str)
+    record["uncommitted_changes"] = optional(data, "uncommitted_changes", bool)
+    record["result"] = optional(data, "result", dict)
+    if record["result"] is not None:
+        record["result"] = {key: whole_number(record["result"].get(key), 0)
+                            for key in ("pass", "fail")}
+    for key in ("ticket", "parent"):
+        issue = optional(data, key, dict)
+        if issue is not None:
+            title = issue.get("title")
+            if not isinstance(title, str):
+                raise NotesUnreadable
+            issue = {"number": whole_number(issue.get("number"), 1), "title": title}
+        record[key] = issue
+    pr = data.get("pr")
+    record["pr"] = None if pr is None else whole_number(pr, 1)
+    record["notes"] = optional(data, "notes", dict)
+    if record["notes"] is not None:
+        for key, _ in NOTE_SECTIONS:
+            if not isinstance(record["notes"].get(key), str):
+                raise NotesUnreadable
+    return record
+
+
+class Video:
+    """One .mp4 file in a source folder, and its notes file."""
+
+    def __init__(self, source, filename, size, mtime, record=None,
+                 notes_unreadable=False):
         self.source = source
         self.filename = filename    # e.g. test_x_20261020_134554.mp4
         self.name = filename[:-4]   # without .mp4: its page is /r/<name>
         self.size = size
         self.mtime = mtime          # seconds since 1970: when the recording ended
-        self.title, self.issue = title_of(self.name)
+        self.record = record        # its notes file (read_notes_file), or None
+        self.notes_unreadable = notes_unreadable    # a notes file it can't use
+        # When it was recorded: its notes file says, else its file's time.
+        self.recorded = record["recorded"] if record else mtime
+        self.title, self.title_link = self._title()
+
+    def _title(self):
+        """The card's title and the link it carries (None for none): the
+        ticket the notes name, else the test's name; with no notes file,
+        the title made from the file name (title_of)."""
+        record = self.record
+        if record is not None and record["ticket"] is not None:
+            number = record["ticket"]["number"]
+            return f'#{number} {record["ticket"]["title"]}', ISSUE_URL.format(number)
+        if record is not None and record["test"]:
+            test = os.path.basename(record["test"])
+            if test.endswith(".lua"):
+                test = test[:-len(".lua")]
+            if test:
+                return test, None
+        title, issue = title_of(self.name)
+        return title, (ISSUE_URL.format(issue) if issue is not None else None)
 
 
-def list_videos(source):
-    """The folder's own .mp4 files (not those in subfolders), newest first.
+def list_videos(source, with_notes=True):
+    """The folder's own .mp4 files (not those in subfolders), newest first,
+    each with its notes file read (with_notes=False skips that, when only
+    the file is wanted).
 
-    A video's modification time is when its recording ended: ffmpeg writes
-    the file until the recording stops, and `mv` keeps the time. A folder
-    that doesn't exist yet has no videos, and a file that vanishes while
-    the folder is read (a recording being moved) is skipped, so no single
-    file can break the page."""
+    "Newest" goes by when a video was recorded: the time in its notes
+    file, or, for a video without one, its modification time. That is when
+    its recording ended: ffmpeg writes the file until the recording stops,
+    and `mv` keeps the time. A folder that doesn't exist yet has no videos,
+    and a file that vanishes while the folder is read (a recording being
+    moved) is skipped, so no single file can break the page. A notes file
+    without its video isn't listed: only .mp4 files are."""
     videos = []
     try:
         entries = list(os.scandir(source.directory))
@@ -162,10 +309,18 @@ def list_videos(source):
             st = entry.stat()
         except OSError:
             continue
-        videos.append(Video(source, entry.name, st.st_size, st.st_mtime))
+        record, unreadable = None, False
+        if with_notes:
+            try:
+                record = read_notes_file(os.path.join(source.directory,
+                                                      entry.name[:-4] + ".json"))
+            except NotesUnreadable:
+                unreadable = True
+        videos.append(Video(source, entry.name, st.st_size, st.st_mtime,
+                            record, unreadable))
     # Newest first; two videos with the same time go by name, so the order
     # never changes between page loads.
-    videos.sort(key=lambda v: (-v.mtime, v.name))
+    videos.sort(key=lambda v: (-v.recorded, v.name))
     return videos
 
 
@@ -199,36 +354,116 @@ def format_time(mtime):
     return datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
 
 
-def find_video(sources, filename):
+def find_video(sources, filename, with_notes=True):
     """The video called `filename` in the first of `sources` that lists it,
     or None. Only a file the folder's own listing holds can match, so a
     name such as "../x.mp4" or "sub/x.mp4" never reaches a file."""
     for source in sources:
-        for video in list_videos(source):
+        for video in list_videos(source, with_notes):
             if video.filename == filename:
                 return video
     return None
 
 
+def result_text(result):
+    """The run's result in plain words, from a notes file's "result"."""
+    if result is None:
+        return "no result: the test didn't finish"
+    passed, failed = result["pass"], result["fail"]
+    total = passed + failed
+    if total == 0:
+        return "no checks: a demo or probe"
+    checks = "check" if total == 1 else "checks"
+    if failed:
+        return f"{failed} of {total} {checks} failed"
+    return f"{passed} of {total} {checks} passed"
+
+
+def source_text(record):
+    """Where the test was run from, e.g. "branch issue-90-x at cae067302,
+    with uncommitted changes", or "" when the notes file doesn't know."""
+    branch, commit = record["branch"], record["commit"]
+    if branch and commit:
+        text = f"branch {branch} at {commit}"
+    elif commit:
+        text = f"commit {commit}"
+    elif branch:
+        text = f"branch {branch}"
+    else:
+        return ""
+    if record["uncommitted_changes"]:
+        text += ", with uncommitted changes"
+    return text
+
+
+def facts(video, page_link):
+    """A card's facts line, as HTML: when it was recorded, and, from its
+    notes file, the test, where it was run from and the result; then its
+    size, its file name and (on the main page) a link to its own page."""
+    items = [f"Recorded {format_time(video.recorded)}"]
+    record = video.record
+    if record is not None:
+        if record["test"]:
+            items.append(esc(record["test"]))
+        source = source_text(record)
+        if source:
+            items.append(esc(source))
+        items.append(esc(result_text(record["result"])))
+    items.append(format_size(video.size))
+    items.append(f'<span class="file">{esc(video.filename)}</span>')
+    if page_link:
+        items.append(f'<a href="/r/{url_part(video.name)}">own page</a>')
+    return " · ".join(items)
+
+
+def under_title(record):
+    """The line under a card's title: "Part of #87 <title>" and "PR #97",
+    each linked, when the notes file names them ("" when neither)."""
+    if record is None:
+        return ""
+    items = []
+    parent = record["parent"]
+    if parent is not None:
+        number = parent["number"]
+        text = esc(f"#{number} {parent['title']}")
+        items.append(f'Part of <a href="{esc(ISSUE_URL.format(number))}">{text}</a>')
+    if record["pr"] is not None:
+        items.append(f'<a href="{esc(PULL_URL.format(record["pr"]))}">'
+                     f'PR #{record["pr"]}</a>')
+    return " · ".join(items)
+
+
 def card(video, page_link=True):
-    """One video's card. Its title links to its issue, when it has one, and
-    (on the main page) its facts end with a link to its own page."""
+    """One video's card: its title (linked to its ticket, when it has one),
+    the parent and PR, its facts line, its notes and its video. On the main
+    page its facts end with a link to its own page."""
     title = esc(video.title)
-    if video.issue is not None:
-        title = f'<a href="{esc(ISSUE_URL.format(video.issue))}">{title}</a>'
-    own_page = (f' · <a href="/r/{url_part(video.name)}">own page</a>'
-                if page_link else "")
-    return (
-        '<div class="card">\n'
-        f'<div class="title">{title}</div>\n'
-        f'<div class="facts">Recorded {format_time(video.mtime)} · '
-        f'{format_size(video.size)} · '
-        f'<span class="file">{esc(video.filename)}</span>{own_page}</div>\n'
-        f'<video controls preload="metadata">'
-        f'<source src="/{video.source.label}/{url_part(video.filename)}" '
-        f'type="video/mp4"></video>\n'
-        '</div>'
-    )
+    if video.title_link is not None:
+        title = f'<a href="{esc(video.title_link)}">{title}</a>'
+    parts = ['<div class="card">', f'<div class="title">{title}</div>']
+    links = under_title(video.record)
+    if links:
+        parts.append(f'<div class="links">{links}</div>')
+    parts.append(f'<div class="facts">{facts(video, page_link)}</div>')
+    tag = (f'<video controls preload="metadata">'
+           f'<source src="/{video.source.label}/{url_part(video.filename)}" '
+           f'type="video/mp4"></video>')
+    notes = video.record["notes"] if video.record is not None else None
+    if video.notes_unreadable:
+        parts.append(f'<div class="no-notes">No notes: notes file unreadable '
+                     f'({esc(video.name)}.json).</div>')
+    elif notes is None:
+        parts.append('<div class="no-notes">No notes for this recording.</div>')
+    if notes is None:
+        parts.append(tag)
+    else:
+        # The text is escaped and shown as written: no Markdown.
+        sections = "\n".join(f'<h3>{esc(heading)}</h3>\n<p>{esc(notes[key])}</p>'
+                             for key, heading in NOTE_SECTIONS)
+        parts.append(f'<div class="main">\n<div class="notes">\n{sections}\n</div>\n'
+                     f'{tag}\n</div>')
+    parts.append('</div>')
+    return "\n".join(parts)
 
 
 def index_page(sources):
@@ -325,7 +560,7 @@ def video_file(path, sources):
     source = next((s for s in sources if s.label == parts[1]), None)
     if source is None:
         return None
-    video = find_video([source], unquote(parts[2]))
+    video = find_video([source], unquote(parts[2]), with_notes=False)
     if video is None:
         return None
     return os.path.join(source.directory, video.filename)
