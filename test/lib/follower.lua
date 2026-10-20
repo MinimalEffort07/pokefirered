@@ -13,7 +13,7 @@
 --   * read access to the follower's ObjectEvent (tile, held movement);
 --   * place(x, y): put the follower on a map tile, as a scenario's setup;
 --   * new_watch(): the per-frame "walkable tile" rule from issue #46 (see
---     below), plus a record of every tile change and teleport;
+--     below), plus a record of every tile change, teleport and swap;
 --   * map classification read from RAM and ROM: solid tiles, warps, water.
 --
 -- COORDINATES. Everything this library takes and returns is in map
@@ -32,9 +32,22 @@
 --     (the game's own sBehaviorSurfable table, read from the ROM);
 --   * is the current tile of another live object (an NPC, an item ball, a
 --     roaming Pokemon, the player).
--- The one exception is the spawn fallback: when no tile next to the player
--- is free, the follower spawns on the player's own tile, and may stay there
--- until its first step.
+-- Two exceptions:
+--   * The spawn fallback: when no tile next to the player is free, the
+--     follower spawns on the player's own tile, and may stay there until its
+--     first step, even when that tile is a warp (the player arrived on a
+--     cave mouth, say).
+--   * A swap (issue #99, see below) may put the follower on a warp: the
+--     tile the player stepped off, such as a doormat. It may stay there
+--     until its next step.
+--
+-- A SWAP is a frame on which the player and the follower trade tiles: the
+-- player's tile becomes the follower's tile of the frame before, and the
+-- follower's tile becomes the player's. The game makes one when the player
+-- walks, runs or rides into the standing follower (src/pokemon_follower.c,
+-- CanPlayerSwapWithFollower). Each swap is recorded with the frame each of
+-- the two steps ends on: the first frame its previous tile has caught up
+-- with its current one, as at the end of every step.
 --
 -- During a ledge jump the follower's tile is the landing tile. The engine's
 -- 2-tile jump (MOVEMENT_ACTION_JUMP_2_*) moves the ObjectEvent's tile one
@@ -83,10 +96,13 @@ local MAP_OFFSET = mm.MAP_OFFSET
 --   0x00 u32 bit flags: bit 0 active, bit 6 heldMovementActive,
 --        bit 7 heldMovementFinished, bit 16 isPlayer
 --   0x10 s16 currentCoords.x, 0x12 currentCoords.y
+--   0x14 s16 previousCoords.x, 0x16 previousCoords.y (the tile a step
+--        started from; equal to currentCoords once the step has ended)
 --   0x1C u8 movementActionId (the held movement being played)
 local OE_SIZE       = 0x24
 local OE_FLAGS      = 0x00
 local OE_CURRENT    = 0x10
+local OE_PREVIOUS   = 0x14
 local OE_ACTION     = 0x1C
 
 local FLAG_ACTIVE          = 0x001
@@ -151,8 +167,11 @@ function follower.object_index()
 end
 
 -- The follower's state this frame, or nil:
---   { index, x, y, held (a held movement is playing), action, jump_dir }
--- jump_dir is the direction of a 2-tile ledge jump in progress, else nil.
+--   { index, x, y, prev_x, prev_y, held (a held movement is playing),
+--     action, jump_dir }
+-- (prev_x, prev_y) is the tile its step started from: (x, y) itself when it
+-- stands still. jump_dir is the direction of a 2-tile ledge jump in
+-- progress, else nil.
 function follower.read()
     local i = follower.object_index()
     if i == nil then return nil end
@@ -164,18 +183,28 @@ function follower.read()
         index = i,
         x = s16(emu:read16(a + OE_CURRENT)) - MAP_OFFSET,
         y = s16(emu:read16(a + OE_CURRENT + 2)) - MAP_OFFSET,
+        prev_x = s16(emu:read16(a + OE_PREVIOUS)) - MAP_OFFSET,
+        prev_y = s16(emu:read16(a + OE_PREVIOUS + 2)) - MAP_OFFSET,
         held = held,
         action = action,
         jump_dir = held and JUMP_2_DIR[action] or nil,
     }
 end
 
--- The player's tile and facing direction (DIR_* above).
-function follower.player()
+-- The player's object as mm.live_objects lists it ({ x, y, prev_x, prev_y,
+-- facing, ... }), or nil.
+function follower.player_object()
     for _, o in ipairs(mm.live_objects()) do
-        if o.is_player then return o.x, o.y, o.facing end
+        if o.is_player then return o end
     end
     return nil
+end
+
+-- The player's tile and facing direction (DIR_* above).
+function follower.player()
+    local o = follower.player_object()
+    if o == nil then return nil end
+    return o.x, o.y, o.facing
 end
 
 -- Every live object except the follower, as mm.live_objects lists them
@@ -311,25 +340,37 @@ end)
 -- when the watch starts is the starting tile (frame 0).
 --
 -- The watch records:
---   watch.tiles      the follower's tile on every frame (1-based; [0] start)
---   watch.changes    list of { frame, from_x, from_y, x, y, teleport, jump,
---                    player_x, player_y (the player's tile that frame) }
---   watch.teleports  the subset of changes that were teleports
---   watch.failed     true once the per-frame rule has failed (reported once)
+--   watch.tiles         the follower's tile on every frame (1-based; [0]
+--                       start)
+--   watch.player_tiles  the player's tile on every frame, the same way
+--   watch.changes       list of { frame, from_x, from_y, x, y, teleport,
+--                       jump, swap, player_x, player_y (the player's tile
+--                       that frame) }
+--   watch.teleports     the subset of changes that were teleports
+--   watch.swaps         list of swaps (see the header): { frame, x, y (the
+--                       follower's new tile, the player's old one),
+--                       player_x, player_y (the player's new tile, the
+--                       follower's old one), follower_end, player_end (the
+--                       frame each step ended, nil until then) }
+--   watch.failed        true once the per-frame rule has failed (reported
+--                       once)
 function follower.new_watch(name, snap)
     snap = snap or follower.map_snapshot()
     local f = follower.read()
     assert(f ~= nil, "no follower to watch")
     local watch = {
         name = name, snap = snap, frame_no = 0,
-        tiles = {}, changes = {}, teleports = {},
+        tiles = {}, player_tiles = {}, changes = {}, teleports = {}, swaps = {},
         failed = false, stepped = false,
+        -- The tile the last swap put the follower on, until its next step.
+        swap_tile = nil,
     }
     watch.tiles[0] = { x = f.x, y = f.y }
     -- The spawn fallback (see the header): the watch starts with the
     -- follower on the player's tile. Only then may it share that tile, and
-    -- only until its first step.
+    -- stand on a warp, and only until its first step.
     local px, py = follower.player()
+    watch.player_tiles[0] = { x = px, y = py }
     watch.spawn_fallback = px == f.x and py == f.y
 
     -- The follower's tile for the rule: its ObjectEvent's tile, or the
@@ -350,7 +391,12 @@ function follower.new_watch(name, snap)
         if snap.solid(x, y) then
             return string.format("solid tile (cell 0x%04x)", snap.cell(x, y) or 0)
         end
-        if snap.warp(x, y) then return "warp tile" end
+        if snap.warp(x, y) then
+            local spawned_here = watch.spawn_fallback and not watch.stepped
+            local swapped_here = watch.swap_tile ~= nil
+                and watch.swap_tile.x == x and watch.swap_tile.y == y
+            if not (spawned_here or swapped_here) then return "warp tile" end
+        end
         if snap.water(x, y) then
             return string.format("water (behaviour 0x%02x)", snap.behavior(x, y))
         end
@@ -379,6 +425,9 @@ function follower.new_watch(name, snap)
         end
         local prev = watch.tiles[n - 1]
         watch.tiles[n] = { x = x, y = y }
+        local player = follower.player_object()
+        local pprev = watch.player_tiles[n - 1]
+        watch.player_tiles[n] = { x = player and player.x, y = player and player.y }
         if x ~= prev.x or y ~= prev.y then
             -- A ledge jump takes the follower's tile (the landing tile, see
             -- the header) two tiles on in the jump's direction in one go;
@@ -389,15 +438,38 @@ function follower.new_watch(name, snap)
                 jump = x == prev.x + 2 * d[1] and y == prev.y + 2 * d[2]
             end
             local far = not jump and math.abs(x - prev.x) + math.abs(y - prev.y) > 1
-            local px, py = follower.player()
+            local px, py = player and player.x, player and player.y
+            -- A swap: the two traded tiles on this frame (see the header).
+            local swap = player ~= nil and px == prev.x and py == prev.y
+                and pprev.x == x and pprev.y == y
             local change = { frame = n, from_x = prev.x, from_y = prev.y, x = x, y = y,
-                             teleport = far, jump = jump, player_x = px, player_y = py }
+                             teleport = far, jump = jump, swap = swap,
+                             player_x = px, player_y = py }
             watch.changes[#watch.changes + 1] = change
             if far then watch.teleports[#watch.teleports + 1] = change end
+            if swap then
+                watch.swaps[#watch.swaps + 1] = { frame = n, x = x, y = y,
+                                                  player_x = px, player_y = py }
+                watch.swap_tile = { x = x, y = y }
+            else
+                watch.swap_tile = nil
+            end
             watch.stepped = true
             fw.log(string.format("  %s frame %d: follower (%d,%d) -> (%d,%d)%s",
                 name, n, prev.x, prev.y, x, y,
-                far and " TELEPORT" or (jump and " (ledge jump)" or "")))
+                far and " TELEPORT" or (jump and " (ledge jump)" or (swap and " SWAP" or ""))))
+        end
+        -- The two steps of the last swap end on the first frame each one's
+        -- previous tile has caught up with its current tile.
+        local s = watch.swaps[#watch.swaps]
+        if s then
+            if s.follower_end == nil and cur.prev_x == cur.x and cur.prev_y == cur.y then
+                s.follower_end = n
+            end
+            if s.player_end == nil and player
+                and player.prev_x == player.x and player.prev_y == player.y then
+                s.player_end = n
+            end
         end
         local why = watch.violation(x, y)
         if why and not watch.failed then
@@ -409,16 +481,33 @@ function follower.new_watch(name, snap)
     end
 
     -- Run `frames` frames, checking each one. `each(n, x, y)` (optional) is
-    -- called after every frame's check with the frame number and tile.
+    -- called after every frame's check with the frame number and tile; if
+    -- it returns true the run stops there. Returns the frame it stopped on,
+    -- or nil if it ran all `frames`.
     function watch.run(frames, each)
         for _ = 1, frames do
             fw.yield()
             watch.frame()
             if each then
                 local t = watch.tiles[watch.frame_no]
-                each(watch.frame_no, t and t.x, t and t.y)
+                if each(watch.frame_no, t and t.x, t and t.y) then return watch.frame_no end
             end
         end
+        return nil
+    end
+
+    -- Like watch.run, but stops on the first frame `stop()` returns true,
+    -- before checking that frame: e.g. the frame a warp starts loading
+    -- another map, whose loading removes the follower's sprite. Returns how
+    -- many frames ran (that one included), or nil if `stop()` never
+    -- returned true.
+    function watch.run_until(frames, stop)
+        for i = 1, frames do
+            fw.yield()
+            if stop() then return i end
+            watch.frame()
+        end
+        return nil
     end
 
     -- Check every frame from a frame callback until detach(), for code that
@@ -458,6 +547,16 @@ function follower.new_watch(name, snap)
     end
 
     return watch
+end
+
+-- How many frames each step of swap `s` (one of watch.swaps) lasted, from
+-- the swap frame to the frame it ended, both counted: the follower's step,
+-- then the player's. nil for a step that hasn't ended yet. A walking step
+-- is 16 frames, a running one 8, a bicycle one 6.
+function follower.swap_lengths(s)
+    local f = s.follower_end and (s.follower_end - s.frame + 1)
+    local p = s.player_end and (s.player_end - s.frame + 1)
+    return f, p
 end
 
 -------------------------------------------------------------------------------
@@ -626,6 +725,15 @@ end
 -- direction just bumps.
 function follower.face(key_name)
     fw.hold(key_name, 6)
+    fw.wait_frames(30)
+end
+
+-- Turn the player to face `key` without moving, wherever they stand: a
+-- one-frame tap. A direction other than the one the player faces, pressed
+-- while they stand still, only turns them (the game's "turn in place"); a
+-- step needs the key held on after the turn.
+function follower.turn(key_name)
+    fw.press(key_name)
     fw.wait_frames(30)
 end
 
