@@ -40,6 +40,17 @@
 # recording lock), so bad notes cost a second, not a recording. When they
 # name a ticket, the video's name starts with it (issue-90_test_x_...).
 #
+# AUTODEV SESSIONS must give notes. Autodev's dispatcher starts every
+# session with AUTODEV_ROLE, AUTODEV_ISSUE and, for a fix-up or a merge,
+# AUTODEV_PR set (launch_command in automation/autodev/sessions.py). With
+# AUTODEV_ROLE set, this script (--check included) refuses to record
+# without --notes, and the helper refuses notes whose ticket: isn't
+# AUTODEV_ISSUE or that have no parent:. Notes that name no PR get
+# AUTODEV_PR's. A ticket session has no PR yet when it records, so it adds
+# the number once its PR is open:
+#   python3 test/tools/recording_notes.py set-pr <name> <PR>
+# A person running this script (no AUTODEV_ROLE) may leave notes out.
+#
 # THE NOTES FILE: every recording, with notes or without, gets <name>.json
 # beside <name>.mp4, written by test/tools/recording_notes.py. It holds the
 # notes and what this script knows itself: when it was recorded, the test,
@@ -136,6 +147,14 @@ TEST_SCRIPT="${TEST_SCRIPT:-$PROJECT_DIR/test/tests/test_player_sprite.lua}"
 
 if [ ! -f "$TEST_SCRIPT" ]; then
     echo "ERROR: Test script not found: $TEST_SCRIPT"; exit 1
+fi
+
+# An autodev session must give notes (see AUTODEV SESSIONS); the helper
+# checks the rest of its rules.
+if [ -n "${AUTODEV_ROLE:-}" ] && [ -z "$NOTES" ]; then
+    echo "ERROR: autodev sessions must pass --notes: write the recording's notes"
+    echo "(CLAUDE.md, step 8) and give them with --notes - (stdin) or --notes FILE."
+    exit 1
 fi
 
 # The notes (see NOTES), checked before anything starts. The helper saves a

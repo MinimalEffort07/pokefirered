@@ -1,6 +1,7 @@
 -------------------------------------------------------------------------------
--- test_recording_notes.lua: recordings carry notes, and the recordings page
--- shows them (issue #110, part of #103)
+-- test_recording_notes.lua: recordings carry notes, the recordings page
+-- shows them, and autodev's sessions must write them (issues #110 and #111,
+-- part of #103)
 -------------------------------------------------------------------------------
 -- A recording's notes say which ticket, feature (the parent issue) and PR it
 -- belongs to, what it tests, what the problem was and what you should see.
@@ -46,6 +47,23 @@
 --       video without a notes file, say "No notes for this recording." A
 --       notes file without its video isn't listed.
 --
+-- D1 to D7 are issue #111's: in an autodev session, record_test.sh and the
+-- helper hold the notes to more rules (see THE SESSION VARIABLES).
+--
+--   D1  A ticket session for #90, with no notes: --check exits 1, saying
+--       autodev sessions must pass --notes.
+--   D2  The same session, with notes saying ticket: 91, or with no ticket:,
+--       is refused, naming #90.
+--   D3  The same session, with no parent:, is refused.
+--   D4  The same session, with complete notes for #90: accepted.
+--   D5  A fix-up session for #90 with PR 97, notes without pr:: --check says
+--       PR #97, and the notes file the helper writes has "pr": 97. With
+--       pr: 97 in the notes, it's kept.
+--   D6  No session variables, no notes: accepted, as in C1.
+--   D7  set-pr sets "pr" in an existing notes file in either folder (kept
+--       first, as on the page), leaving the rest as it was. It refuses a
+--       name with no notes file, a PR that isn't a number, and a path.
+--
 -- THE PAGE FIXTURES are tiny videos of zeros, each with a notes file
 -- written by the helper (so the page is checked against the format the
 -- helper really writes) or by hand (the broken ones). Each video's
@@ -63,9 +81,10 @@
 -- THE SESSION VARIABLES: autodev's dispatcher starts every session with
 -- AUTODEV_ISSUE, AUTODEV_ROLE and, for some roles, AUTODEV_PR and
 -- AUTODEV_HANDLED_THROUGH (launch_command in automation/autodev/sessions.py).
--- A later ticket of #103 gives them a meaning to record_test.sh, so every
--- command here clears them (env -u), and this test checks the same whoever
--- runs it.
+-- With AUTODEV_ROLE set, record_test.sh requires notes and the helper
+-- checks them against the session (D1 to D5). So every command here first
+-- clears all four (env -u), then sets the ones its case needs (run_as), and
+-- this test checks the same whoever runs it, an autodev session included.
 --
 -- WHERE IT WORKS: every file this test makes is in this run's own folder
 -- (fw.out_path), so runs at the same time never meet.
@@ -89,8 +108,8 @@ local SERVER = project_dir .. "test/serve_recordings.py"
 -- A real test for --check to accept. It is never run.
 local SOME_TEST = project_dir .. "test/tests/test_player_sprite.lua"
 
--- Every command runs without the session variables (see THE SESSION
--- VARIABLES above).
+-- Every command runs without the session variables, unless its case sets
+-- some (see THE SESSION VARIABLES above).
 local CLEAN_ENV = "env -u AUTODEV_ISSUE -u AUTODEV_ROLE -u AUTODEV_PR -u AUTODEV_HANDLED_THROUGH "
 
 -- `s` in single quotes, safe to paste into a shell command.
@@ -98,10 +117,18 @@ local function sh_quote(s)
     return "'" .. s:gsub("'", "'\\''") .. "'"
 end
 
--- Run shell command `cmd` without the session variables. Returns its exit
--- code and everything it printed (stdout and stderr together).
-local function run(cmd)
-    local pipe = io.popen(CLEAN_ENV .. cmd .. " 2>&1", "r")
+-- Run shell command `cmd` as an autodev session would: without the session
+-- variables, then with those in `session` set ({ ROLE = "ticket", ISSUE =
+-- 90 } sets AUTODEV_ROLE and AUTODEV_ISSUE). Returns its exit code and
+-- everything it printed (stdout and stderr together).
+local function run_as(session, cmd)
+    local set = ""
+    for _, key in ipairs({ "ROLE", "ISSUE", "PR", "HANDLED_THROUGH" }) do
+        if session[key] ~= nil then
+            set = set .. "AUTODEV_" .. key .. "=" .. tostring(session[key]) .. " "
+        end
+    end
+    local pipe = io.popen(CLEAN_ENV .. set .. cmd .. " 2>&1", "r")
     if pipe == nil then
         fw.log_error("io.popen failed for: " .. cmd)
         return nil, ""
@@ -110,6 +137,11 @@ local function run(cmd)
     -- close() on a popen'd file returns (true|nil, "exit"|"signal", code).
     local _, _, code = pipe:close()
     return code, output
+end
+
+-- Run shell command `cmd` without the session variables, as a person does.
+local function run(cmd)
+    return run_as({}, cmd)
 end
 
 -- Write `text` to file `path`.
@@ -128,6 +160,11 @@ end
 local function dump(label, output)
     fw.log("---- " .. label .. " ----")
     for line in output:gmatch("[^\n]+") do fw.log("| " .. line) end
+end
+
+-- Whether `text` holds `part`, as plain text.
+local function has(text, part)
+    return text:find(part, 1, true) ~= nil
 end
 
 local WORK = fw.out_path("notes-work")
@@ -507,6 +544,152 @@ local function check_notes_file()
 end
 
 -------------------------------------------------------------------------------
+-- D1 to D6: autodev sessions must write notes
+-------------------------------------------------------------------------------
+
+-- A ticket session for #90, and a fix-up session for #90's PR 97.
+local TICKET_SESSION = { ROLE = "ticket", ISSUE = 90 }
+local FIXUP_SESSION = { ROLE = "fixup", ISSUE = 90, PR = 97, HANDLED_THROUGH = 1234 }
+
+-- `record_test.sh --check` with `args` (already shell-quoted), on SOME_TEST,
+-- in `session`.
+local function check_as(session, args)
+    return run_as(session, "bash " .. sh_quote(RECORD) .. " --check " .. args .. " " .. sh_quote(SOME_TEST))
+end
+
+local function check_sessions()
+    -- D1: no notes.
+    local code, output = check_as(TICKET_SESSION, "")
+    local ok = fw.assert_eq(code, 1, "D1: a ticket session's --check with no notes exits 1")
+    ok = fw.assert_true(has(output, "autodev sessions must pass --notes"),
+        "D1: ... saying autodev sessions must pass --notes") and ok
+    if not ok then dump("D1", output) end
+
+    -- D2: notes for another ticket, or for none.
+    for _, case in ipairs({
+        { "notes saying ticket: 91", COMPLETE:gsub("^ticket: 90", "ticket: 91") },
+        { "notes with no ticket:", without(COMPLETE, "ticket: 90 Shaking patches survive a field reload") },
+    }) do
+        code, output = check_as(TICKET_SESSION, "--notes " .. sh_quote(notes_file("d2.txt", case[2])))
+        ok = fw.assert_eq(code, 1, "D2: a ticket session for #90 refuses " .. case[1] .. " (exit 1)")
+        ok = fw.assert_true(has(output, "#90") and has(output, "ticket:"),
+            "D2: ... naming #90 and ticket:") and ok
+        if not ok then dump("D2: " .. case[1], output) end
+    end
+
+    -- D3: notes with no parent:.
+    code, output = check_as(TICKET_SESSION, "--notes "
+        .. sh_quote(notes_file("d3.txt", without(COMPLETE, "parent: #87 The Poke Radar"))))
+    ok = fw.assert_eq(code, 1, "D3: a ticket session refuses notes with no parent: (exit 1)")
+    ok = fw.assert_true(has(output, "parent:") and has(output, "missing"),
+        "D3: ... saying parent: is missing") and ok
+    if not ok then dump("D3", output) end
+
+    -- D4: complete notes for #90, as a ticket session writes them before
+    -- its PR exists.
+    local no_pr = without(COMPLETE, "pr: 97")
+    code, output = check_as(TICKET_SESSION, "--notes " .. sh_quote(notes_file("d4.txt", no_pr)))
+    ok = fw.assert_eq(code, 0, "D4: a ticket session for #90 accepts complete notes for #90 (exit 0)")
+    ok = fw.assert_true(has(output, "issue-90_test_player_sprite_"), "D4: ... named for ticket 90") and ok
+    if not ok then dump("D4", output) end
+
+    -- D5: a fix-up's notes get its PR when they name none, in --check's
+    -- verdict and in the notes file record_test.sh writes with the helper.
+    code, output = check_as(FIXUP_SESSION, "--notes " .. sh_quote(notes_file("d5.txt", no_pr)))
+    ok = fw.assert_eq(code, 0, "D5: a fix-up session for #90 accepts notes without pr: (exit 0)")
+    ok = fw.assert_true(has(output, "PR #97"), "D5: ... and --check says PR #97") and ok
+    if not ok then dump("D5 --check", output) end
+    for _, case in ipairs({ { "without pr:", no_pr }, { "with pr: 97", COMPLETE } }) do
+        local video = WORK .. "/d5_" .. case[1]:gsub("%W", "_") .. ".mp4"
+        write_file(video, "\0\0\0\0")
+        code, output = run_as(FIXUP_SESSION, "python3 " .. sh_quote(NOTES_TOOL) .. " write " .. sh_quote(video)
+            .. " --test " .. sh_quote(REPO_TEST) .. " --recorded-at " .. RECORDED_AT
+            .. " --repo " .. sh_quote(REPO) .. " --notes " .. sh_quote(notes_file("d5.txt", case[2])))
+        local f = read_json(video:gsub("%.mp4$", ".json"))
+        ok = fw.assert_eq(code, 0, "D5: a fix-up's notes " .. case[1] .. ": the helper writes the notes file")
+        ok = fw.assert_eq(f.pr, "97", "D5: a fix-up's notes " .. case[1] .. ": the notes file has \"pr\": 97") and ok
+        if not ok then dump("D5 write " .. case[1], output) end
+    end
+
+    -- D6: no session, no notes: accepted, as for a person.
+    code, output = check_as({}, "")
+    ok = fw.assert_eq(code, 0, "D6: with no session variables, --check with no notes exits 0")
+    if not ok then dump("D6", output) end
+end
+
+-------------------------------------------------------------------------------
+-- D7: set-pr
+-------------------------------------------------------------------------------
+
+-- set-pr's folders here, in place of ~/recordings and /tmp/mgba-recordings.
+local PR_KEPT = WORK .. "/set-pr-kept"
+local PR_SCRATCH = WORK .. "/set-pr-scratch"
+
+-- `recording_notes.py set-pr NAME PR` on PR_KEPT and PR_SCRATCH.
+local function set_pr(name, pr)
+    return run("python3 " .. sh_quote(NOTES_TOOL) .. " set-pr --kept " .. sh_quote(PR_KEPT)
+        .. " --scratch " .. sh_quote(PR_SCRATCH) .. " " .. sh_quote(name) .. " " .. sh_quote(pr))
+end
+
+local function check_set_pr()
+    run("mkdir -p " .. sh_quote(PR_KEPT) .. " " .. sh_quote(PR_SCRATCH))
+    local notes = notes_file("set_pr.txt", without(COMPLETE, "pr: 97"))
+    -- Recordings without a PR yet: one kept, one in scratch, and one in both.
+    local made = {}
+    for _, where in ipairs({ { PR_KEPT, "kept_only" }, { PR_SCRATCH, "scratch_only" },
+                             { PR_KEPT, "both" }, { PR_SCRATCH, "both" } }) do
+        local video = where[1] .. "/issue-90_test_" .. where[2] .. "_20261020_134554.mp4"
+        local code, output, f = write_notes(video, REPO_TEST, WORK .. "/no_such_results.json",
+            "--notes " .. sh_quote(notes))
+        if code ~= 0 or f.pr ~= "null" then fw.log_error("set-pr fixture failed: " .. output) end
+        made[#made + 1] = video:gsub("%.mp4$", ".json")
+    end
+    local kept_only, scratch_only, both_kept, both_scratch = made[1], made[2], made[3], made[4]
+    local before = read_json(kept_only)
+
+    -- In either folder; the name may end in .mp4.
+    local code, output = set_pr("issue-90_test_kept_only_20261020_134554", "120")
+    local f = read_json(kept_only)
+    local ok = fw.assert_eq(code, 0, "D7: set-pr on a kept recording exits 0")
+    ok = fw.assert_eq(f.pr, "120", "D7: ... and its notes file has \"pr\": 120") and ok
+    for _, key in ipairs({ "keys", "video", "recorded_at", "test", "branch", "commit", "result",
+                           "ticket", "parent", "notes" }) do
+        ok = fw.assert_eq(f[key], before[key], "D7: ... leaving " .. key .. " as it was") and ok
+    end
+    if not ok then dump("set-pr kept", output) end
+    code, output = set_pr("issue-90_test_scratch_only_20261020_134554.mp4", "#121")
+    ok = fw.assert_eq(code, 0, "D7: set-pr on a scratch recording, named with .mp4 and the PR with #, exits 0")
+    ok = fw.assert_eq(read_json(scratch_only).pr, "121", "D7: ... and its notes file has \"pr\": 121") and ok
+    if not ok then dump("set-pr scratch", output) end
+
+    -- Kept comes first, as on the recordings page.
+    code, output = set_pr("issue-90_test_both_20261020_134554", "122")
+    ok = fw.assert_eq(read_json(both_kept).pr, "122", "D7: a name in both folders: the kept notes file gets the PR")
+    ok = fw.assert_eq(read_json(both_scratch).pr, "null", "D7: ... and the scratch one doesn't") and ok
+    if not ok then dump("set-pr both", output) end
+
+    -- Refused: a name with no notes file, a PR that isn't a number, a path.
+    for _, case in ipairs({
+        { "a name with no notes file", "issue-90_test_nothing_20261020_134554", "123",
+          { "issue-90_test_nothing_20261020_134554", "no notes file" } },
+        { "a PR that isn't a number", "issue-90_test_kept_only_20261020_134554", "abc",
+          { "abc", "number" } },
+        { "a PR of 0", "issue-90_test_kept_only_20261020_134554", "0", { "number" } },
+        { "a path instead of a name", "../set-pr-kept/issue-90_test_kept_only_20261020_134554", "123",
+          { "name" } },
+    }) do
+        code, output = set_pr(case[2], case[3])
+        ok = fw.assert_eq(code, 1, "D7: set-pr refuses " .. case[1] .. " (exit 1)")
+        for _, word in ipairs(case[4]) do
+            ok = fw.assert_true(has(output, word), "D7: ... saying \"" .. word .. "\"") and ok
+        end
+        ok = fw.assert_true(not has(output, "Traceback"), "D7: ... without a traceback") and ok
+        if not ok then dump("set-pr " .. case[1], output) end
+    end
+    fw.assert_eq(read_json(kept_only).pr, "120", "D7: a refused set-pr leaves the notes file as it was")
+end
+
+-------------------------------------------------------------------------------
 -- The page fixtures
 -------------------------------------------------------------------------------
 
@@ -650,10 +833,6 @@ end
 -- The card's facts line, as plain text.
 local function facts_of(card)
     return text_of(card.text:match('<div class="facts">(.-)</div>') or "")
-end
-
-local function has(text, part)
-    return text:find(part, 1, true) ~= nil
 end
 
 -------------------------------------------------------------------------------
@@ -830,6 +1009,10 @@ fw.run(function()
     check_refused()
     check_name()
     check_notes_file()
+
+    fw.log("=== Autodev sessions must write notes ===")
+    check_sessions()
+    check_set_pr()
 
     fw.log("=== The recordings page with notes (serve_recordings.py --print) ===")
     make_page_fixtures()

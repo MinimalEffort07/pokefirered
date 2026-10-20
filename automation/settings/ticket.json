@@ -14,7 +14,8 @@
       "Bash(git push -u origin issue-*)", "Bash(git push origin issue-*)",
       "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)",
       "Bash(grep:*)", "Bash(find:*)", "Bash(mkdir:*)",
-      "Bash(mv /tmp/mgba-recordings/*)", "Bash(ffmpeg:*)"
+      "Bash(mv /tmp/mgba-recordings/*)", "Bash(ffmpeg:*)",
+      "Bash(python3 test/tools/recording_notes.py:*)"
     ],
     "deny": [
       "WebFetch", "WebSearch",

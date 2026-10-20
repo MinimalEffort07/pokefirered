@@ -22,6 +22,12 @@ record_test.sh:
   python3 test/tools/recording_notes.py set-result NOTES_FILE --results RESULTS
       Put the result from RESULTS into notes file NOTES_FILE, leaving the
       rest as it was.
+  python3 test/tools/recording_notes.py set-pr NAME PR [--kept DIR] [--scratch DIR]
+      Put PR's number into the notes file of the recording named NAME
+      (as record_test.sh prints it, with or without .mp4), leaving the rest
+      as it was. It looks in ~/recordings first, then /tmp/mgba-recordings,
+      as the recordings page does; --kept and --scratch name other folders.
+      A ticket session runs it once its PR is open (see AUTODEV SESSIONS).
 
 record_test.sh writes the notes file into its run's own directory as the
 recording starts (once it has its turn), so the branch, commit and
@@ -50,6 +56,20 @@ THE NOTES, as a person writes them (the ticket and the PR are examples):
   - The three sections are all required, each once and each with text, in
     any order. Any other "## " heading is refused, naming it.
   - Plain text: the page keeps the line breaks and renders no Markdown.
+
+AUTODEV SESSIONS: autodev's dispatcher starts every session with
+AUTODEV_ROLE and AUTODEV_ISSUE set, and AUTODEV_PR for a fix-up or a merge
+(launch_command in automation/autodev/sessions.py). With AUTODEV_ROLE set,
+check, ticket and write hold the notes to more rules, so every recording a
+session makes says what it is for:
+
+  - ticket: is required, and must be the session's own issue;
+  - parent: is required (the feature the ticket belongs to);
+  - notes without a pr: get AUTODEV_PR's number, when the session has one.
+
+test/record_test.sh itself refuses to record without notes in a session. A
+ticket session records before its PR exists, so it runs set-pr after
+opening the PR. A person (no AUTODEV_ROLE) sees none of this.
 
 THE NOTES FILE is JSON. What the notes don't give is null:
 
@@ -109,6 +129,11 @@ HEADER_LINE = re.compile(r"([^\s:]+):(.*)")
 ISSUE_VALUE = re.compile(r"#?(\d+)\s+(\S.*)")
 PR_VALUE = re.compile(r"#?(\d+)")
 
+# Where set-pr looks for a recording, in this order, as the recordings page
+# does: the kept recordings, then record_test.sh's own folder.
+KEPT_DIR = os.path.expanduser("~/recordings")
+SCRATCH_DIR = "/tmp/mgba-recordings"
+
 
 def heading_key(heading):
     """The section key of a "## " heading, or None. Case doesn't matter,
@@ -151,13 +176,55 @@ def parse_pr(value, number):
     return int(m.group(1))
 
 
-def parse(text):
+def session_from(env):
+    """The autodev session environment `env` belongs to, as {"role",
+    "issue", "pr"}, or None outside one (no role). The issue and the PR are
+    numbers, or None when missing or not a number."""
+    role = env.get("AUTODEV_ROLE", "")
+    if not role:
+        return None
+
+    def number(name):
+        value = env.get(name, "")
+        return int(value) if value.isdigit() and int(value) > 0 else None
+
+    return {"role": role, "issue": number("AUTODEV_ISSUE"), "pr": number("AUTODEV_PR")}
+
+
+def session_problems(headers, malformed, session):
+    """What autodev session `session` refuses in notes with `headers`
+    (see AUTODEV SESSIONS). A header in `malformed` already has a problem
+    of its own, so it gets no second one here."""
+    problems = []
+    issue = session["issue"]
+    ticket = headers.get("ticket")
+    own = f'this autodev session is for #{issue}, so its notes say "ticket: {issue} <the ticket\'s title>"'
+    if issue is None:
+        problems.append("this autodev session's issue number isn't set, so it can't "
+                        "check which ticket the notes are for")
+    elif "ticket" in malformed:
+        pass
+    elif ticket is None:
+        problems.append(f'missing "ticket:": {own}')
+    elif ticket["number"] != issue:
+        problems.append(f'ticket: {ticket["number"]} isn\'t this session\'s ticket: {own}')
+    if headers.get("parent") is None and "parent" not in malformed:
+        problems.append('missing "parent:": an autodev session\'s notes name the feature '
+                        'its ticket belongs to (the issue under the ticket\'s "## Parent"), '
+                        'as in "parent: 87 <its title>"')
+    return problems
+
+
+def parse(text, session=None):
     """Notes text -> (fields, problems). `fields` has "ticket", "parent",
     "pr" and "notes" as the notes file holds them (None when not given);
     `problems` lists what is wrong, in plain words, and is empty when the
-    notes are accepted."""
+    notes are accepted. Notes written in autodev session `session` (from
+    session_from) also follow its rules, and get its PR when they name
+    none."""
     problems = []
     headers = {}
+    malformed = set()       # headers given with a value that can't be read
     sections = {}           # key -> the section's lines
     current = None          # where lines go: None = the headers, else a key
     SKIP = object()         # under a refused heading: lines are dropped
@@ -203,8 +270,14 @@ def parse(text):
         parsed = parse_pr(value, number) if key == "pr" else parse_issue(key, value, number)
         if isinstance(parsed, str):
             problems.append(parsed)
+            malformed.add(key)
         else:
             headers[key] = parsed
+
+    if session is not None:
+        problems += session_problems(headers, malformed, session)
+        if "pr" not in headers and "pr" not in malformed and session["pr"] is not None:
+            headers["pr"] = session["pr"]
 
     notes = {}
     for key, title in SECTIONS:
@@ -239,7 +312,7 @@ def read_notes(path, save=None):
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         return None, [f"notes file {path} isn't UTF-8 text"]
-    fields, problems = parse(text)
+    fields, problems = parse(text, session_from(os.environ))
     if save is not None and not problems:
         try:
             with open(save, "wb") as f:
@@ -407,6 +480,47 @@ def cmd_set_result(args):
     return save(record, args.notes_file)
 
 
+def cmd_set_pr(args):
+    """set-pr: a PR's number into the notes file of a recording, found by
+    its name in the kept folder first, then in scratch, as the recordings
+    page looks."""
+    m = PR_VALUE.fullmatch(args.pr)
+    if m is None or int(m.group(1)) == 0:
+        print(f'set-pr needs a PR number, as in "set-pr NAME 97" (got "{args.pr}")',
+              file=sys.stderr)
+        return 1
+    name = args.name
+    for ending in (".mp4", ".json"):
+        if name.endswith(ending):
+            name = name[:-len(ending)]
+    if not name or "/" in name or name.startswith("."):
+        print(f'set-pr needs a recording\'s name, as record_test.sh prints it '
+              f'(e.g. issue-90_test_x_20261020_134554), not "{args.name}"', file=sys.stderr)
+        return 1
+    folders = (args.kept, args.scratch)
+    for folder in folders:
+        path = os.path.join(folder, name + ".json")
+        if os.path.isfile(path):
+            break
+    else:
+        print(f"no notes file {name}.json in {' or '.join(folders)}", file=sys.stderr)
+        return 1
+    try:
+        with open(path, encoding="utf-8") as f:
+            record = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"can't read notes file {path}: {e}", file=sys.stderr)
+        return 1
+    if not isinstance(record, dict):
+        print(f"not a notes file: {path}", file=sys.stderr)
+        return 1
+    record["pr"] = int(m.group(1))
+    if save(record, path) != 0:
+        return 1
+    print(f"PR #{record['pr']} set in {path}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Check a recording's notes, or write its notes file.")
@@ -441,6 +555,15 @@ def main():
     p.add_argument("--results", required=True,
                    help="the run's results file (it may not exist: the result is null)")
     p.set_defaults(run=cmd_set_result)
+
+    p = commands.add_parser("set-pr", help="put a PR's number into a recording's notes file")
+    p.add_argument("name", help="the recording's name, e.g. issue-90_test_x_20261020_134554")
+    p.add_argument("pr", help="the PR's number")
+    p.add_argument("--kept", default=KEPT_DIR,
+                   help="the folder of kept recordings, looked in first (default: %(default)s)")
+    p.add_argument("--scratch", default=SCRATCH_DIR,
+                   help="record_test.sh's folder, looked in next (default: %(default)s)")
+    p.set_defaults(run=cmd_set_pr)
 
     args = parser.parse_args()
     sys.exit(args.run(args))
