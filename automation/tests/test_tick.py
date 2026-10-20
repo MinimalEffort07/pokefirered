@@ -1,4 +1,5 @@
-"""The first part of every tick: read the board and log what is on it.
+"""What a tick reads: the board, which it logs, and what decide() needs
+beyond it.
 
 Each test replays a recorded board (tests/fixtures/*.json) through FakeGh
 and checks the exact lines the tick logs.
@@ -10,7 +11,7 @@ import unittest
 from autodev.config import Config
 from autodev.board import read_board
 from autodev.dispatcher import log_board
-from tests.fakes import FakeGh
+from tests.fakes import FakeGh, FakeRegistry
 
 CONFIG = Config(
     owner="MinimalEffort07",
@@ -122,20 +123,6 @@ class FakeGitHub:
     def parked_at(self, number):
         self.asked.append(("parked_at", number))
         return self.parked.get(number, "")
-
-
-class FakeRegistry:
-    def load(self, now=None):
-        return []
-
-    def paused_until(self):
-        return 0.0
-
-    def crashes(self):
-        return {}
-
-    def requeued(self):
-        return set()
 
 
 class ReadState(unittest.TestCase):

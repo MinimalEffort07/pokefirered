@@ -6,9 +6,16 @@ tickets with nothing left blocking them, merge sessions for PRs the owner
 has approved with /merge, and fix-up sessions for PRs the owner has left
 feedback on. It keeps tickets' Blocked/Todo status in
 step with their blockers, checks finished sessions' work on GitHub, and
-tidies up after closed tickets and finished parents. systemd sends
-everything it prints to the journal (`journalctl --user -u
-autodev-dispatcher`).
+tidies up after closed tickets and finished parents.
+
+Before any of that, it keeps the recordings page current
+(recordings.py): if a merge has changed the page's code since
+autodev-recordings.service started, it restarts the service. That runs
+even when the board can't be read, and a failure in it is logged and
+makes the exit code 1 without stopping the board's work.
+
+systemd sends everything a tick prints to the journal (`journalctl
+--user -u autodev-dispatcher`).
 """
 
 import os
@@ -22,6 +29,7 @@ from autodev.decide import (IN_REVIEW, NEEDS_HUMAN, TODO, CloseIssue,
                             is_waiting_ticket, plan)
 from autodev.github import GitHub
 from autodev.gh import GhError
+from autodev.recordings import RecordingsServer
 from autodev.registry import Registry
 
 PROMPTS = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts")
@@ -48,9 +56,13 @@ def log_board(gh, config, log):
     return 0, snapshot
 
 
-def tick(gh, config, log, registry=None):
+def tick(gh, config, log, registry=None, recordings=None):
     """One dispatcher tick. Returns the process exit code."""
+    # First, so the page keeps up even on a tick that can't read the board.
+    recordings = recordings or RecordingsServer(config.clone)
+    check_code = recordings.keep_current(log)
     code, snapshot = log_board(gh, config, log)
+    code = code or check_code
     if snapshot is None:
         return code
     registry = registry or Registry(config.session_config())

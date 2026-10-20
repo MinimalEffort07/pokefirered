@@ -64,7 +64,7 @@ Read it top to bottom; each column is one actor. The dispatcher never does the w
 **Three facts that explain most surprises:**
 
 - **CLAUDE.md is the program.** Each session's prompt in `automation/prompts/` is a few lines that say "follow CLAUDE.md, Autonomous mode". What a session actually does comes from CLAUDE.md's GitHub Issue Workflow, so editing `CLAUDE.md` changes how the AI behaves.
-- **Autodev updates itself.** Every tick starts with `git pull` on autodev's own clone, so a change merged into `automation/` or `CLAUDE.md` is live within about 2 minutes, with no restart.
+- **Autodev updates itself.** Every tick starts with `git pull` on autodev's own clone, so a change merged into `automation/` or `CLAUDE.md` is live within about 2 minutes, with no restart. The recordings page is a program that keeps running, so it would keep its old code: when a merge has changed `test/serve_recordings.py` since the page started, the tick restarts it (`automation/autodev/recordings.py`). That's the only time autodev cuts off a video you're watching. A page you stopped stays stopped.
 - **Only your words get in.** Sessions see text written by you or the bot and nothing else, because the repo is public and a stranger's comment could carry instructions. Only your exact `/merge` merges.
 
 ## Board columns
@@ -153,7 +153,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `automation/wizard.sh` | Walks you through what only a person can do: the bot account and token, `gh`'s project scope, the Windows logon task that keeps WSL awake. |
 | `automation/config.json` | Names and paths: owner, bot, board title, the 2-session cap, model, clone, log and state folders. |
 | `automation/autodev/__main__.py` | The entry point the timer runs: `python3 -m autodev tick`. |
-| `automation/autodev/dispatcher.py` | **One tick.** Gathers the board and what finished sessions left on GitHub, asks `automation/autodev/decide.py` what to do, carries it out, logs it to the journal. |
+| `automation/autodev/dispatcher.py` | **One tick.** Restarts the recordings page if a merge changed it (`automation/autodev/recordings.py`), then gathers the board and what finished sessions left on GitHub, asks `automation/autodev/decide.py` what to do, carries it out, logs it to the journal. |
 | `automation/autodev/decide.py` | **The rules,** as one pure function: state in, list of actions out. Priority, blocking, `/merge`, crashes and usage limits all live here. |
 | `automation/autodev/board.py` | Reads the Projects board through GitHub's GraphQL API. |
 | `automation/autodev/github.py` | Carries out actions on GitHub and checks whether a finished session really left its design, tickets, PR or reply. |
@@ -161,6 +161,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `automation/autodev/sessions.py` | Starts each `claude -p` run in its own systemd unit with the role's time limit and effort, then reads back its result and any usage-limit message. |
 | `automation/autodev/registry.py` | The dispatcher's memory between ticks: which sessions it started, crash counts, the usage-limit pause. |
 | `automation/autodev/worktrees.py` | Makes and removes each ticket's worktree and branch, with `tools/agbcc` linked. |
+| `automation/autodev/recordings.py` | Restarts the recordings page on a tick when its code changed since it started, so a merged change to the page shows within about 2 minutes. |
 | `automation/autodev/config.py` | Loads `automation/config.json`. |
 | `automation/bin/issue.py` | The sessions' only way to reach GitHub. |
 | `automation/autodev/issue_tool.py` | The trust and per-role rules `automation/bin/issue.py` enforces. |
@@ -176,7 +177,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/run_suite.sh` | Runs every top-level test, 4 at a time, in about 10 minutes. Must pass before a merge. |
 | `test/suite_exclude.txt` | The tests the suite skips, each with a one-line reason. The suite refuses to start on a line without one. |
 | `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. It captures fast, then encodes the video small enough to stream with `test/tools/encode_recording.sh`, after it has let the next recording start. |
-| `test/serve_recordings.py` | A web page of the recordings on port 8080, run by `autodev-recordings.service`. |
+| `test/serve_recordings.py` | A web page of the recordings on port 8080, run by `autodev-recordings.service`. The dispatcher restarts it when a merge changes this file, so it must stay one file that imports only Python's standard library. |
 | `test/mgba-qt.sh` | Opens the patched mGBA window by hand. |
 | `test/lib/framework.lua` | The test framework: press buttons, wait frames, assert, write results. Every test loads it. |
 | `test/lib/addresses.lua` | Where game variables sit in memory, for the older tests that hard-code addresses. |
@@ -184,8 +185,8 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/lib/walk.lua` | Walks the player somewhere for real: plans a route over the loaded map and presses the D-pad one tile at a time. |
 | `test/lib/warp.lua` | Warps the player straight to a map, for tests and tools that don't need the walk. |
 | `test/lib/character_select.lua` | Boots a new game through Oak's speech to the character list. |
-| `test/lib/frame_capture.lua` | With `MGBA_FRAME_DIR` set, saves every second frame and its caption for a GIF. |
-| `test/lib/follower.lua` | The walking Pokémon harness: a save state with it walking, where it stands, and the per-frame walkable-tile rule. |
+| `test/lib/frame_capture.lua` | With `MGBA_FRAME_DIR` set, saves every second frame and its caption for a GIF; it can pause, so a warp the demo makes isn't filmed. |
+| `test/lib/follower.lua` | The walking Pokémon harness: a save state with it walking, where it stands, the per-frame walkable-tile rule, and a record of each time you swap places with it (a swap may leave it on a doormat or ladder, which the rule allows until its next step). |
 | `test/lib/poke_radar.lua` | Reads and writes the Poké Radar chain state, and plays the radar. |
 | `test/lib/route14_battle.lua` | Starts the Kiri and Jan double battle on Route 14, for the type-colour tests. |
 | `test/lib/mt_moon.lua` | The Mt. Moon harness: enter a floor with a chosen random state, read back the generated cave, search it, save and Continue. |
@@ -195,7 +196,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/lib/mt_moon_tiles.lua` | Compares a generated floor's tiles with vanilla's, for the look and density checks. |
 | `test/tests/` | The tests and demos. `test/tests/mt_moon_checks/` holds the Mt. Moon property checks. `suite_fixtures/` and `framework_fixtures/` hold the small scripts that `test/tests/test_run_suite.lua` and `test/tests/test_framework_rules.lua` run to check the runners. |
 | `test/demos/` | A demo kept outside the suite. |
-| `test/tools/captioned_gif.py` | Turns a demo's captured frames into a captioned README GIF. |
+| `test/tools/captioned_gif.py` | Turns a demo's captured frames into a captioned README GIF (`--font-size` for long captions). |
 | `test/tools/encode_recording.sh` | Encodes one recording small enough to stream, 5 to 8 times smaller than the live capture. The settings live only here, each explained. `test/record_test.sh` and `test/tools/shrink_recordings.sh` use it. |
 | `test/tools/shrink_recordings.sh` | Shrinks the videos already kept (`~/recordings` by default) the same way, keeping their names and times, and moves each original into `originals/` there. Safe to run again: it only touches videos not shrunk yet. |
 | `test/tools/render_cave.py` | Draws a map, vanilla or a dumped generated cave, to PNG. |

@@ -6759,6 +6759,15 @@ void InitRunSlow(struct ObjectEvent *objectEvent, struct Sprite *sprite, u8 dire
         && gSaveBlock2Ptr->playerAvatarGfxId != OBJ_EVENT_GFX_RED_NORMAL
         && gSaveBlock2Ptr->playerAvatarGfxId != OBJ_EVENT_GFX_GREEN_NORMAL)
         animNum = GetMoveDirectionFastestAnimNum(objectEvent->facingDirection);
+    // Only the player's sprites have run frames. No script gives this step
+    // to anyone else; the one other object that takes it is the walking
+    // Pokemon, swapping places with a player who runs into it on rock
+    // stairs (pokemon_follower.c, sSwapSteps). Its walk frames, played at
+    // the fast walk's rate, stand in for the run frames its sprite lacks:
+    // the run animation's number would point past the end of its
+    // animation table.
+    else if (!objectEvent->isPlayer)
+        animNum = GetMoveDirectionFastAnimNum(objectEvent->facingDirection);
     else
         animNum = GetRunningDirectionAnimNum(objectEvent->facingDirection);
     SetStepAnimHandleAlternation(objectEvent, sprite, animNum);

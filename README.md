@@ -43,9 +43,11 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![Type Effectiveness Colors](gifs/ColourizedMoves.gif)
 
-- **Walk With Pokemon** — Your pokemon follows you around in the overworld. It only walks where you could: never through walls, onto people or water, or onto a ledge from the side; it hops down a ledge after you, and when it can't reach you (say you SURF across a pond) it waits, then appears beside you shortly after you're back on land. When you walk into a cave (Mt. Moon, Rock Tunnel, Victory Road, ...), you take one step into it once the screen fades in, so your Pokémon is left at the entrance instead of blocking your way. The step only happens when the tile ahead is open: at entrances that land you facing a wall, such as Rock Tunnel's north entrance or a Mt. Moon ladder, you stay where you arrived. Doors into buildings work as before, and if you ride in on a bike you stay on it.
+- **Walk With Pokemon** — Your pokemon follows you around in the overworld. It only walks where you could: never through walls, onto people or water, or onto a ledge from the side; it hops down a ledge after you, and when it can't reach you (say you SURF across a pond) it waits, then appears beside you shortly after you're back on land. When you walk into a cave (Mt. Moon, Rock Tunnel, Victory Road, ...), you take one step into it once the screen fades in, so your Pokémon is left at the entrance instead of blocking your way. The step only happens when the tile ahead is open: at entrances that land you facing a wall, such as Rock Tunnel's north entrance or a Mt. Moon ladder, you stay where you arrived. Doors into buildings work as before, and if you ride in on a bike you stay on it. Walk into your Pokémon and you swap places, as in HeartGold and SoulSilver, whether you walk, run or ride, so it never blocks a door, a cave mouth or a narrow path.
 
   ![Walk With Pokemon](gifs/WalkWithPokemon.gif)
+
+  ![Swap places with your Pokémon](gifs/FollowerSwap.gif)
 
 - **Shiny Chaining (Gen 4 PokéRadar)** — Granted at game start. Use it in tall grass and four patches of grass nearby start shaking. Step into a shaking patch and a wild Pokémon jumps out at once, even with a Repel on; stepping off the grass makes the patches go. Defeating or catching the same species from patches builds a chain, boosting shiny odds up to ~1/200 at chain 40.
 
