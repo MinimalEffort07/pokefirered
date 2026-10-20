@@ -16,16 +16,21 @@
 #   - A video that is already H.264 High profile is left alone: it's either
 #     encoded this way already or was made small some other way.
 #   - Any other video is encoded with test/tools/encode_recording.sh. The
-#     new video keeps the old one's name and modification time, so the
-#     recordings page (test/serve_recordings.py), which lists the newest
-#     first, keeps its order.
+#     new video keeps the old one's name and modification time. The
+#     modification time is when the video was recorded, and the recordings
+#     page's newest-first order (issue #103) goes by it, so that order
+#     doesn't change.
 #   - The original is moved into FOLDER/originals/, unchanged. The page lists
 #     only FOLDER's own files, so originals don't show there. Put one back
 #     with `mv FOLDER/originals/NAME FOLDER/`, or delete them all with
-#     `rm -r FOLDER/originals` once you're happy with the new videos.
+#     `rm -r FOLDER/originals` once you're happy with the new videos. A
+#     video put back is shrunk again by the next run, so keep one you want
+#     at full size for good somewhere else.
 #   - A video whose encode fails is left as it is, and the tool says so. So
 #     is a video whose name is already taken in originals/: an original is
-#     never written over.
+#     never written over. The encode fails on a video that is damaged or cut
+#     short, so a video still being copied into FOLDER (a mv from /tmp is a
+#     copy) is left alone too; run the tool again once it's there.
 #
 # A second run changes nothing: every video it would touch is High profile
 # by then. It ends with the totals, e.g. "Done: 24 shrunk, 16 already High
@@ -73,6 +78,19 @@ LEFT=0        # videos left as they were: the encode failed, or a clash
 BEFORE=0      # bytes of FOLDER's videos before this run
 AFTER=0       # bytes of FOLDER's videos after it
 
+# Count video $NAME, of $BYTES bytes, as left as it was, saying why ($1).
+not_shrunk() {
+    echo "$NAME: left as it was: $1"
+    LEFT=$((LEFT + 1))
+    AFTER=$((AFTER + BYTES))
+}
+
+# The encoded video while it waits to take its original's name (see below).
+# If the tool is stopped part-way (Ctrl-C), the trap deletes it, so no
+# hidden half-finished file is left in FOLDER.
+SHRUNK_FILE=""
+trap 'rm -f "$SHRUNK_FILE"' EXIT
+
 # nullglob: a folder without .mp4 files gives an empty list instead of the
 # pattern itself. The pattern doesn't match hidden files (a leading "."), so
 # encode_recording.sh's temporary files are never picked up.
@@ -92,9 +110,7 @@ for VIDEO in "$FOLDER"/*.mp4; do
         continue
     fi
     if [ -e "$ORIGINALS/$NAME" ]; then
-        echo "$NAME: left as it was: $ORIGINALS/$NAME already exists, and an original is never written over"
-        LEFT=$((LEFT + 1))
-        AFTER=$((AFTER + BYTES))
+        not_shrunk "$ORIGINALS/$NAME already exists, and an original is never written over"
         continue
     fi
 
@@ -102,24 +118,26 @@ for VIDEO in "$FOLDER"/*.mp4; do
     # recordings page never lists it). Only once that has worked does the
     # original move to originals/ and the new video take its name.
     SHRUNK_FILE="$FOLDER/.shrunk-$NAME.partial"
-    if ! RESULT=$(bash "$ENCODE" "$VIDEO" "$SHRUNK_FILE" 2>&1); then
+    if ! ENCODE_OUTPUT=$(bash "$ENCODE" "$VIDEO" "$SHRUNK_FILE" 2>&1); then
         # ffmpeg's own messages, indented, without encode_recording.sh's
-        # last line, which the line above already says.
-        echo "$NAME: encode failed, left as it was:"
-        printf '%s\n' "$RESULT" | sed '/^encode failed: /d; s/^/    /'
-        LEFT=$((LEFT + 1))
-        AFTER=$((AFTER + BYTES))
+        # last line, which the first line already says.
+        not_shrunk "the encode failed:"
+        printf '%s\n' "$ENCODE_OUTPUT" | sed '/^encode failed: /d; s/^/    /'
         continue
     fi
     if ! { mkdir -p "$ORIGINALS" && mv -n "$VIDEO" "$ORIGINALS/$NAME" && [ ! -e "$VIDEO" ]; }; then
         rm -f "$SHRUNK_FILE"
-        echo "$NAME: left as it was: couldn't move it into $ORIGINALS"
-        LEFT=$((LEFT + 1))
-        AFTER=$((AFTER + BYTES))
+        not_shrunk "couldn't move it into $ORIGINALS"
         continue
     fi
-    mv "$SHRUNK_FILE" "$VIDEO"
-    echo "$NAME: $RESULT"
+    if ! mv "$SHRUNK_FILE" "$VIDEO"; then
+        # Put the original back where it was, so the folder is as before.
+        mv -n "$ORIGINALS/$NAME" "$VIDEO"
+        rm -f "$SHRUNK_FILE"
+        not_shrunk "couldn't put the new video in its place"
+        continue
+    fi
+    echo "$NAME: $ENCODE_OUTPUT"
     SHRUNK=$((SHRUNK + 1))
     AFTER=$((AFTER + $(stat -c %s "$VIDEO")))
 done

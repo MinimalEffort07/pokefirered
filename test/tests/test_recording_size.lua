@@ -12,26 +12,33 @@
 --   E1  Encoding a capture gives an H.264 High-profile video with the
 --       capture's width, height and frame rate, with its index (the moov
 --       box) before its frames (the mdat box) so playback starts at once,
---       and smaller than the capture. The capture is untouched, and the
---       video gets the capture's modification time.
+--       and at most a quarter of the capture's size. The settings x264
+--       records inside the video are the agreed ones: CRF 28, peaks capped
+--       at 1 Mbit/s over a 2 Mbit buffer, and preset medium. The capture is
+--       untouched, and the video gets the capture's modification time.
 --   E2  Encoding a broken file exits non-zero, leaves the file as it was,
 --       and leaves no video or half-written file behind.
+--   E2T The same for a capture cut short (half of it, as if still being
+--       copied): ffmpeg would encode the half it can read and exit 0, so
+--       the script must notice the new video is too short.
 --   E2M The same with --move, the mode record_test.sh uses: no recording is
 --       lost. A capture that encodes ends up at the output, encoded, and is
 --       gone from where it was; a broken one is moved to the output as it
 --       is, and the script says so.
 --   E3  The shrink tool, on a folder holding two captures with set
---       modification times, a broken video, a video in a subfolder and a
---       file that isn't a video. Both captures are replaced by smaller
---       High-profile videos with the same names and modification times; the
---       originals sit unchanged in originals/; the broken video, the
---       subfolder and the other file are untouched; and a second run
---       changes nothing.
+--       modification times, a video that is already High profile, a video
+--       in a subfolder and a file that isn't a video. Both captures are
+--       replaced by smaller High-profile videos with the same names and
+--       modification times; the originals sit unchanged in originals/; the
+--       rest is untouched; and a second run changes nothing.
+--   E3F The shrink tool leaves a video it can't shrink as it is, and says
+--       so: a broken video, and one whose name is already taken in
+--       originals/. A folder without videos gets no originals/.
 --
 -- THE SYNTHETIC CAPTURE: 5 seconds of ffmpeg's testsrc2 pattern (moving
 -- colour bars, a counter and noise), encoded the way record_test.sh
 -- captures the screen: 1280x618 at 30 frames a second, H.264 Constrained
--- Baseline, preset ultrafast. A capture is about 4 MB; encoded, under 1 MB.
+-- Baseline, preset ultrafast. A capture is about 3.9 MB; encoded, 0.7 MB.
 --
 -- WHERE IT WORKS: every file this test makes is in this run's own folder
 -- (fw.out_path), so runs at the same time never meet.
@@ -39,7 +46,7 @@
 -- HOW A TEST CAN RUN SHELL SCRIPTS: mGBA's Lua has the standard io library,
 -- so io.popen starts each command as a separate process and reads what it
 -- prints; this emulator just waits (no frames pass) until it is done. The
--- whole test takes about 15 seconds, longer while a suite runs alongside
+-- whole test takes about 20 seconds, longer while a suite runs alongside
 -- (the encodes run at low priority).
 --
 -- Run:
@@ -194,11 +201,58 @@ local function set_mtime(path, when)
     run("touch -d " .. sh_quote(when) .. " " .. sh_quote(path))
 end
 
--- A broken "video" at `path`: an .mp4 file that holds no video.
-local function make_broken(path)
-    local f = io.open(path, "wb")
-    f:write("this is not a video\n")
+-- Write `text` to file `path`.
+local function write_file(path, text)
+    local f = assert(io.open(path, "wb"))
+    f:write(text)
     f:close()
+end
+
+-- Copy file `from` to `to`, keeping its modification time (cp -p).
+local function copy(from, to)
+    run("cp -p " .. sh_quote(from) .. " " .. sh_quote(to))
+end
+
+-- Make each folder in the list (and the folders above it).
+local function make_dirs(...)
+    local quoted = {}
+    for _, dir in ipairs({ ... }) do quoted[#quoted + 1] = sh_quote(dir) end
+    run("mkdir -p " .. table.concat(quoted, " "))
+end
+
+-- Run one of the scripts under test (`script`, ENCODE or SHRINK) with
+-- arguments `args` (a list of strings), logging what it printed under
+-- `label`. Returns its exit code and output.
+local function run_script(label, script, args)
+    local quoted = {}
+    for _, a in ipairs(args) do quoted[#quoted + 1] = sh_quote(a) end
+    local code, output = run("bash " .. sh_quote(script) .. " " .. table.concat(quoted, " "))
+    fw.log(string.format("%s: %s %s -> exit %s:\n%s", label, script:match("[^/]+$"),
+        table.concat(args, " "), tostring(code), output))
+    return code, output
+end
+
+-- What identifies file `path`'s contents and modification time now, for
+-- check_unchanged.
+local function fingerprint(path)
+    return { path = path, hash = hash_of(path), mtime = mtime_of(path) }
+end
+
+-- Check that the file `fp` (a fingerprint) describes is as it was then.
+local function check_unchanged(label, fp)
+    fw.assert_eq(hash_of(fp.path), fp.hash, label .. ": contents unchanged: " .. fp.path:match("[^/]+$"))
+    fw.assert_eq(mtime_of(fp.path), fp.mtime, label .. ": modification time unchanged: " .. fp.path:match("[^/]+$"))
+end
+
+-- The encoder settings x264 writes into every video it makes (a short text
+-- inside the first frame: "x264 - core ... options: cabac=1 ref=3 ...
+-- crf=28.0 ..."), or "" if there are none.
+local function x264_options(path)
+    local f = io.open(path, "rb")
+    if not f then return "" end
+    local data = f:read("a") or ""
+    f:close()
+    return data:match("x264 %- core[^%z]-options: ([^%z]*)") or ""
 end
 
 -- Check that `video` is the High-profile encode of `capture`: E1's checks.
@@ -218,16 +272,27 @@ local function check_encoded(label, video, capture)
     fw.assert_true(moov ~= nil and mdat ~= nil and moov < mdat,
         label .. ": moov before mdat (top-level boxes: " .. table.concat(boxes, " ") .. ")")
 
+    -- The agreed settings, as x264 recorded them. Preset medium shows as
+    -- subme=7, how finely it searches for motion (ultrafast's is 0).
+    local options = " " .. x264_options(video) .. " "
+    for _, setting in ipairs({ "crf=28.0", "vbv_maxrate=1000", "vbv_bufsize=2000", "subme=7" }) do
+        fw.assert_true(options:find(" " .. setting .. " ", 1, true) ~= nil,
+            label .. ": encoded with " .. setting)
+    end
+
+    -- At most a quarter of the capture: about 0.18 with these settings. The
+    -- live capture's own settings (ratio 1) or CRF 23 without the cap (0.39)
+    -- would fail.
     local new_size, old_size = size_of(video) or 0, size_of(capture) or 0
-    fw.log(string.format("%s: capture %d bytes, encoded %d bytes", label, old_size, new_size))
-    fw.assert_true(new_size > 0 and new_size < old_size,
-        string.format("%s: smaller than the capture (%d < %d bytes)", label, new_size, old_size))
+    fw.assert_true(new_size > 0 and new_size * 4 <= old_size,
+        string.format("%s: at most a quarter of the capture's size (%d of %d bytes)",
+            label, new_size, old_size))
 end
 
 fw.run(function()
     fw.log("=== Recordings are encoded small enough to stream ===")
     local work = fw.out_path("recording-size")
-    run("mkdir -p " .. sh_quote(work))
+    make_dirs(work)
 
     -- The capture every check starts from. It is copied, never changed, so
     -- each check can compare against it.
@@ -237,23 +302,22 @@ fw.run(function()
         "the capture is Constrained Baseline, like a live capture")
     fw.assert_true(index_of(top_level_boxes(capture), "moov") ~= nil,
         "the box reader finds the capture's moov box")
+    fw.assert_true(x264_options(capture):find("crf=23.0", 1, true) ~= nil,
+        "the settings reader finds the capture's settings")
     set_mtime(capture, "2026-01-02 03:04:05")
-    local capture_hash = hash_of(capture)
-    local capture_mtime = mtime_of(capture)
+    local capture_fp = fingerprint(capture)
 
     ---------------------------------------------------------------------------
     -- E1 The encode
     ---------------------------------------------------------------------------
     local e1 = work .. "/e1"
-    run("mkdir -p " .. sh_quote(e1))
+    make_dirs(e1)
     local e1_video = e1 .. "/kept.mp4"
-    local code, output = run("bash " .. sh_quote(ENCODE) .. " " .. sh_quote(capture)
-        .. " " .. sh_quote(e1_video))
-    fw.log("E1 encode_recording.sh -> exit " .. tostring(code) .. ": " .. output)
+    local code, output = run_script("E1", ENCODE, { capture, e1_video })
     fw.assert_eq(code, 0, "E1: encode_recording.sh exits 0")
     check_encoded("E1", e1_video, capture)
-    fw.assert_eq(hash_of(capture), capture_hash, "E1: the capture is unchanged")
-    fw.assert_eq(mtime_of(e1_video), capture_mtime,
+    check_unchanged("E1 the capture", capture_fp)
+    fw.assert_eq(mtime_of(e1_video), capture_fp.mtime,
         "E1: the video has the capture's modification time")
     fw.assert_true(output:find("captured %d+%.%d MB, kept %d+%.%d MB %(%d+%.%d%d Mbps%)") ~= nil,
         "E1: it says what it did (\"captured X MB, kept Y MB (Z Mbps)\")")
@@ -263,50 +327,58 @@ fw.run(function()
     -- E2 A broken input
     ---------------------------------------------------------------------------
     local e2 = work .. "/e2"
-    run("mkdir -p " .. sh_quote(e2 .. "/out"))
+    make_dirs(e2 .. "/out")
     local broken = e2 .. "/broken.mp4"
-    make_broken(broken)
+    write_file(broken, "this is not a video\n")
     set_mtime(broken, "2026-01-02 03:04:05")
-    local broken_hash = hash_of(broken)
-    code, output = run("bash " .. sh_quote(ENCODE) .. " " .. sh_quote(broken)
-        .. " " .. sh_quote(e2 .. "/out/kept.mp4"))
-    fw.log("E2 encode_recording.sh (broken input) -> exit " .. tostring(code) .. ": " .. output)
+    local broken_fp = fingerprint(broken)
+    code, output = run_script("E2", ENCODE, { broken, e2 .. "/out/kept.mp4" })
     fw.assert_neq(code, 0, "E2: encoding a broken file exits non-zero")
-    fw.assert_eq(hash_of(broken), broken_hash, "E2: the broken file's contents are as they were")
-    fw.assert_eq(mtime_of(broken), capture_mtime, "E2: the broken file's modification time is as it was")
+    check_unchanged("E2", broken_fp)
     fw.assert_eq(listing(e2 .. "/out"), "", "E2: no video and no half-written file left behind")
     fw.assert_true(output:find("left as it was", 1, true) ~= nil, "E2: it says the file is left as it was")
 
     ---------------------------------------------------------------------------
+    -- E2T A capture cut short
+    ---------------------------------------------------------------------------
+    local e2t = work .. "/e2t"
+    make_dirs(e2t .. "/out")
+    local truncated = e2t .. "/half.mp4"
+    run("head -c " .. (size_of(capture) // 2) .. " " .. sh_quote(capture) .. " > " .. sh_quote(truncated))
+    local truncated_fp = fingerprint(truncated)
+    code, output = run_script("E2T", ENCODE, { truncated, e2t .. "/out/kept.mp4" })
+    fw.assert_neq(code, 0, "E2T: encoding half a capture exits non-zero")
+    check_unchanged("E2T", truncated_fp)
+    fw.assert_eq(listing(e2t .. "/out"), "", "E2T: no video and no half-written file left behind")
+    fw.assert_true(output:find("still being copied", 1, true) ~= nil,
+        "E2T: it says the new video came out too short")
+
+    ---------------------------------------------------------------------------
     -- E2M --move: no recording is lost
     ---------------------------------------------------------------------------
-    local m = work .. "/move"
-    run("mkdir -p " .. sh_quote(m .. "/run") .. " " .. sh_quote(m .. "/kept"))
+    local move_dir = work .. "/move"
+    make_dirs(move_dir .. "/run", move_dir .. "/kept")
 
     -- A capture that encodes: it ends up at the output, encoded.
-    local good_in = m .. "/run/capture.mp4"
-    run("cp -p " .. sh_quote(capture) .. " " .. sh_quote(good_in))
-    local good_out = m .. "/kept/good.mp4"
-    code, output = run("bash " .. sh_quote(ENCODE) .. " --move " .. sh_quote(good_in)
-        .. " " .. sh_quote(good_out))
-    fw.log("E2M encode_recording.sh --move (capture) -> exit " .. tostring(code) .. ": " .. output)
+    local good_in = move_dir .. "/run/capture.mp4"
+    copy(capture, good_in)
+    local good_out = move_dir .. "/kept/good.mp4"
+    code, output = run_script("E2M", ENCODE, { "--move", good_in, good_out })
     fw.assert_eq(code, 0, "E2M: --move of a capture exits 0")
     check_encoded("E2M", good_out, capture)
     fw.assert_true(not exists(good_in), "E2M: the capture is deleted once the encode works")
 
     -- A capture that doesn't encode: it ends up at the output as it is.
-    local bad_in = m .. "/run/broken.mp4"
-    run("cp -p " .. sh_quote(broken) .. " " .. sh_quote(bad_in))
-    local bad_out = m .. "/kept/bad.mp4"
-    code, output = run("bash " .. sh_quote(ENCODE) .. " --move " .. sh_quote(bad_in)
-        .. " " .. sh_quote(bad_out))
-    fw.log("E2M encode_recording.sh --move (broken) -> exit " .. tostring(code) .. ": " .. output)
+    local bad_in = move_dir .. "/run/broken.mp4"
+    copy(broken, bad_in)
+    local bad_out = move_dir .. "/kept/bad.mp4"
+    code, output = run_script("E2M", ENCODE, { "--move", bad_in, bad_out })
     fw.assert_neq(code, 0, "E2M: --move of a broken file exits non-zero")
-    fw.assert_eq(hash_of(bad_out), broken_hash, "E2M: the broken capture is kept, unchanged, as the video")
+    fw.assert_eq(hash_of(bad_out), broken_fp.hash, "E2M: the broken capture is kept, unchanged, as the video")
     fw.assert_true(not exists(bad_in), "E2M: the broken capture was moved, not copied")
     fw.assert_true(output:find("kept as it was captured", 1, true) ~= nil,
         "E2M: it says the capture is kept as the video")
-    fw.assert_eq(listing(m .. "/kept"), "bad.mp4 good.mp4", "E2M: no half-written file left behind")
+    fw.assert_eq(listing(move_dir .. "/kept"), "bad.mp4 good.mp4", "E2M: no half-written file left behind")
 
     ---------------------------------------------------------------------------
     -- E3 The shrink tool
@@ -317,7 +389,7 @@ fw.run(function()
     -- originals against.
     local folder = work .. "/kept"
     local pristine = work .. "/pristine"
-    run("mkdir -p " .. sh_quote(folder .. "/sub") .. " " .. sh_quote(pristine))
+    make_dirs(folder .. "/sub", pristine)
     local captures = {
         { name = "a.mp4", when = "2026-01-02 03:04:05" },
         { name = "b.mp4", when = "2026-03-04 05:06:07", filter = "negate" },
@@ -325,48 +397,41 @@ fw.run(function()
     for _, c in ipairs(captures) do
         fw.assert_true(make_capture(pristine .. "/" .. c.name, c.filter), "E3: made capture " .. c.name)
         set_mtime(pristine .. "/" .. c.name, c.when)
-        c.mtime = mtime_of(pristine .. "/" .. c.name)
-        c.hash = hash_of(pristine .. "/" .. c.name)
-        run("cp -p " .. sh_quote(pristine .. "/" .. c.name) .. " " .. sh_quote(folder .. "/" .. c.name))
+        c.fp = fingerprint(pristine .. "/" .. c.name)
+        copy(pristine .. "/" .. c.name, folder .. "/" .. c.name)
     end
-    fw.assert_neq(captures[1].hash, captures[2].hash, "E3: the two captures differ")
-    run("cp -p " .. sh_quote(e1_video) .. " " .. sh_quote(folder .. "/high.mp4"))
-    run("cp -p " .. sh_quote(capture) .. " " .. sh_quote(folder .. "/sub/c.mp4"))
-    local notes = io.open(folder .. "/notes.txt", "w")
-    notes:write("not a video\n")
-    notes:close()
+    fw.assert_neq(captures[1].fp.hash, captures[2].fp.hash, "E3: the two captures differ")
+    copy(e1_video, folder .. "/high.mp4")
+    copy(capture, folder .. "/sub/c.mp4")
+    write_file(folder .. "/notes.txt", "not a video\n")
     local untouched = {
-        { path = folder .. "/high.mp4", hash = hash_of(folder .. "/high.mp4"), mtime = mtime_of(folder .. "/high.mp4") },
-        { path = folder .. "/sub/c.mp4", hash = hash_of(folder .. "/sub/c.mp4"), mtime = mtime_of(folder .. "/sub/c.mp4") },
-        { path = folder .. "/notes.txt", hash = hash_of(folder .. "/notes.txt"), mtime = mtime_of(folder .. "/notes.txt") },
+        fingerprint(folder .. "/high.mp4"),
+        fingerprint(folder .. "/sub/c.mp4"),
+        fingerprint(folder .. "/notes.txt"),
     }
 
-    code, output = run("bash " .. sh_quote(SHRINK) .. " " .. sh_quote(folder))
-    fw.log("E3 shrink_recordings.sh, first run -> exit " .. tostring(code) .. ":\n" .. output)
+    code, output = run_script("E3 first run", SHRINK, { folder })
     fw.assert_eq(code, 0, "E3: the first run exits 0")
     fw.assert_eq(listing(folder), "a.mp4 b.mp4 high.mp4 notes.txt originals sub",
         "E3: the folder holds the same files, plus originals/, and nothing half-written")
     fw.assert_eq(listing(folder .. "/originals"), "a.mp4 b.mp4", "E3: originals/ holds the two captures")
     for _, c in ipairs(captures) do
         local video = folder .. "/" .. c.name
-        local original = folder .. "/originals/" .. c.name
-        check_encoded("E3 " .. c.name, video, pristine .. "/" .. c.name)
-        fw.assert_eq(mtime_of(video), c.mtime, "E3 " .. c.name .. ": the new video keeps the modification time")
-        fw.assert_eq(hash_of(original), c.hash, "E3 " .. c.name .. ": the original is unchanged")
-        fw.assert_eq(mtime_of(original), c.mtime, "E3 " .. c.name .. ": the original keeps its modification time")
+        check_encoded("E3 " .. c.name, video, c.fp.path)
+        fw.assert_eq(mtime_of(video), c.fp.mtime, "E3 " .. c.name .. ": the new video keeps the modification time")
+        check_unchanged("E3 originals/" .. c.name,
+            { path = folder .. "/originals/" .. c.name, hash = c.fp.hash, mtime = c.fp.mtime })
         fw.assert_true(output:find(c.name .. ": captured", 1, true) ~= nil,
             "E3 " .. c.name .. ": it says what it did with the video")
     end
-    for _, u in ipairs(untouched) do
-        fw.assert_eq(hash_of(u.path), u.hash, "E3: untouched: " .. u.path:match("kept/(.*)$"))
-        fw.assert_eq(mtime_of(u.path), u.mtime, "E3: modification time untouched: " .. u.path:match("kept/(.*)$"))
+    for _, fp in ipairs(untouched) do
+        check_unchanged("E3 untouched", fp)
     end
     fw.assert_eq(listing(folder .. "/sub"), "c.mp4", "E3: the subfolder gets no originals/")
     fw.assert_true(output:find("2 shrunk", 1, true) ~= nil, "E3: the first run says 2 shrunk")
 
     local before = snapshot(folder)
-    code, output = run("bash " .. sh_quote(SHRINK) .. " " .. sh_quote(folder))
-    fw.log("E3 shrink_recordings.sh, second run -> exit " .. tostring(code) .. ":\n" .. output)
+    code, output = run_script("E3 second run", SHRINK, { folder })
     fw.assert_eq(code, 0, "E3: the second run exits 0")
     fw.assert_true(before:find("originals/a.mp4", 1, true) ~= nil,
         "E3: the snapshot lists the folder's files")
@@ -378,26 +443,26 @@ fw.run(function()
     ---------------------------------------------------------------------------
     -- broken.mp4 doesn't encode; clash.mp4 would, but originals/ already
     -- holds a file of that name, which must never be written over.
-    local f3 = work .. "/cant"
-    run("mkdir -p " .. sh_quote(f3 .. "/originals"))
-    run("cp -p " .. sh_quote(broken) .. " " .. sh_quote(f3 .. "/broken.mp4"))
-    run("cp -p " .. sh_quote(capture) .. " " .. sh_quote(f3 .. "/clash.mp4"))
-    run("cp -p " .. sh_quote(e1_video) .. " " .. sh_quote(f3 .. "/originals/clash.mp4"))
-    before = snapshot(f3)
-    code, output = run("bash " .. sh_quote(SHRINK) .. " " .. sh_quote(f3))
-    fw.log("E3F shrink_recordings.sh -> exit " .. tostring(code) .. ":\n" .. output)
+    local cant_dir = work .. "/cant"
+    make_dirs(cant_dir .. "/originals")
+    copy(broken, cant_dir .. "/broken.mp4")
+    copy(capture, cant_dir .. "/clash.mp4")
+    copy(e1_video, cant_dir .. "/originals/clash.mp4")
+    before = snapshot(cant_dir)
+    code, output = run_script("E3F", SHRINK, { cant_dir })
     fw.assert_eq(code, 1, "E3F: a video it can't shrink makes it exit 1")
-    fw.assert_eq(snapshot(f3), before, "E3F: both videos and originals/ are left as they were")
-    fw.assert_eq(listing(f3), "broken.mp4 clash.mp4 originals", "E3F: nothing half-written left behind")
-    fw.assert_true(output:find("broken.mp4: encode failed, left as it was", 1, true) ~= nil,
-        "E3F: it says broken.mp4 is left as it was")
-    fw.assert_true(output:find("clash.mp4: left as it was", 1, true) ~= nil,
+    fw.assert_eq(snapshot(cant_dir), before, "E3F: both videos and originals/ are left as they were")
+    fw.assert_eq(listing(cant_dir), "broken.mp4 clash.mp4 originals", "E3F: nothing half-written left behind")
+    fw.assert_true(output:find("broken.mp4: left as it was: the encode failed", 1, true) ~= nil,
+        "E3F: it says broken.mp4 is left as it was, and why")
+    fw.assert_true(output:find("clash.mp4: left as it was: ", 1, true) ~= nil,
         "E3F: it says clash.mp4 is left as it was")
+    fw.assert_true(output:find("2 not shrunk", 1, true) ~= nil, "E3F: the totals say 2 not shrunk")
 
-    -- An empty folder of the same shape: nothing to do, and no originals/.
+    -- A folder without videos: nothing to do, and no originals/.
     local empty = work .. "/empty"
-    run("mkdir -p " .. sh_quote(empty))
-    code, output = run("bash " .. sh_quote(SHRINK) .. " " .. sh_quote(empty))
+    make_dirs(empty)
+    code, output = run_script("E3F empty folder", SHRINK, { empty })
     fw.assert_eq(code, 0, "E3F: a folder without videos exits 0")
     fw.assert_eq(listing(empty), "", "E3F: a folder without videos gets no originals/")
 

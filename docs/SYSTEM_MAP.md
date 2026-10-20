@@ -137,7 +137,7 @@ All four paths start from the same ROM. The top two prove the change and need no
 - **A test passes only by proving something.** Zero assertions counts as a fail. Demos and probes say so with `fw.allow_no_assertions`, and the suite skips them: `test/suite_exclude.txt` lists each skipped test with its reason.
 - **Each run gets its own folder** (`/tmp/mgba-test.XXXXXX`), so several worktrees can test at the same time. The suite deletes the folders of passing runs and keeps failures with their `run_test.log`.
 - **Recordings take turns.** `test/record_test.sh` films the whole virtual display, so it holds a machine-wide lock (`/tmp/autodev-record.lock`) and a second recording waits.
-- **Recordings are small enough to stream.** The live capture is fast but big (about 3 Mbps). Once it ends and the lock is released, `test/tools/encode_recording.sh` encodes it again, slowly and well, into `/tmp/mgba-recordings`: about 0.4 Mbps, with the scripting log as readable as before. If that encode fails, the capture is kept as the video.
+- **Recordings are small enough to stream.** The live capture is fast but big (about 3 Mbps). Once it ends and the lock is released, `test/tools/encode_recording.sh` encodes it again, slowly and well, into `/tmp/mgba-recordings`: 5 to 8 times smaller, with the scripting log as readable as before. If that encode fails, the capture is kept as the video.
 - **The tests need the patched mGBA** in `~/projects/minimaleffort/mgba/build` (a screenshot fix and a fast-forward scripting API). Stock mGBA won't do.
 - **Autodev has its own unit tests** in `automation/tests/`, run with `cd automation && python3 -m unittest`. About half of them pin down the rules in `automation/autodev/decide.py`.
 
@@ -196,7 +196,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/tests/` | The tests and demos. `test/tests/mt_moon_checks/` holds the Mt. Moon property checks. `suite_fixtures/` and `framework_fixtures/` hold the small scripts that `test/tests/test_run_suite.lua` and `test/tests/test_framework_rules.lua` run to check the runners. |
 | `test/demos/` | A demo kept outside the suite. |
 | `test/tools/captioned_gif.py` | Turns a demo's captured frames into a captioned README GIF. |
-| `test/tools/encode_recording.sh` | Encodes one recording small enough to stream: H.264 High, CRF 28, peaks capped at 1 Mbps. The settings live only here, each explained. `test/record_test.sh` and `test/tools/shrink_recordings.sh` use it. |
+| `test/tools/encode_recording.sh` | Encodes one recording small enough to stream, 5 to 8 times smaller than the live capture. The settings live only here, each explained. `test/record_test.sh` and `test/tools/shrink_recordings.sh` use it. |
 | `test/tools/shrink_recordings.sh` | Shrinks the videos already kept (`~/recordings` by default) the same way, keeping their names and times, and moves each original into `originals/` there. Safe to run again: it only touches videos not shrunk yet. |
 | `test/tools/render_cave.py` | Draws a map, vanilla or a dumped generated cave, to PNG. |
 | `test/tools/dump_mtmoon_grid.lua` | Dumps generated Mt. Moon caves by seed for `test/tools/render_cave.py`. |

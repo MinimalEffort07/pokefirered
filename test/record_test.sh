@@ -34,12 +34,11 @@
 # but the files are big: about 3 Mbps, 40 MB for a 100-second test, too much
 # to stream to a phone over Tailscale. So the capture goes into the run's
 # own directory, and once it ends, test/tools/encode_recording.sh encodes
-# it again, slowly and well (H.264 High, CRF 28, peaks capped at 1 Mbps; the
-# script explains each setting). The kept video is 5 to 8 times smaller
-# and the scripting log reads the same. The encode doesn't need the display,
-# so it runs after the lock is released, and at low CPU priority: about 6
-# seconds per 100 seconds of video, while the next recording can already
-# start. Once the encode has worked the capture is deleted; if it fails,
+# it again, slowly and well (that script has the settings, and why each).
+# The kept video is 5 to 8 times smaller and the scripting log reads the
+# same. The encode doesn't need the display, so it runs after the lock is
+# released, and at low CPU priority: 6 to 11 seconds per 100 seconds of
+# video, while the next recording can already start. Once the encode has worked the capture is deleted; if it fails,
 # the capture is kept as the video instead, and the script says so. The
 # last lines say what it did, e.g. "captured 39.9 MB, kept 4.9 MB (0.38
 # Mbps)".

@@ -7,10 +7,11 @@
 # keeps up with the screen but makes big files (about 3 Mbps, 40 MB for a
 # 100-second test). That's too much to stream to a phone over Tailscale. So
 # the video it keeps is encoded a second time, slowly and well, by this
-# script: about 8 times smaller, with the scripting window's log text as
+# script: 5 to 8 times smaller, with the scripting window's log text as
 # readable as before. test/tools/shrink_recordings.sh uses this script too,
 # for the videos already kept, so the settings below are the only place the
-# encode is described.
+# encode is set. If videos still stutter over Tailscale, raise -crf below:
+# 30 to 32 is the next step, with softer text.
 #
 # USAGE:
 #   bash test/tools/encode_recording.sh IN OUT
@@ -34,11 +35,17 @@
 # person) ever sees a half-written OUT, and a failed encode leaves nothing
 # behind.
 #
+# The encode counts as failed when the new video comes out shorter than IN
+# (by more than half a second). That happens when IN is cut short: damaged,
+# or still being copied into its folder. ffmpeg then encodes the part it can
+# read and still exits 0, which would turn a 65-second video into a
+# 25-second one.
+#
 # EXIT CODES:
 #   0   encoded: OUT is the new video
 #   1   the encode failed: no OUT, IN as it was (with --move: IN moved to
 #       OUT, not encoded), or OUT's folder can't be written (IN stays put)
-#   2   wrong arguments
+#   2   wrong arguments, or OUT is a folder
 #
 ###############################################################################
 set -uo pipefail
@@ -51,10 +58,12 @@ set -uo pipefail
 # at 30 frames a second for a recording from test/record_test.sh.
 #
 # Measured on #99's recording, a 104-second test (issue #103's design
-# addendum has the other settings tried): the live capture is 39.9 MB, 3.1
-# Mbps on average and 7.3 Mbps in its busiest second. These settings give
-# 4.9 MB, 0.38 Mbps on average and 1.04 Mbps in the busiest second, in 5.7
-# seconds, and the scripting log reads the same.
+# addendum has the other settings tried; #108's PR has the numbers for a
+# second video): the live capture is 39.9 MB, 3.1 Mbps on average and 7.3
+# Mbps in its busiest second. These settings give 4.9 MB, 0.38 Mbps on
+# average and 1.07 Mbps in the busiest second, in 6 to 11 seconds
+# (depending on how busy the machine is), and the scripting log reads the
+# same.
 ENCODE_SETTINGS=(
     # H.264, the video format every browser and phone plays.
     -c:v libx264
@@ -62,14 +71,16 @@ ENCODE_SETTINGS=(
     # High profile. A profile is the set of compression tools a video may
     # use. The live capture uses Constrained Baseline, the smallest set,
     # which suits a fast encoder. High adds the tools that store the same
-    # picture in fewer bytes (bigger search areas, better coding of the
-    # numbers); every browser and phone of the last decade plays it.
+    # picture in fewer bytes: B-frames (pictures stored as the difference
+    # from both the picture before and the one after), CABAC (a tighter way
+    # of writing the numbers down) and 8x8 blocks for smooth areas. Every
+    # browser and phone of the last decade plays it.
     -profile:v high
 
     # The preset: how hard the encoder works to find the cheapest way to
     # store each picture. The live capture's "ultrafast" barely tries, which
     # is why it keeps up with the screen and why its files are big.
-    # "medium" (x264's default) tries properly: about 6 seconds of work per
+    # "medium" (x264's default) tries properly: 6 to 11 seconds of work per
     # 100 seconds of video here. Slower presets save only a few percent more.
     -preset medium
 
@@ -125,10 +136,21 @@ if [ "$IN" -ef "$OUT" ]; then
     echo "encode_recording.sh: IN and OUT are the same file: $IN" >&2
     exit 2
 fi
+if [ -d "$OUT" ]; then
+    echo "encode_recording.sh: OUT must be a file name, not a folder: $OUT" >&2
+    exit 2
+fi
 
 # Millions of bytes, to one decimal place.
 mb() {
     awk -v bytes="$1" 'BEGIN { printf "%.1f", bytes / 1e6 }'
+}
+
+# How long video $1 lasts, in seconds (e.g. "103.633333"), or nothing if
+# ffprobe can't read it.
+duration_of() {
+    ffprobe -v error -show_entries format=duration \
+        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null
 }
 
 IN_BYTES=$(stat -c %s "$IN")
@@ -142,22 +164,38 @@ PARTIAL=$(mktemp "$(dirname "$OUT")/.encoding.XXXXXX") || {
 }
 trap 'rm -f "$PARTIAL"' EXIT
 
+# Encode IN into $PARTIAL, check it, and rename it to OUT. Returns 0 only
+# if OUT is now the finished new video.
+#
 # -nostdin: never read the terminal (ffmpeg otherwise takes keys from it).
 # -loglevel error: print only what went wrong. -y: write over $PARTIAL,
 # which mktemp has just made empty. -f mp4: the format, which ffmpeg would
 # otherwise guess from the file name's ending.
-if nice -n 19 ffmpeg -nostdin -hide_banner -loglevel error -y -i "$IN" \
-        "${ENCODE_SETTINGS[@]}" -f mp4 "$PARTIAL"; then
-    chmod --reference="$IN" "$PARTIAL"
-    touch -r "$IN" "$PARTIAL"
-    mv -f "$PARTIAL" "$OUT"
+encode() {
+    nice -n 19 ffmpeg -nostdin -hide_banner -loglevel error -y -i "$IN" \
+        "${ENCODE_SETTINGS[@]}" -f mp4 "$PARTIAL" || return 1
+
+    # As long as IN, give or take half a second (see above).
+    local want got
+    want=$(duration_of "$IN")
+    got=$(duration_of "$PARTIAL")
+    if ! awk -v want="${want:-0}" -v got="${got:-0}" \
+            'BEGIN { exit !(got + 0 > 0 && got + 0.5 >= want + 0) }'; then
+        echo "encode_recording.sh: the new video lasts ${got:-?} s but $IN lasts ${want:-?} s: is it damaged, or still being copied?" >&2
+        return 1
+    fi
+
+    chmod --reference="$IN" "$PARTIAL" &&
+        touch -r "$IN" "$PARTIAL" &&
+        mv -f "$PARTIAL" "$OUT"
+}
+
+if encode; then
     if [ "$MOVE" -eq 1 ]; then
         rm -f "$IN"
     fi
     OUT_BYTES=$(stat -c %s "$OUT")
-    DURATION=$(ffprobe -v error -show_entries format=duration \
-        -of default=noprint_wrappers=1:nokey=1 "$OUT" 2>/dev/null)
-    awk -v a="$IN_BYTES" -v b="$OUT_BYTES" -v s="${DURATION:-0}" 'BEGIN {
+    awk -v a="$IN_BYTES" -v b="$OUT_BYTES" -v s="$(duration_of "$OUT")" 'BEGIN {
         printf "captured %.1f MB, kept %.1f MB", a / 1e6, b / 1e6
         if (s + 0 > 0) printf " (%.2f Mbps)", b * 8 / s / 1e6
         printf "\n"
