@@ -29,6 +29,36 @@
  * ledges from the side, onto water or onto other characters. While the
  * player surfs, it waits on the shore and rejoins them when they land.
  *
+ * SWAPPING PLACES (issue #99):
+ * The follower is an object like any NPC, so the player's step code finds
+ * it in the way like one. That alone would let it block a cave mouth, a door
+ * or a one-tile path for good. So when the player walks, runs or rides the
+ * bicycle into it, the two swap places, as in HeartGold and SoulSilver: the
+ * player steps onto its tile and it steps onto the player's old tile, both
+ * starting on the same frame and lasting as many frames, so they cross
+ * without ever sharing a tile.
+ *   - The player's step code decides it, at the point where it would
+ *     otherwise bump into an object: PlayerNotOnBikeMoving in
+ *     field_player_avatar.c, and the bicycle moves in bike.c. It asks
+ *     CanPlayerSwapWithFollower, takes its normal step, then calls
+ *     StartFollowerSwapStep. The decision is not made inside the shared
+ *     collision check (CheckForObjectEventCollision) on purpose: moves the
+ *     game makes by itself (ice slides, spinner tiles, sea currents) call
+ *     that check too and must keep stopping in front of the follower, and
+ *     the bicycle code can still refuse a step after that check (a tile
+ *     that forbids biking).
+ *   - Both steps are held movements (see WALKABLE TILES): each step code
+ *     only stores a one-step command on its object this frame, and the
+ *     sprite callbacks play both later in the same frame (AnimateSprites).
+ *     So both objects move onto their new tiles on the same frame.
+ *   - The follower takes a step exactly as long as the player's: see
+ *     sSwapSteps, the speed table.
+ *   - Only a follower standing still swaps. One in the middle of a step
+ *     blocks like a walking NPC: the player bumps, and swaps on the next
+ *     try once its step has ended.
+ *   - No Random() call, so the random sequence tests and Mt. Moon's seed
+ *     rolls depend on is untouched.
+ *
  * LIFECYCLE:
  * - ActivateFollower(): Called from party menu "WALK" option. Stores
  *   the chosen Pokemon's identity (PID + OTID, see IsFollowerPokemon) so
@@ -992,4 +1022,203 @@ void UpdateFollowerPokemon(void)
      * a step toward the player, or none if both ways are blocked. */
     if (!TryFollowerSideStep(followerObj, playerObj))
         TryFollowerStepTowardPlayer(followerObj, playerObj, FALSE);
+}
+
+/*
+ * ============================================================================
+ * SWAPPING PLACES (issue #99): see the top of this file
+ * ============================================================================
+ */
+
+/*
+ * THE SPEED TABLE: which step the follower takes for each step the player
+ * can take into it, so that both last exactly as many frames.
+ *
+ * A step's length is set by its movement action: every one moves the sprite
+ * 16 pixels (one tile) at its own pace, e.g. 1 pixel a frame for a normal
+ * walk. The follower can't simply copy the player's action, because some
+ * player actions play animations its sprite doesn't have: a walking
+ * Pokemon's sprite sheet has standing and walking frames only (its
+ * animation table is sAnimTable_Standard), not the player's running or
+ * bicycle frames. So each row maps a player step to an NPC step of the same
+ * length that only uses walking frames.
+ *
+ * Each player step comes as a family of four actions, one per direction, in
+ * the order DOWN, UP, LEFT, RIGHT (so DIR_SOUTH..DIR_EAST, 1..4, map to
+ * family + 0..3). A row names the family by its _DOWN action. The frame
+ * counts come from the step tables in event_object_movement.c (sStepTimes,
+ * UpdateWalkSlowAnim, UpdateRunSlowAnim).
+ *
+ *   player's step         when                        frames  follower's step
+ *   WALK_NORMAL           walking; bicycle uphill       16    WALK_NORMAL
+ *   WALK_SLOW             walking on rock stairs        23    WALK_SLOW
+ *   PLAYER_RUN            running (B held)               8    WALK_FAST
+ *   PLAYER_RUN_SLOW       running on rock stairs        11    PLAYER_RUN_SLOW
+ *   WALK_FAST             bicycle on rock stairs         8    WALK_FAST
+ *   RIDE_WATER_CURRENT    bicycle                        6    RIDE_WATER_CURRENT
+ *   WALK_FASTER           bicycle down the slope         4    WALK_FASTER
+ *                         (Cycling Road)
+ *
+ * PLAYER_RUN_SLOW is the one step with no walking-only twin, so the follower
+ * plays the player's own action; InitRunSlow (event_object_movement.c) gives
+ * any object other than the player its walk frames for it.
+ */
+static const struct {
+    u8 playerStepDown;              /* the player's step family, its _DOWN action */
+    u8 (*followerStep)(u32 dir);    /* the follower's step of the same length */
+} sSwapSteps[] = {
+    { MOVEMENT_ACTION_WALK_NORMAL_DOWN,        GetWalkNormalMovementAction },
+    { MOVEMENT_ACTION_WALK_SLOW_DOWN,          GetWalkSlowMovementAction },
+    { MOVEMENT_ACTION_PLAYER_RUN_DOWN,         GetWalkFastMovementAction },
+    { MOVEMENT_ACTION_PLAYER_RUN_DOWN_SLOW,    GetPlayerRunSlowMovementAction },
+    { MOVEMENT_ACTION_WALK_FAST_DOWN,          GetWalkFastMovementAction },
+    { MOVEMENT_ACTION_RIDE_WATER_CURRENT_DOWN, GetRideWaterCurrentMovementAction },
+    { MOVEMENT_ACTION_WALK_FASTER_DOWN,        GetWalkFasterMovementAction },
+};
+
+/**
+ * The follower's ObjectEvent, or NULL when it has no sprite on this map.
+ */
+static struct ObjectEvent *GetFollowerObjectEvent(void)
+{
+    struct ObjectEvent *followerObj;
+
+    if (!sFollower.active || !sFollower.spriteSpawned || sFollower.objEventId >= OBJECT_EVENTS_COUNT)
+        return NULL;
+    followerObj = &gObjectEvents[sFollower.objEventId];
+    if (!followerObj->active)
+        return NULL;
+    return followerObj;
+}
+
+/**
+ * The engine's collision check for `mover` stepping onto (x, y) in
+ * `direction` (GetCollisionAtCoords), made as if `ignored` weren't on the
+ * map at all.
+ *
+ * The object test inside it (DoesObjectCollideWithObjectAt) skips objects
+ * whose `active` flag is clear, so `ignored` is switched off for the length
+ * of the call and straight back on. Nothing else runs in between: the check
+ * only reads, and no interrupt handler touches gObjectEvents. This keeps
+ * every other rule of the check exactly the engine's: walls, one-way edges,
+ * the map edge, height, and every other object, including one walking onto
+ * or off the tile.
+ */
+static u8 GetCollisionWithout(struct ObjectEvent *ignored, struct ObjectEvent *mover, s16 x, s16 y, u8 direction)
+{
+    u8 collision;
+
+    ignored->active = FALSE;
+    collision = GetCollisionAtCoords(mover, x, y, direction);
+    ignored->active = TRUE;
+    return collision;
+}
+
+/**
+ * FUNCTION: CanPlayerSwapWithFollower
+ *
+ * PURPOSE: Decide whether the player's step in `direction`, which their step
+ *          code found blocked by an object, is a step into the follower that
+ *          swaps places with it. Called by the player's own step code
+ *          (walking and running in field_player_avatar.c, the bicycle in
+ *          bike.c; see the top of this file); if it returns TRUE the caller
+ *          takes its normal step and then calls StartFollowerSwapStep.
+ *
+ * All of these must hold:
+ *   1. The player isn't surfing (the follower never goes on water).
+ *   2. The follower stands on the tile the player steps onto, standing
+ *      still: no step of its own in progress, and its previous tile is its
+ *      current one. A follower in the middle of a step blocks, as a walking
+ *      NPC does.
+ *   3. Without the follower, the player's step would be legal: the engine's
+ *      check passes with the follower ignored (no wall, no one-way edge
+ *      against it, the same height, inside the map, nobody else on the
+ *      tile). The bicycle's own extra rule, a tile that forbids biking, is
+ *      checked by the caller in bike.c.
+ *   4. The follower can make the reverse step onto the player's tile: the
+ *      engine's NPC check passes with the player ignored, and the tile isn't
+ *      water. One-way edges are the same in both directions in this engine,
+ *      so this practically always holds once 3 does. Unlike the follower's
+ *      own steps (IsFollowerWalkableTile), a warp is allowed: the player may
+ *      have arrived on a doormat or a ladder, and refusing would box them in
+ *      when the follower spawned in the only way out.
+ * Calls no Random().
+ */
+bool8 CanPlayerSwapWithFollower(u8 direction)
+{
+    struct ObjectEvent *playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
+    struct ObjectEvent *followerObj = GetFollowerObjectEvent();
+    s16 x = playerObj->currentCoords.x;
+    s16 y = playerObj->currentCoords.y;
+
+    if (followerObj == NULL || (gPlayerAvatar.flags & PLAYER_AVATAR_FLAG_SURFING))
+        return FALSE;
+
+    MoveCoords(direction, &x, &y);
+    if (followerObj->currentCoords.x != x || followerObj->currentCoords.y != y
+     || followerObj->previousCoords.x != x || followerObj->previousCoords.y != y
+     || followerObj->singleMovementActive
+     || (followerObj->heldMovementActive && !followerObj->heldMovementFinished))
+        return FALSE;
+
+    if (GetCollisionWithout(followerObj, playerObj, x, y, direction) != COLLISION_NONE)
+        return FALSE;
+
+    x = playerObj->currentCoords.x;
+    y = playerObj->currentCoords.y;
+    if (GetCollisionWithout(playerObj, followerObj, x, y, GetOppositeDirection(direction)) != COLLISION_NONE)
+        return FALSE;
+    if (MetatileBehavior_IsSurfable(MapGridGetMetatileBehaviorAt(x, y)))
+        return FALSE;
+    return TRUE;
+}
+
+/**
+ * FUNCTION: StartFollowerSwapStep
+ *
+ * PURPOSE: Start the follower's half of a swap: one step onto the player's
+ *          old tile, opposite to `direction`, the player's step direction.
+ *          Called right after the player's step code has stored the player's
+ *          own step (for a swap CanPlayerSwapWithFollower allowed), in the
+ *          same frame, so the sprite callbacks start both steps together.
+ *
+ * The step lasts as long as the player's: it is looked up in sSwapSteps from
+ * the step just stored on the player (its movementActionId), so it follows
+ * whatever the player's code chose, running, rock stairs and the Cycling
+ * Road included. A player step missing from the table (none of the callers
+ * makes one) gets a normal walk, which still takes the follower off the
+ * player's new tile.
+ *
+ * Moving the follower's tile needs no collision check of its own:
+ * CanPlayerSwapWithFollower has already made it. Its previous step may have
+ * ended without being cleared yet (UpdateFollowerPokemon, which clears it,
+ * runs after the player's step code each frame), so that is cleared first:
+ * the engine refuses a new held movement while an old one is still stored.
+ * After the step it faces the way it walked and idles one tile behind the
+ * player, as UpdateFollowerPokemon does with any follower that close.
+ */
+void StartFollowerSwapStep(u8 direction)
+{
+    struct ObjectEvent *playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
+    struct ObjectEvent *followerObj = GetFollowerObjectEvent();
+    u8 playerAction = playerObj->movementActionId;
+    u8 followerDirection = GetOppositeDirection(direction);
+    u8 action = GetWalkNormalMovementAction(followerDirection);
+    u8 i;
+
+    if (followerObj == NULL)
+        return;
+
+    for (i = 0; i < NELEMS(sSwapSteps); i++)
+    {
+        if (playerAction >= sSwapSteps[i].playerStepDown
+         && playerAction < sSwapSteps[i].playerStepDown + 4)
+        {
+            action = sSwapSteps[i].followerStep(followerDirection);
+            break;
+        }
+    }
+
+    ObjectEventClearHeldMovementIfFinished(followerObj);
+    ObjectEventSetHeldMovement(followerObj, action);
 }

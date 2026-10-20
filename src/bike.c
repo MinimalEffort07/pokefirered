@@ -40,6 +40,7 @@
 #include "fieldmap.h"
 #include "field_camera.h"
 #include "overworld.h"
+#include "pokemon_follower.h"
 #include "constants/map_types.h"
 #include "constants/songs.h"
 
@@ -48,6 +49,7 @@ static void Bike_SetBikeStill(void);
 static u8 CanBikeFaceDirectionOnRail(u8 direction, u8 metatileBehavior);
 static u8 GetBikeCollision(u8);
 static u8 GetBikeCollisionAt(struct ObjectEvent *playerObjEvent, s16 x, s16 y, u8 direction, u8 metatileBehavior);
+static bool8 CanBikeSwapWithFollower(u8 direction, u8 collision);
 static bool8 MetatileBehaviorForbidsBiking(u8);
 static void BikeTransition_FaceDirection(u8);
 static void BikeTransition_TurnDirection(u8);
@@ -325,6 +327,8 @@ static void BikeTransition_TurnDirection(u8 direction)
  *    - COLLISION_NONE: Move normally (or ride water current if applicable)
  *    - COLLISION_LEDGE_JUMP: Jump over a ledge
  *    - COLLISION_COUNT: Move onto cracked ice (special fast movement)
+ *    - The walking Pokemon in the way: move anyway, and it swaps places
+ *      with the player (CanBikeSwapWithFollower)
  *    - Other collisions: Play bump/collide animation
  *
  * @param direction — direction to move
@@ -342,8 +346,9 @@ static void BikeTransition_MoveDirection(u8 direction)
     else
     {
         u8 collision = GetBikeCollision(direction);
+        bool8 swap = CanBikeSwapWithFollower(direction, collision);
 
-        if (collision > COLLISION_NONE && collision <= COLLISION_ISOLATED_HORIZONTAL_RAIL)
+        if (collision > COLLISION_NONE && collision <= COLLISION_ISOLATED_HORIZONTAL_RAIL && !swap)
         {
             /* Some kind of collision detected */
             if (collision == COLLISION_LEDGE_JUMP)
@@ -363,6 +368,8 @@ static void BikeTransition_MoveDirection(u8 direction)
                 PlayerWalkFast(direction);  /* Rock stairs: fast movement */
             else
                 PlayerRideWaterCurrent(direction);  /* Normal move or water current */
+            if (swap)
+                StartFollowerSwapStep(direction);  /* The walking Pokemon's half of the swap */
         }
     }
 }
@@ -371,16 +378,22 @@ static void BikeTransition_MoveDirection(u8 direction)
  * FUNCTION: BikeTransition_Downhill
  *
  * PURPOSE: Automatically moves the bike downhill (south) on Cycling Road slopes.
- * Only moves if the path is clear or if there's a ledge to jump.
+ * Only moves if the path is clear or if there's a ledge to jump. The walking
+ * Pokemon in the way swaps places with the player (CanBikeSwapWithFollower).
  *
  * @param v — unused direction parameter
  */
 static void BikeTransition_Downhill(u8 v)
 {
     u8 collision = GetBikeCollision(DIR_SOUTH);
+    bool8 swap = CanBikeSwapWithFollower(DIR_SOUTH, collision);
 
-    if (collision == COLLISION_NONE)
+    if (collision == COLLISION_NONE || swap)
+    {
         PlayerWalkFaster(DIR_SOUTH);       /* Move south at increased speed */
+        if (swap)
+            StartFollowerSwapStep(DIR_SOUTH);
+    }
     else if (collision == COLLISION_LEDGE_JUMP)
         PlayerJumpLedge(DIR_SOUTH);        /* Jump ledge at bottom of slope */
 }
@@ -389,14 +402,22 @@ static void BikeTransition_Downhill(u8 v)
  * FUNCTION: BikeTransition_Uphill
  *
  * PURPOSE: Moves the bike uphill on Cycling Road slopes at normal (slower) speed.
- * Only moves if the path is clear.
+ * Only moves if the path is clear. The walking Pokemon in the way swaps places
+ * with the player (CanBikeSwapWithFollower).
  *
  * @param direction — direction to move (typically DIR_NORTH on slopes)
  */
 static void BikeTransition_Uphill(u8 direction)
 {
-    if (GetBikeCollision(direction) == COLLISION_NONE)
+    u8 collision = GetBikeCollision(direction);
+    bool8 swap = CanBikeSwapWithFollower(direction, collision);
+
+    if (collision == COLLISION_NONE || swap)
+    {
         PlayerWalkNormal(direction);  /* Move at normal (slow) speed uphill */
+        if (swap)
+            StartFollowerSwapStep(direction);
+    }
 }
 
 /* ========================================================================
@@ -456,6 +477,41 @@ static u8 GetBikeCollisionAt(struct ObjectEvent *playerObjEvent, s16 x, s16 y, u
             retVal = COLLISION_IMPASSABLE;  /* Can't bike on this tile */
     }
     return retVal;
+}
+
+/**
+ * FUNCTION: CanBikeSwapWithFollower
+ *
+ * PURPOSE: Riding into the walking Pokemon swaps places with it (issue #99,
+ * "SWAPPING PLACES" in pokemon_follower.c), on every bicycle move: normal
+ * riding, and both ways on the Cycling Road slope. This decides whether the
+ * step in `direction`, whose GetBikeCollision result is `collision`, is such
+ * a swap.
+ *
+ * GetBikeCollision reports the walking Pokemon as COLLISION_OBJECT_EVENT,
+ * like any object. CanPlayerSwapWithFollower then makes the checks every
+ * swap needs. The one bicycle rule it can't see is a tile that forbids
+ * biking: GetBikeCollisionAt only tests that for a tile with nobody on it,
+ * so it is tested here, as the step would be judged without the follower.
+ *
+ * @param direction — direction of the step
+ * @param collision — GetBikeCollision(direction)
+ * @return TRUE if the caller should take its step and then call
+ *         StartFollowerSwapStep(direction)
+ */
+static bool8 CanBikeSwapWithFollower(u8 direction, u8 collision)
+{
+    struct ObjectEvent *playerObjEvent = &gObjectEvents[gPlayerAvatar.objectEventId];
+    s16 x, y;
+
+    if (collision != COLLISION_OBJECT_EVENT)
+        return FALSE;
+    x = playerObjEvent->currentCoords.x;
+    y = playerObjEvent->currentCoords.y;
+    MoveCoords(direction, &x, &y);
+    if (MetatileBehaviorForbidsBiking(MapGridGetMetatileBehaviorAt(x, y)))
+        return FALSE;
+    return CanPlayerSwapWithFollower(direction);
 }
 
 /* ========================================================================

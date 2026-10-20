@@ -351,7 +351,10 @@ end)
 --                       follower's new tile, the player's old one),
 --                       player_x, player_y (the player's new tile, the
 --                       follower's old one), follower_end, player_end (the
---                       frame each step ended, nil until then) }
+--                       frame each step ended, nil until then),
+--                       follower_was_still (it stood still on the frame
+--                       before: no step of its own playing, and its previous
+--                       tile equal to its current one) }
 --   watch.failed        true once the per-frame rule has failed (reported
 --                       once)
 function follower.new_watch(name, snap)
@@ -366,6 +369,9 @@ function follower.new_watch(name, snap)
         swap_tile = nil,
     }
     watch.tiles[0] = { x = f.x, y = f.y }
+    -- Whether the follower stands still, on every frame.
+    local function standing(o) return not o.held and o.prev_x == o.x and o.prev_y == o.y end
+    watch.still = { [0] = standing(f) }
     -- The spawn fallback (see the header): the watch starts with the
     -- follower on the player's tile. Only then may it share that tile, and
     -- stand on a warp, and only until its first step.
@@ -425,6 +431,7 @@ function follower.new_watch(name, snap)
         end
         local prev = watch.tiles[n - 1]
         watch.tiles[n] = { x = x, y = y }
+        watch.still[n] = standing(cur)
         local player = follower.player_object()
         local pprev = watch.player_tiles[n - 1]
         watch.player_tiles[n] = { x = player and player.x, y = player and player.y }
@@ -449,7 +456,8 @@ function follower.new_watch(name, snap)
             if far then watch.teleports[#watch.teleports + 1] = change end
             if swap then
                 watch.swaps[#watch.swaps + 1] = { frame = n, x = x, y = y,
-                                                  player_x = px, player_y = py }
+                                                  player_x = px, player_y = py,
+                                                  follower_was_still = watch.still[n - 1] }
                 watch.swap_tile = { x = x, y = y }
             else
                 watch.swap_tile = nil

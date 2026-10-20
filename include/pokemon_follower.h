@@ -31,4 +31,14 @@ void ActivateFollower(u8 partySlot);
 void DeactivateFollower(void);
 void ClearFollowerFromSaveBlock(void);
 
+/*
+ * Swapping places (issue #99): the player's step code calls
+ * CanPlayerSwapWithFollower where a step in `direction` is blocked by an
+ * object; if it returns TRUE it takes its normal step and then calls
+ * StartFollowerSwapStep(direction) in the same frame. See "SWAPPING PLACES"
+ * in pokemon_follower.c.
+ */
+bool8 CanPlayerSwapWithFollower(u8 direction);
+void StartFollowerSwapStep(u8 direction);
+
 #endif /* GUARD_POKEMON_FOLLOWER_H */
