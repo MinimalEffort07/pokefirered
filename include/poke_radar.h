@@ -28,8 +28,8 @@ struct PokeRadar
     /* 0x08 */ u8  stepsUntilCharge;     // 0..POKE_RADAR_RECHARGE_STEPS
     /* 0x09 */ u8  charges;              // 0 or 1
     /* 0x0A */ u8  flags;                // POKE_RADAR_FLAG_*
-    /* 0x0B */ u8  chainMapGroup;        // diagnostic only
-    /* 0x0C */ u8  chainMapNum;          // diagnostic only
+    /* 0x0B */ u8  patchMapGroup;        // the map the live patches are on
+    /* 0x0C */ u8  patchMapNum;          //   (only meaningful while PATCHES_ACTIVE)
     /* 0x0D */ u8  padding;
     /* 0x0E */ s16 patchX[POKE_RADAR_PATCH_COUNT];
     /* 0x16 */ s16 patchY[POKE_RADAR_PATCH_COUNT];
@@ -46,6 +46,7 @@ void  PokeRadar_OnEncounterStart(u16 species);
 bool8 PokeRadar_TryInjectShiny(u16 species, u32 *personalityOut);
 void  PokeRadar_OnBattleEnd(u8 outcome);
 void  PokeRadar_ClearPatches(void);
+void  PokeRadar_OnFieldReload(void);
 void  PokeRadar_BreakChain(void);
 void  PokeRadar_ResetOnNewGame(void);
 void  PokeRadar_EnsureInit(void);
