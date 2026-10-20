@@ -241,7 +241,10 @@ def plan(state):
     # it, before the grill has finished.
     held = {i.number for i in state.items if i.status in (PAUSED, GRILLING)
             or (i.status == TODO and ("grill", i.number) in state.requeued)}
-    ready = []      # (priority, group) for each group that launches a session
+    places = _places(state)
+    # (priority, group) for each group that launches a session, or holds a
+    # slot for one
+    ready = []
     for item in sorted(state.items, key=lambda i: i.number):
         if item.number in has_session:
             continue
@@ -265,15 +268,24 @@ def plan(state):
         launch = next((a for a in new if isinstance(a, Launch)), None)
         if launch is None:
             groups.append(new)
-        elif item.parent not in held:
-            ready.append((_priority(launch.role, item), new))
+        if item.parent in held:
+            continue
+        if launch is not None:
+            ready.append((_priority(launch.role, item, places), new))
+        elif _just_unblocked(state, item):
+            # The held slot: this tick only moves the ticket back to Todo,
+            # and the next one launches it. Meanwhile it takes the free slot
+            # it will need, with nothing in it, so a later feature's ticket
+            # or a grill can't start there first.
+            ready.append((_priority("ticket", item, places), []))
     # While a usage limit lasts nothing starts, including the moment it is
     # found; the board is still kept up to date.
     limit_ends = max([state.paused_until] + [a.until for g in groups for a in g
                                              if isinstance(a, PauseLaunches)])
     if state.now < limit_ends:
         ready = []
-    # The rest stay in Todo for a later tick.
+    # The rest stay in Todo for a later tick. A held slot's empty group is
+    # dropped below, so it only keeps the slot from going to anything else.
     groups += [new for _, new in sorted(ready, key=lambda r: r[0])[:max(free, 0)]]
     return [g for g in groups if g]
 
@@ -283,10 +295,27 @@ def plan(state):
 RANKS = {"merge": 0, "fixup": 1, "ticket": 2, "grill": 3}
 
 
-def _priority(role, item):
-    # Among tickets the oldest parent goes first, so one feature's tickets
-    # finish before the next feature's start; then the lowest number.
-    return (RANKS[role], item.parent or item.number, item.number)
+def _places(state):
+    """Each parent's place in line: the number of its lowest ticket on the
+    board, open or closed (#102). Issue numbers only go up, so the parent
+    whose first ticket is lowest was grilled first, whatever its own number:
+    an old issue added to the board late lines up behind the features
+    already in flight. Only tickets the owner or the bot wrote count, so
+    nobody else can move a parent up by naming it in an issue of theirs."""
+    places = {}
+    for i in state.items:
+        if i.has_parent and i.parent is not None and _trusted(state, i):
+            places[i.parent] = min(places.get(i.parent, i.number), i.number)
+    return places
+
+
+def _priority(role, item, places):
+    # Within each rank, features finish in the order they were grilled:
+    # the parent's place in line first, then the lowest number. It decides
+    # only who gets a free slot, so a later feature's tickets still start
+    # while the earlier ones have none ready. A grill, or a ticket whose
+    # "## Parent" names no issue, goes by its own number.
+    return (RANKS[role], places.get(item.parent, item.number), item.number)
 
 
 def decide(state):
@@ -321,6 +350,20 @@ def _open_blockers(state, item):
     return [b for b in item.blocked_by if b not in state.closed]
 
 
+def _trusted(state, item):
+    # Grill sessions write tickets as the bot, so the bot's are trusted
+    # too. Anyone else's "## Parent" heading doesn't make an issue a ticket.
+    return item.author in (state.owner, state.bot)
+
+
+def _just_unblocked(state, item):
+    """A trusted ticket whose card still says Blocked though nothing it
+    waits on is open: its last blocker closed since the last tick, usually
+    as its sibling's PR merged. This tick moves it back to Todo."""
+    return (item.has_parent and item.status == BLOCKED and _trusted(state, item)
+            and not _open_blockers(state, item))
+
+
 def _untrusted(state, item):
     return [SetStatus(item.number, NEEDS_HUMAN),
             Comment(item.number, _bot_comment(
@@ -331,9 +374,7 @@ def _untrusted(state, item):
 def _waiting_ticket(state, item):
     """A ticket in Todo or Blocked: launch it once nothing it waits on is
     open, and keep its card's Status in step with its blockers."""
-    # Grill sessions write tickets as the bot, so the bot's are trusted
-    # too. Anyone else's "## Parent" heading doesn't make an issue a ticket.
-    if item.author not in (state.owner, state.bot):
+    if not _trusted(state, item):
         return _untrusted(state, item)
     blocked = bool(_open_blockers(state, item))
     if item.status == BLOCKED:
@@ -459,7 +500,7 @@ def _parked_ticket(state, item):
     ticket stays parked for its author (D2)."""
     since = state.parked_at.get(item.number)
     pr = state.prs.get(item.number)
-    if since is None or pr is None or item.author not in (state.owner, state.bot):
+    if since is None or pr is None or not _trusted(state, item):
         return []
     newest = _newest_unhandled(state, pr)
     if newest is not None and newest.at > since:

@@ -106,7 +106,7 @@ Autodev takes an issue from the board to a PR that is ready to merge, with nobod
 3. Your feedback on the PR starts a fix-up session. Your `/merge` starts a merge session, which merges master in, tests that exact tree again, and merges with a merge commit. If merging master in conflicts, it resolves the conflict, explains how on the PR, and waits for a fresh `/merge` from you instead of merging.
 4. Once every ticket of the issue is closed, the issue is closed too.
 
-At most 2 sessions run at once. Only your issues, and the tickets the bot writes for them, are run, and only your text and the bot's ever reaches a session: anyone else's issue is parked, and their comments are withheld. When a session hits the Claude usage limit, nothing starts until shortly after the limit resets; a crashed session is run once more before it is parked.
+At most 2 sessions run at once, and the issue grilled first keeps first call on the slots: a later issue's tickets wait while it has one ready. Only your issues, and the tickets the bot writes for them, are run, and only your text and the bot's ever reaches a session: anyone else's issue is parked, and their comments are withheld. When a session hits the Claude usage limit, nothing starts until shortly after the limit resets; a crashed session is run once more before it is parked.
 
 **Setup.** Run two scripts, both safe to run again:
 

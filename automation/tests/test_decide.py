@@ -157,14 +157,15 @@ class Tickets(unittest.TestCase):
         self.assertEqual([a for a in actions if isinstance(a, Launch)], [])
 
     def test_D6_free_slots_go_to_the_top_items_by_priority(self):
-        # Tickets before grills, and among tickets the oldest parent first:
-        # #81 (parent #74), then #79 (parent #76). Parent #61 waits.
+        # Tickets before grills, and among tickets the parent grilled first:
+        # #79 (parent #76, first ticket #79), then #81 (parent #74, first
+        # ticket #81), though #74 is the lower number. Parent #61 waits.
         self.assertEqual(decide(state([item(61), ticket(79, parent=76),
                                        ticket(81, parent=74)])), [
-            MakeWorktree(81, "issue-81-do-the-thing"),
-            Launch("ticket", 81), SetStatus(81, "In progress"),
             MakeWorktree(79, "issue-79-do-the-thing"),
             Launch("ticket", 79), SetStatus(79, "In progress"),
+            MakeWorktree(81, "issue-81-do-the-thing"),
+            Launch("ticket", 81), SetStatus(81, "In progress"),
         ])
 
 
@@ -360,11 +361,11 @@ class Merging(unittest.TestCase):
             Launch("merge", 68, pr=73, handled_through=503))
 
     def test_D6_a_merge_goes_before_any_ticket(self):
-        # One slot free. #81's parent (#60) is older than #68's, but a merge
-        # finishes work that is already done, so it goes first.
+        # One slot free. #66's parent (#60) was grilled before #68's (#67),
+        # but a merge finishes work that is already done, so it goes first.
         waiting = in_review([said(501, OWNER, "/merge", 1)])
         waiting = State(**{**waiting.__dict__,
-                           "items": waiting.items + [ticket(81, parent=60)],
+                           "items": waiting.items + [ticket(66, parent=60)],
                            "sessions": [Session("grill", 99, "sid-99", running=True)]})
         self.assertEqual([a for a in decide(waiting) if isinstance(a, Launch)],
                          [Launch("merge", 68, pr=73, handled_through=501)])
@@ -420,11 +421,12 @@ class FixUps(unittest.TestCase):
             Launch("fixup", 68, pr=73, handled_through=9003))
 
     def test_a_fix_up_goes_after_a_merge_and_before_any_ticket(self):
-        # One slot free. #81's parent (#60) is older than #68's and #69's.
+        # One slot free. #66's parent (#60) was grilled before #68's and
+        # #69's (#67).
         waiting = in_review([said(9001, OWNER, "Reword the note.", 1)], number=69, pr=74)
         merging = in_review([said(501, OWNER, "/merge", 1)])
         waiting = State(**{**waiting.__dict__,
-                           "items": waiting.items + [ticket(81, parent=60)],
+                           "items": waiting.items + [ticket(66, parent=60)],
                            "sessions": [Session("grill", 99, "sid-99", running=True)]})
         self.assertEqual([a for a in decide(waiting) if isinstance(a, Launch)],
                          [Launch("fixup", 69, pr=74, handled_through=9001)])
