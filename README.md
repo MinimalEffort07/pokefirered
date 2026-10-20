@@ -94,6 +94,15 @@ bash test/record_test.sh test/tests/test_pc_anywhere.lua  # the same in the mGBA
 
 `test/tests/test_recording_size.lua` checks both scripts on synthetic captures made like the real one: the encode's profile, picture size, frame rate, index position, settings and file size; a broken or cut-short input; and the shrink tool's names, times, originals and second run.
 
+**The recordings page.** `test/serve_recordings.py` shows the videos at http://100.116.114.81:8080 (`autodev-recordings.service` runs it):
+
+- **Two sections, each newest first.** Kept recordings (`~/recordings`, kept for good) come first, then scratch ones (`/tmp/mgba-recordings`, not kept yet and cleared on reboot). "Newest" goes by when a recording ended: its video's modification time, which `mv` keeps. Videos in subfolders aren't listed.
+- **A card per video.** Its title comes from the file name: `issue-24-safety-net.mp4` is "#24 safety net", linked to issue #24, and `issue-90_test_x_20261020_134554.mp4` is "#90 test_x". Other names lose only their `_<date>_<time>` ending: `test_follower_swap_20261020_145947.mp4` is "test_follower_swap". Under the title come when it was recorded (this machine's time), its size, its file name, and a link to its own page.
+- **A page per recording.** `/r/<name>`, where `<name>` is the file name without `.mp4`, shows just that video, so a phone loads one video instead of all of them. It looks in `~/recordings` first, then `/tmp/mgba-recordings`, so a link made before a video was moved still works.
+- **Videos stream.** The page answers requests in parallel and sends each video in pieces, so a seek, a second video or the page itself never waits behind a slow download.
+- **Previewing a branch's page.** Port 8080 runs master's page. To see a branch's, run `python3 test/serve_recordings.py --port 8081` in that checkout and open http://100.116.114.81:8081. `--kept DIR` and `--scratch DIR` point it at other folders. `--print PATH` prints what a GET of `PATH` (`/` or `/r/<name>`) would return, status code first, without opening a port; `test/tests/test_recordings_page.lua` checks the page that way, on fixture folders of its own.
+- **One file.** The server imports only Python's standard library, because autodev restarts the page when a merge changes that one file.
+
 **The whole suite.** `test/run_suite.sh` is the check a change must pass before it is merged:
 
 - It runs every top-level `test/tests/*.lua` file through `run_test.sh`, 4 at a time, each with a time limit of 1500 seconds (`MGBA_TEST_TIMEOUT=1500`), and leaves out the tests listed in `test/suite_exclude.txt`. The whole run takes about 10 minutes.
