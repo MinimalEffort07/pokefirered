@@ -30,6 +30,28 @@
 --   C4  The name: --check says the video would be named
 --       issue-90_<test>_<date>_<time>.mp4 for notes naming ticket 90, and
 --       <test>_<date>_<time>.mp4, as before, without a ticket.
+--   C5  The card: a recording whose notes file has a ticket, a parent, a PR
+--       and notes is titled "#90 <title>", linked to the ticket, with "Part
+--       of #87 <title>" and "PR #97" under it, each linked, then the three
+--       sections with their text HTML-escaped, line breaks kept. Its facts
+--       line has when it was recorded, the test, the branch and commit
+--       (with uncommitted changes, when so), the result, the size and the
+--       file name. Across the fixtures, each of the four result texts.
+--   C6  Order: cards with a notes file sort by its recorded_at, newest
+--       first, mixed correctly with videos that have none and sort by their
+--       modification time.
+--   C7  Bad and missing notes: a notes file that can't be read gives the
+--       card made from the file name, plus "notes file unreadable", and the
+--       page still returns 200. A notes file whose notes are null, and a
+--       video without a notes file, say "No notes for this recording." A
+--       notes file without its video isn't listed.
+--
+-- THE PAGE FIXTURES are tiny videos of zeros, each with a notes file
+-- written by the helper (so the page is checked against the format the
+-- helper really writes) or by hand (the broken ones). Each video's
+-- modification time is set so that sorting by it gives a different order
+-- than sorting by recorded_at. The page shows times in the machine's local
+-- time, so its commands run with TZ=UTC, and the times below are UTC.
 --
 -- NEVER A REAL RECORDING: every record_test.sh command here starts with
 -- --check, which checks the arguments and the notes and exits before the
@@ -63,6 +85,7 @@ local fw = dofile(project_dir .. "test/lib/framework.lua")
 
 local RECORD = project_dir .. "test/record_test.sh"
 local NOTES_TOOL = project_dir .. "test/tools/recording_notes.py"
+local SERVER = project_dir .. "test/serve_recordings.py"
 -- A real test for --check to accept. It is never run.
 local SOME_TEST = project_dir .. "test/tests/test_player_sprite.lua"
 
@@ -427,6 +450,320 @@ local function check_notes_file()
 end
 
 -------------------------------------------------------------------------------
+-- The page fixtures
+-------------------------------------------------------------------------------
+
+local KEPT = WORK .. "/kept"
+local SCRATCH = WORK .. "/scratch"
+local ISSUES = "https://github.com/MinimalEffort07/pokefirered/issues/"
+local PULLS = "https://github.com/MinimalEffort07/pokefirered/pull/"
+
+-- Recordings with notes files the helper writes, in the order the page
+-- must show them, mixed with videos that have no notes file (`mtime_only`)
+-- and with broken notes files (`broken`, the file's text). `at` is
+-- recorded_at; `mtime` the video's modification time (UTC), picked to
+-- contradict that order; `shows` the time the card must show (UTC).
+local PAGE_VIDEOS = {
+    { name = "issue-90_test_x_20261020_134554.mp4", at = "2026-10-20T13:45:54+11:00",
+      mtime = "2026-01-01 00:00", shows = "2026-10-20 02:45", notes = COMPLETE,
+      results = { 215, 0 }, result_text = "215 of 215 checks passed" },
+    { name = "test_plain_20261019_120000.mp4", mtime_only = true,
+      mtime = "2026-10-19 12:00", shows = "2026-10-19 12:00" },
+    { name = "issue-91_test_x_20261019_100000.mp4", at = "2026-10-19T10:00:00+11:00",
+      mtime = "2026-12-01 00:00", shows = "2026-10-18 23:00",
+      notes = COMPLETE:gsub("^ticket: [^\n]*", "ticket: 91 Fails <b>loudly</b> & badly")
+                      :gsub("parent: [^\n]*\n", ""):gsub("pr: [^\n]*\n", ""),
+      results = { 212, 3 }, result_text = "3 of 215 checks failed", dirty = true },
+    { name = "test_plain_20261018_180000.mp4", mtime_only = true,
+      mtime = "2026-10-18 18:00", shows = "2026-10-18 18:00" },
+    { name = "demo_y_20261018_120000.mp4", at = "2026-10-18T12:00:00+00:00",
+      mtime = "2026-11-01 00:00", shows = "2026-10-18 12:00", test = "demo_y",
+      results = { 0, 0 }, result_text = "no checks: a demo or probe" },
+    { name = "issue-55_test_broken_20261017_080000.mp4", broken = "{not json",
+      mtime = "2026-10-17 08:00", shows = "2026-10-17 08:00" },
+    { name = "issue-92_test_x_20261017_090000.mp4", at = "2026-10-17T09:00:00+11:00",
+      mtime = "2026-10-30 00:00", shows = "2026-10-16 22:00", notes = "ticket: 92 Unfinished\n" .. SECTIONS_ONLY,
+      result_text = "no result: the test didn't finish" },
+    { name = "test_array_20261016_100000.mp4", broken = "[1, 2]",
+      mtime = "2026-10-16 10:00", shows = "2026-10-16 10:00" },
+    { name = "test_bad_time_20261015_100000.mp4",
+      broken = '{"video": "test_bad_time_20261015_100000.mp4", "recorded_at": "yesterday"}',
+      mtime = "2026-10-15 10:00", shows = "2026-10-15 10:00" },
+    { name = "test_year_one_20261014_100000.mp4",
+      broken = '{"recorded_at": "0001-01-01T00:00:00+14:00", "notes": null}',
+      mtime = "2026-10-14 10:00", shows = "2026-10-14 10:00" },
+    { name = "test_wrong_types_20261013_100000.mp4",
+      broken = '{"recorded_at": "2026-10-13T10:00:00+00:00", "ticket": "90", "result": {"pass": "x"}}',
+      mtime = "2026-10-13 10:00", shows = "2026-10-13 10:00" },
+}
+
+-- Make every page fixture. The fixture repo's README is put back first, so
+-- only the recording marked `dirty` is made with uncommitted changes.
+local function make_page_fixtures()
+    run("mkdir -p " .. sh_quote(KEPT) .. " " .. sh_quote(SCRATCH)
+        .. " && git -C " .. sh_quote(REPO) .. " checkout -q -- README")
+    local tests = {}
+    for i, v in ipairs(PAGE_VIDEOS) do
+        local video = KEPT .. "/" .. v.name
+        write_file(video, "\0\0\0\0")
+        if v.broken then
+            write_file(video:gsub("%.mp4$", ".json"), v.broken)
+        elseif not v.mtime_only then
+            if v.dirty then write_file(REPO .. "/README", "changed\n") end
+            local results = v.results and results_file("page_results_" .. i .. ".json", v.results[1], v.results[2])
+                or (WORK .. "/no_such_results.json")
+            local test_file = REPO_TEST
+            if v.test then
+                test_file = REPO .. "/test/tests/" .. v.test .. ".lua"
+                write_file(test_file, "fw = nil\n")
+            end
+            local notes = v.notes and ("--notes " .. sh_quote(notes_file("page_notes_" .. i .. ".txt", v.notes))) or ""
+            local code, output = run("python3 " .. sh_quote(NOTES_TOOL) .. " write " .. sh_quote(video)
+                .. " --test " .. sh_quote(test_file) .. " --recorded-at " .. v.at
+                .. " --results " .. sh_quote(results) .. " --repo " .. sh_quote(REPO) .. " " .. notes)
+            if code ~= 0 then fw.log_error("fixture notes failed for " .. v.name .. ": " .. output) end
+            if v.dirty then run("git -C " .. sh_quote(REPO) .. " checkout -q -- README") end
+        end
+        run("TZ=UTC touch -d " .. sh_quote(v.mtime) .. " " .. sh_quote(video))
+    end
+    -- A notes file whose video doesn't exist, and one that is a folder.
+    write_file(KEPT .. "/orphan_20261021_000000.json", '{"video": "orphan_20261021_000000.mp4", '
+        .. '"recorded_at": "2026-10-21T00:00:00+00:00", "notes": null}')
+    run("mkdir -p " .. sh_quote(SCRATCH .. "/folder_notes_20261012_100000.json")
+        .. " && head -c 4 /dev/zero > " .. sh_quote(SCRATCH .. "/folder_notes_20261012_100000.mp4"))
+end
+
+-- What a GET of `path` would return, from serve_recordings.py --print, in
+-- UTC. Returns a table: status (a number, or nil if the first line isn't
+-- one), body (everything after the first line), code (the exit code) and
+-- output (everything printed, for the log).
+local function get(path)
+    local code, output = run("TZ=UTC python3 " .. sh_quote(SERVER) .. " --kept " .. sh_quote(KEPT)
+        .. " --scratch " .. sh_quote(SCRATCH) .. " --print " .. sh_quote(path))
+    local first, rest = output:match("^([^\n]*)\n?(.*)$")
+    fw.log(string.format("GET %s -> status %s, exit %s, %d bytes", path, tostring(first), tostring(code), #output))
+    return { status = tonumber(first), body = rest or "", code = code, output = output }
+end
+
+-- Undo HTML escaping, for reading text back off the page.
+local function unescape(s)
+    return (s:gsub("&lt;", "<"):gsub("&gt;", ">"):gsub("&quot;", '"')
+             :gsub("&#x27;", "'"):gsub("&#39;", "'"):gsub("&amp;", "&"))
+end
+
+-- `html` without its tags, unescaped.
+local function text_of(html)
+    return unescape((html:gsub("<[^>]*>", "")))
+end
+
+-- The cards in `html`, in page order, as a list of tables: `text` (the
+-- card's HTML, up to the next card) and `file` (its file name, from
+-- <span class="file">, unescaped).
+local function cards(html)
+    local starts = {}
+    local from = 1
+    while true do
+        local s = html:find('<div class="card">', from, true)
+        if not s then break end
+        starts[#starts + 1] = s
+        from = s + 1
+    end
+    local list = {}
+    for i, s in ipairs(starts) do
+        local text = html:sub(s, (starts[i + 1] or (#html + 1)) - 1)
+        local file = text:match('<span class="file">(.-)</span>')
+        list[#list + 1] = { text = text, file = file and unescape(file) }
+    end
+    return list
+end
+
+local function card_named(list, file)
+    for _, c in ipairs(list) do
+        if c.file == file then return c end
+    end
+    return nil
+end
+
+-- The card's title: its text, and the link it carries (nil for none).
+local function title_of(card)
+    local title = card.text:match('<div class="title">(.-)</div>') or ""
+    return text_of(title), title:match('<a href="([^"]*)"')
+end
+
+-- The card's facts line, as plain text.
+local function facts_of(card)
+    return text_of(card.text:match('<div class="facts">(.-)</div>') or "")
+end
+
+local function has(text, part)
+    return text:find(part, 1, true) ~= nil
+end
+
+-------------------------------------------------------------------------------
+-- C5: the card
+-------------------------------------------------------------------------------
+local function check_card(page, kept_cards)
+    local full_commit = first_line("git -C " .. sh_quote(REPO) .. " rev-parse HEAD")
+    local c = card_named(kept_cards, "issue-90_test_x_20261020_134554.mp4")
+    local ok = fw.assert_true(c ~= nil, "C5: the recording with notes has a card")
+    if not c then return end
+    local text = c.text
+
+    local title, link = title_of(c)
+    ok = fw.assert_eq(title, "#90 Shaking patches survive a field reload", "C5: its title is the ticket's") and ok
+    ok = fw.assert_eq(link, ISSUES .. "90", "C5: its title links to the ticket") and ok
+
+    local parent = text:match('<a href="' .. ISSUES:gsub("%p", "%%%0") .. '87">(.-)</a>')
+    ok = fw.assert_true(parent ~= nil and has(text_of(text), "Part of #87 The Poke Radar"),
+        "C5: \"Part of #87 The Poke Radar\" is under it, linked to issue 87") and ok
+    ok = fw.assert_eq(parent and text_of(parent), "#87 The Poke Radar", "C5: the parent's link reads #87 The Poke Radar") and ok
+    local pr = text:match('<a href="' .. PULLS:gsub("%p", "%%%0") .. '97">(.-)</a>')
+    ok = fw.assert_eq(pr and text_of(pr), "PR #97", "C5: \"PR #97\" is under it, linked to pull 97") and ok
+
+    -- The three sections, in order, each with its text. The text comes back
+    -- exactly as written once unescaped, line breaks included.
+    local sections = {}
+    for heading, body in text:gmatch("<h3>(.-)</h3>%s*<p[^>]*>(.-)</p>") do
+        sections[#sections + 1] = { unescape(heading), unescape(body) }
+    end
+    ok = fw.assert_eq(#sections, 3, "C5: the card has three sections") and ok
+    for i, want in ipairs({ { "What's tested", TESTED }, { "The problem", PROBLEM },
+                            { "What you should see", EXPECT } }) do
+        local got = sections[i] or {}
+        ok = fw.assert_eq(got[1], want[1], "C5: section " .. i .. "'s heading") and ok
+        ok = fw.assert_eq(got[2], want[2], "C5: \"" .. want[1] .. "\" has its text, line breaks kept") and ok
+    end
+    ok = fw.assert_true(has(text, "4 &lt; 5 &amp; so on") and not has(text, "4 < 5"),
+        "C5: the notes' < and & are HTML-escaped") and ok
+    ok = fw.assert_true(has(page.body, "pre-wrap"), "C5: the page keeps the notes' line breaks (white-space: pre-wrap)") and ok
+    -- On a phone the sections sit above the video (they come first); on a
+    -- wide screen a media query puts them beside it.
+    local notes_at, video_at = text:find("<h3>", 1, true), text:find("<video", 1, true)
+    ok = fw.assert_true(notes_at ~= nil and video_at ~= nil and notes_at < video_at,
+        "C5: the sections come before the video") and ok
+    ok = fw.assert_true(has(page.body, "@media (min-width"), "C5: a wide screen lays them out differently") and ok
+
+    -- The facts line.
+    local facts = facts_of(c)
+    for _, part in ipairs({ "Recorded 2026-10-20 02:45", "test/tests/test_x.lua", BRANCH,
+                            full_commit:sub(1, 7), "215 of 215 checks passed", "4 bytes",
+                            "issue-90_test_x_20261020_134554.mp4" }) do
+        ok = fw.assert_true(has(facts, part), "C5: the facts line has " .. part) and ok
+    end
+    ok = fw.assert_true(not has(facts, "uncommitted"), "C5: a clean tree isn't said to have uncommitted changes") and ok
+    if not ok then dump("card #90", text) end
+
+    -- Each result text, the dirty tree, and escaping in a ticket's title.
+    for _, v in ipairs(PAGE_VIDEOS) do
+        if v.result_text then
+            local vc = card_named(kept_cards, v.name)
+            local vf = vc and facts_of(vc) or ""
+            local good = fw.assert_true(has(vf, v.result_text), "C5: " .. v.name .. "'s facts say " .. v.result_text)
+            if v.dirty then
+                good = fw.assert_true(has(vf, "with uncommitted changes"),
+                    "C5: " .. v.name .. "'s facts say \"with uncommitted changes\"") and good
+                local t = vc and title_of(vc)
+                good = fw.assert_eq(t, "#91 Fails <b>loudly</b> & badly", "C5: a ticket's title is shown as written") and good
+                good = fw.assert_true(vc ~= nil and has(vc.text, "#91 Fails &lt;b&gt;loudly&lt;/b&gt; &amp; badly"),
+                    "C5: a ticket's title is HTML-escaped") and good
+                good = fw.assert_true(vc ~= nil and not has(vc.text, "Part of") and not has(vc.text, "PR #"),
+                    "C5: no parent or PR line when the notes give neither") and good
+            end
+            if not good then dump(v.name, vc and vc.text or "(no card)") end
+        end
+    end
+    -- With no ticket in the notes, the title is the test's name.
+    local demo = card_named(kept_cards, "demo_y_20261018_120000.mp4")
+    local t, l
+    if demo then t, l = title_of(demo) end
+    fw.assert_eq(t, "demo_y", "C5: without a ticket, the title is the test's name")
+    fw.assert_eq(l, nil, "C5: without a ticket, the title links nowhere")
+
+    -- The recording's own page shows the same card, titled the same.
+    local r = get("/r/issue-90_test_x_20261020_134554")
+    fw.assert_eq(r.status, 200, "C5: /r/issue-90_test_x_20261020_134554 returns 200")
+    fw.assert_eq(r.body:match("<title>(.-)</title>"), "#90 Shaking patches survive a field reload",
+        "C5: its own page is titled with the ticket")
+    -- (Each card is compared up to its video: what follows differs.)
+    local function up_to_video(html)
+        return ((html:match("^(.-</video>)") or ""):gsub(' · <a href="/r/[^"]*">own page</a>', ""))
+    end
+    local own = cards(r.body)[1]
+    local same = fw.assert_true(own ~= nil and up_to_video(text) ~= "" and up_to_video(own.text) == up_to_video(text),
+        "C5: its own page shows the same card, without the link to itself")
+    if not same then dump("/r/issue-90_test_x_20261020_134554", r.output) end
+end
+
+-------------------------------------------------------------------------------
+-- C6: order
+-------------------------------------------------------------------------------
+local function check_order(page, kept_cards)
+    local want, by_mtime = {}, {}
+    for i, v in ipairs(PAGE_VIDEOS) do
+        want[i] = v.name
+        by_mtime[i] = v
+    end
+    table.sort(by_mtime, function(a, b) return a.mtime > b.mtime end)
+    local mtime_names = {}
+    for i, v in ipairs(by_mtime) do mtime_names[i] = v.name end
+    fw.assert_true(table.concat(mtime_names, ", ") ~= table.concat(want, ", "),
+        "C6: the fixture's order by modification time differs from the order the page must show")
+
+    local got = {}
+    for i, c in ipairs(kept_cards) do got[i] = tostring(c.file) end
+    if not fw.assert_eq(table.concat(got, ", "), table.concat(want, ", "),
+        "C6: cards sort by recorded_at, or by modification time without a notes file, newest first") then
+        dump("/", page.output)
+    end
+    for _, v in ipairs(PAGE_VIDEOS) do
+        local c = card_named(kept_cards, v.name)
+        fw.assert_true(c ~= nil and has(facts_of(c), "Recorded " .. v.shows),
+            "C6: " .. v.name .. " shows when it was recorded: " .. v.shows)
+    end
+end
+
+-------------------------------------------------------------------------------
+-- C7: bad and missing notes
+-------------------------------------------------------------------------------
+local function check_bad_notes(page, kept_cards, scratch_cards)
+    fw.assert_eq(page.status, 200, "C7: the page returns 200 despite the broken notes files")
+    local broken = {}
+    for _, v in ipairs(PAGE_VIDEOS) do
+        if v.broken then broken[#broken + 1] = { v.name, KEPT, kept_cards } end
+    end
+    broken[#broken + 1] = { "folder_notes_20261012_100000.mp4", SCRATCH, scratch_cards }
+    for _, b in ipairs(broken) do
+        local c = card_named(b[3], b[1])
+        local ok = fw.assert_true(c ~= nil and has(c.text, "notes file unreadable"),
+            "C7: " .. b[1] .. "'s card says \"notes file unreadable\"")
+        if not ok then dump(b[1], c and c.text or "(no card)") end
+    end
+    -- The card made from the file name, as for a video without notes.
+    local c = card_named(kept_cards, "issue-55_test_broken_20261017_080000.mp4")
+    local title, link
+    if c then title, link = title_of(c) end
+    fw.assert_eq(title, "#55 test_broken", "C7: an unreadable notes file's card is titled from the file name")
+    fw.assert_eq(link, ISSUES .. "55", "C7: ... and linked to its issue")
+    local r = get("/r/issue-55_test_broken_20261017_080000")
+    fw.assert_eq(r.status, 200, "C7: its own page returns 200")
+    fw.assert_true(has(r.body, "notes file unreadable"), "C7: its own page says \"notes file unreadable\"")
+
+    -- No notes, and no notes file.
+    for _, name in ipairs({ "demo_y_20261018_120000.mp4", "test_plain_20261019_120000.mp4" }) do
+        local nc = card_named(kept_cards, name)
+        fw.assert_true(nc ~= nil and has(nc.text, "No notes for this recording."),
+            "C7: " .. name .. " says \"No notes for this recording.\"")
+    end
+    local with_notes = card_named(kept_cards, "issue-90_test_x_20261020_134554.mp4")
+    fw.assert_true(with_notes ~= nil and not has(with_notes.text, "No notes"),
+        "C7: a recording with notes doesn't say it has none")
+
+    -- A notes file without its video isn't listed, and has no page.
+    fw.assert_true(not has(page.body, "orphan"), "C7: a notes file without its video isn't listed")
+    fw.assert_eq(get("/r/orphan_20261021_000000").status, 404, "C7: ... and has no page")
+end
+
+-------------------------------------------------------------------------------
 -- Test
 -------------------------------------------------------------------------------
 
@@ -436,5 +773,16 @@ fw.run(function()
     check_refused()
     check_name()
     check_notes_file()
+
+    fw.log("=== The recordings page with notes (serve_recordings.py --print) ===")
+    make_page_fixtures()
+    local page = get("/")
+    fw.assert_eq(page.code, 0, "--print / exits 0")
+    local scratch_at = page.body:find('id="scratch"', 1, true) or (#page.body + 1)
+    local kept_cards = cards(page.body:sub(1, scratch_at - 1))
+    local scratch_cards = cards(page.body:sub(scratch_at))
+    check_card(page, kept_cards)
+    check_order(page, kept_cards)
+    check_bad_notes(page, kept_cards, scratch_cards)
     fw.finish()
 end)
