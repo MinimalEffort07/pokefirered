@@ -78,8 +78,11 @@
  *   - The player's code asks GetFollowerMakeWayDirection where it would go,
  *     then calls StartFollowerMakeWayStep on the frame the player's jump or
  *     hop starts: PlayerJumpLedge (every ledge jump: on foot, on the bicycle,
- *     forced) and CanStopSurfing (the check that starts the hop off the
- *     water), both in field_player_avatar.c.
+ *     forced) and CanStopSurfing (the check that starts the player's own
+ *     hop off the water, when they surf, or a sea current carries them,
+ *     into the shore), both in field_player_avatar.c. The two hops the game
+ *     starts by itself without that check, a scripted landing in Seafoam
+ *     Islands and the Quest Log's replay, don't make way.
  *   - A follower in the middle of a step, or with no free tile, stays put:
  *     the ledge jump goes ahead and they share the tile as before, and the
  *     landing from the water is refused as before.
@@ -1289,7 +1292,7 @@ u8 GetFollowerMakeWayDirection(s16 x, s16 y, u8 direction)
     struct ObjectEvent *followerObj = GetFollowerObjectEvent();
     u8 candidates[3];
     u8 i;
-    s16 tx, ty;
+    s16 stepX, stepY;
 
     if (followerObj == NULL || !IsFollowerStandingStillOn(followerObj, x, y))
         return DIR_NONE;
@@ -1300,10 +1303,10 @@ u8 GetFollowerMakeWayDirection(s16 x, s16 y, u8 direction)
 
     for (i = 0; i < NELEMS(candidates); i++)
     {
-        tx = x;
-        ty = y;
-        MoveCoords(candidates[i], &tx, &ty);
-        if (IsFollowerWalkableTile(followerObj, tx, ty, candidates[i]))
+        stepX = x;
+        stepY = y;
+        MoveCoords(candidates[i], &stepX, &stepY);
+        if (IsFollowerWalkableTile(followerObj, stepX, stepY, candidates[i]))
             return candidates[i];
     }
     return DIR_NONE;

@@ -222,6 +222,14 @@ function follower.player()
     return o.x, o.y, o.facing
 end
 
+-- True when the player stands on map tile (x, y) with no step, jump or hop
+-- of their own under way: their previous tile has caught up with their
+-- current one, as at the end of every step.
+function follower.player_still_on(x, y)
+    local o = follower.player_object()
+    return o ~= nil and o.x == x and o.y == y and o.prev_x == x and o.prev_y == y
+end
+
 -- The held movement the player's object is playing this frame (its
 -- movementActionId, MOVEMENT_ACTION_* in include/constants/
 -- event_object_movement.h), or nil when none is.
@@ -602,6 +610,20 @@ end
 function follower.find_swap(watch, px, py, fx, fy)
     for _, s in ipairs(watch.swaps) do
         if s.x == px and s.y == py and s.player_x == fx and s.player_y == fy then return s end
+    end
+    return nil
+end
+
+-- The first frame after frame `from` (0 when nil) on which the watch saw the
+-- follower's tile differ from its tile on frame `from`, or nil if it never
+-- moved. For making way (issue #100): when the follower left the player's
+-- landing tile.
+function follower.first_move(watch, from)
+    from = from or 0
+    local start = watch.tiles[from]
+    for n = from + 1, watch.frame_no do
+        local t = watch.tiles[n]
+        if t.x ~= start.x or t.y ~= start.y then return n end
     end
     return nil
 end

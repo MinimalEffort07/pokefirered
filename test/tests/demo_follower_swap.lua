@@ -21,8 +21,8 @@
 --      The player jumps down; Pikachu steps aside onto (29,31), the
 --      player's left, as the jump starts.
 --   5. "Come ashore where it waits and it steps aside": the Viridian pond.
---      The player surfs from the east shore (17,28) one tile out, onto
---      (15,28); Pikachu walks to the shore tile (17,28) and waits there. The
+--      The player surfs off the east shore (17,28) and out to (15,28), two
+--      tiles out; Pikachu walks to the shore tile (17,28) and waits there. The
 --      player surfs back east and comes ashore onto (17,28); Pikachu steps
 --      aside onto (17,27), the player's left, as the hop starts.
 -- The video cuts before beats 3, 4 and 5: the test's warps aren't filmed,
@@ -102,27 +102,11 @@ local function check_swap(what, s, frames)
             what, frames, tostring(fl), tostring(pl)))
 end
 
--- True when the player stands on (x, y) with no step, jump or hop of their
--- own under way (their previous tile has caught up with their current one).
-local function player_still_on(x, y)
-    local p = follower.player_object()
-    return p ~= nil and p.x == x and p.y == y and p.prev_x == x and p.prev_y == y
-end
-
 -- Assert that Pikachu made way in `watch`: counting from frame `from` (0 if
 -- nil), its tile first changed no later than frame `takeoff` (the first
 -- frame of the player's jump or hop), and it stands on (ex, ey) now.
 local function check_made_way(what, watch, takeoff, ex, ey, from)
-    from = from or 0
-    local start = watch.tiles[from]
-    local moved = nil
-    for n = from + 1, watch.frame_no do
-        local t = watch.tiles[n]
-        if t.x ~= start.x or t.y ~= start.y then
-            moved = n
-            break
-        end
-    end
+    local moved = follower.first_move(watch, from)
     fw.assert_true(moved ~= nil and takeoff ~= nil and moved <= takeoff, string.format(
         "%s: Pikachu steps aside no later than the player takes off (frame %s, take-off %s)",
         what, tostring(moved), tostring(takeoff)))
@@ -260,10 +244,10 @@ fw.run(function()
         return t.x == 28 and t.y == 30
     end)
     emu:clearKey(fw.KEY.DOWN)
-    local landed = jump and watch.run(90, function() return player_still_on(28, 31) end)
+    local landed = jump and watch.run(90, function() return follower.player_still_on(28, 31) end)
     watch.run(50)
     watch.finish()
-    fw.assert_true(landed ~= nil and player_still_on(28, 31), "beat 4: the player jumps the ledge and lands on (28,31)")
+    fw.assert_true(landed ~= nil and follower.player_still_on(28, 31), "beat 4: the player jumps the ledge and lands on (28,31)")
     check_made_way("beat 4", watch, jump, 29, 31)
 
     -- 5. The Viridian pond. The warp and the SURF prompt aren't filmed.
@@ -307,7 +291,7 @@ fw.run(function()
     local ashore = watch.run(90, function(n)
         local t = watch.player_tiles[n]
         if hop == nil and t.x == 17 and t.y == 28 then hop = n end
-        return not follower.is_surfing() and player_still_on(17, 28)
+        return not follower.is_surfing() and follower.player_still_on(17, 28)
     end)
     emu:clearKey(fw.KEY.RIGHT)
     watch.run(60)
