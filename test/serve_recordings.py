@@ -177,9 +177,10 @@ class NotesUnreadable(Exception):
 
 
 def parse_time(text):
-    """recorded_at, e.g. "2026-10-20T13:45:54+11:00", as seconds since
-    1970. A time without a UTC offset is taken as this machine's. The time
-    must also be one this machine can show (year 1 can't, in Sydney)."""
+    """A notes file's time (recorded_at or notes_added_at), e.g.
+    "2026-10-20T13:45:54+11:00", as seconds since 1970. A time without a
+    UTC offset is taken as this machine's. The time must also be one this
+    machine can show (year 1 can't, in Sydney)."""
     if not isinstance(text, str):
         raise NotesUnreadable
     try:

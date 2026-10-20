@@ -91,14 +91,16 @@
 --       read makes the notes file unreadable (a C7 fixture).
 --   N5  Refused, with a message, every file in the folder staying byte for
 --       byte as it was: a name with no video, a video whose notes file
---       record_test.sh wrote, a video with an unreadable notes file, notes
+--       record_test.sh wrote, a video with an unreadable notes file (also
+--       one add-notes wrote whose notes_added_at was broken by hand), notes
 --       missing a section (every problem listed), and a path.
 --   N6  add-notes again on a video it gave notes rewrites them with the new
 --       text, keeping recorded_at though the video was touched since.
 --   N7  In a ticket session for #90, add-notes accepts notes naming
 --       ticket: 24 with no parent:; in a fix-up session they don't get its
 --       PR. record_test.sh --check (and the helper's check) still refuses
---       the same notes for a recording in that session.
+--       the same notes for a recording in that session, naming #90 and
+--       parent:.
 --
 -- THE PAGE FIXTURES are tiny videos of zeros, each with a notes file
 -- written by the helper (so the page is checked against the format the
@@ -863,6 +865,12 @@ local function cards(html)
     return list
 end
 
+-- The cards of the page's kept section, as cards() gives them.
+local function kept_cards_of(page)
+    local scratch_at = page.body:find('id="scratch"', 1, true) or (#page.body + 1)
+    return cards(page.body:sub(1, scratch_at - 1))
+end
+
 local function card_named(list, file)
     for _, c in ipairs(list) do
         if c.file == file then return c end
@@ -1214,6 +1222,10 @@ local function check_add_notes_refused()
         WORK .. "/no_such_results.json", "--notes " .. sh_quote(notes_file("refused_fresh.txt", COMPLETE)))
     make_video(REFUSE_KEPT, "unreadable_20261020_110000.mp4", "2026-10-20 11:05")
     write_file(REFUSE_KEPT .. "/unreadable_20261020_110000.json", "{not json")
+    -- One add-notes wrote, then broken by hand: the page can't read it.
+    make_video(REFUSE_KEPT, "bad_added_20261020_105000.mp4", "2026-10-20 10:55")
+    write_file(REFUSE_KEPT .. "/bad_added_20261020_105000.json",
+        '{"recorded_at": "2026-10-20T10:50:00+11:00", "notes_added_at": "last week"}')
     make_video(REFUSE_KEPT, "plain_20261020_100000.mp4", "2026-10-20 10:05")
     -- Notes the parser refuses twice over: a missing section, and an
     -- unknown header. Both problems are listed.
@@ -1227,6 +1239,8 @@ local function check_add_notes_refused()
           { "record_test.sh" } },
         { "a video whose notes file can't be read", "unreadable_20261020_110000", notes,
           { "unreadable_20261020_110000.json", "can't read" } },
+        { "a notes file add-notes wrote whose notes_added_at isn't a time", "bad_added_20261020_105000", notes,
+          { "bad_added_20261020_105000.json", "can't read", "notes_added_at" } },
         { "notes missing a section", "plain_20261020_100000", bad_notes,
           { "The problem", "missing", "tickt" } },
         { "a path instead of a name", "../add-notes-one/issue-24-safety-net", notes, { "name" } },
@@ -1274,9 +1288,8 @@ local OLD_PAGE = { kept = OLD_KEPT, scratch = OLD_SCRATCH, tz = SYDNEY }
 
 -- The kept cards' file names, in page order, joined with ", ".
 local function card_order(page)
-    local scratch_at = page.body:find('id="scratch"', 1, true) or (#page.body + 1)
     local names = {}
-    for i, c in ipairs(cards(page.body:sub(1, scratch_at - 1))) do names[i] = tostring(c.file) end
+    for i, c in ipairs(kept_cards_of(page)) do names[i] = tostring(c.file) end
     return table.concat(names, ", ")
 end
 
@@ -1328,8 +1341,7 @@ local function check_add_notes_page()
     if not ok then dump("N3 page after", page.output) end
 
     -- N4: the card of a recording given notes this way.
-    local scratch_at = page.body:find('id="scratch"', 1, true) or (#page.body + 1)
-    local c = card_named(cards(page.body:sub(1, scratch_at - 1)), "issue-24-safety-net.mp4")
+    local c = card_named(kept_cards_of(page), "issue-24-safety-net.mp4")
     ok = fw.assert_true(c ~= nil, "N4: issue-24-safety-net.mp4 has a card")
     if not c then return end
     local title, link = title_of(c)
@@ -1409,6 +1421,8 @@ local function check_add_notes_in_session()
     -- The same notes, for a recording in the same session: refused.
     code, output = check_as(TICKET_SESSION, "--notes " .. sh_quote(old))
     ok = fw.assert_eq(code, 1, "N7: record_test.sh --check still refuses those notes in the session (exit 1)")
+    ok = fw.assert_true(has(output, "#90") and has(output, "parent:"),
+        "N7: ... naming the session's ticket, #90, and the missing parent:") and ok
     if not ok then dump("N7 record_test.sh --check", output) end
     code, output = run_as(TICKET_SESSION, "python3 " .. sh_quote(NOTES_TOOL) .. " check " .. sh_quote(old))
     ok = fw.assert_eq(code, 1, "N7: the helper's check, which record_test.sh runs, refuses them (exit 1)")
@@ -1437,7 +1451,7 @@ fw.run(function()
     local page = get("/")
     fw.assert_eq(page.code, 0, "--print / exits 0")
     local scratch_at = page.body:find('id="scratch"', 1, true) or (#page.body + 1)
-    local kept_cards = cards(page.body:sub(1, scratch_at - 1))
+    local kept_cards = kept_cards_of(page)
     local scratch_cards = cards(page.body:sub(scratch_at))
     check_card(page, kept_cards)
     check_order(page, kept_cards)

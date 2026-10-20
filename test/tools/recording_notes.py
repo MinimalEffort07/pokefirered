@@ -98,7 +98,8 @@ moving it on the recordings page, which lists the newest first:
     no "notes_added_at": every fresh recording has one); a notes file it
     can't read; and notes the parser refuses, listing every problem.
   - It may rewrite a notes file it wrote itself, to fix the notes, keeping
-    its "recorded_at".
+    its "recorded_at". The rest comes from the new run, so give --test
+    again.
   - An autodev session's rules (see AUTODEV SESSIONS) don't apply, because
     an old video belongs to an old ticket. Refusing notes files
     record_test.sh wrote is what keeps it off fresh recordings.
@@ -166,7 +167,8 @@ ISSUE_VALUE = re.compile(r"#?(\d+)\s+(\S.*)")
 PR_VALUE = re.compile(r"#?(\d+)")
 
 # Where set-pr looks for a recording, in this order, as the recordings page
-# does: the kept recordings, then record_test.sh's own folder.
+# does: the kept recordings, then record_test.sh's own folder. add-notes
+# looks only in the kept one.
 KEPT_DIR = os.path.expanduser("~/recordings")
 SCRATCH_DIR = "/tmp/mgba-recordings"
 
@@ -471,6 +473,16 @@ def save(record, path):
     return 0
 
 
+def is_time(text):
+    """Whether `text` is a time the recordings page reads, such as
+    2026-10-20T13:45:54+11:00."""
+    try:
+        datetime.datetime.fromisoformat(text)
+    except (TypeError, ValueError):     # TypeError: not a string at all
+        return False
+    return True
+
+
 def cmd_write(args):
     """write: a video's notes file, from the notes (if any), the test, the
     time, the results file (if any) and the checkout."""
@@ -478,9 +490,7 @@ def cmd_write(args):
         print(f"not a video (.mp4): {args.video}", file=sys.stderr)
         return 1
     # The recordings page sorts by this time, so it must be one it reads.
-    try:
-        datetime.datetime.fromisoformat(args.recorded_at)
-    except ValueError:
+    if not is_time(args.recorded_at):
         print(f"--recorded-at needs a time like 2026-10-20T13:45:54+11:00, "
               f"not {args.recorded_at!r}", file=sys.stderr)
         return 1
@@ -499,10 +509,7 @@ def cmd_write(args):
         "commit": git(args.repo, "rev-parse", "--short=9", "HEAD"),
         "uncommitted_changes": None if status is None else status != "",
         "result": read_result(args.results) if args.results else None,
-        "ticket": fields["ticket"],
-        "parent": fields["parent"],
-        "pr": fields["pr"],
-        "notes": fields["notes"],
+        **fields,       # ticket, parent, pr and notes
     }
     return save(record, notes_file_path(args.video))
 
@@ -540,7 +547,7 @@ def recording_name(given, command):
         if name.endswith(ending):
             name = name[:-len(ending)]
     if not name or "/" in name or name.startswith("."):
-        print(f'{command} needs a recording\'s name, as record_test.sh prints it '
+        print(f'{command} needs a recording\'s name, its file name with or without .mp4 '
               f'(e.g. issue-90_test_x_20261020_134554), not "{given}"', file=sys.stderr)
         return None
     return name
@@ -610,25 +617,26 @@ def cmd_add_notes(args):
     # A notes file record_test.sh wrote has the recording's own facts (its
     # branch, commit and result), and every fresh recording has one: only
     # a notes file add-notes wrote itself (with notes_added_at) is rewritten,
-    # and it keeps the time it gave the recording then.
+    # and it keeps the time it gave the recording then. One whose times the
+    # page can't read counts as unreadable, as on the page.
     recorded_at = None
     if os.path.lexists(path):
         record = load(path)
         if record is None:
             return 1
-        if record.get("notes_added_at") is None:
-            print(f"{path} was written by record_test.sh as it recorded {name}.mp4, so "
-                  f"it is left as it is: add-notes only gives notes to a recording kept "
-                  f"before notes existed", file=sys.stderr)
+        added = record.get("notes_added_at")
+        if added is None:
+            print(f"{path} has no notes_added_at, so add-notes didn't write it: "
+                  f"record_test.sh writes one for every recording, with the run's own "
+                  f"facts. It is left as it is: add-notes only gives notes to a "
+                  f"recording kept before notes existed", file=sys.stderr)
             return 1
         recorded_at = record.get("recorded_at")
-        try:
-            datetime.datetime.fromisoformat(recorded_at)
-        except (TypeError, ValueError):
-            print(f"can't read notes file {path}: its recorded_at, {recorded_at!r}, isn't "
-                  f"a time, so it can't be kept (delete the file to start again)",
-                  file=sys.stderr)
-            return 1
+        for key, value in (("notes_added_at", added), ("recorded_at", recorded_at)):
+            if not is_time(value):
+                print(f"can't read notes file {path}: its {key}, {value!r}, isn't a "
+                      f"time (delete the file to start again)", file=sys.stderr)
+                return 1
     fields, problems = read_notes(args.notes, session_rules=False)
     if problems:
         report_problems(problems, args.notes)
@@ -641,10 +649,7 @@ def cmd_add_notes(args):
         "commit": None,
         "uncommitted_changes": None,
         "result": None,
-        "ticket": fields["ticket"],
-        "parent": fields["parent"],
-        "pr": fields["pr"],
-        "notes": fields["notes"],
+        **fields,       # ticket, parent, pr and notes
         "notes_added_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     if save(record, path) != 0:
