@@ -14,8 +14,9 @@
 #
 # PER-RUN OUTPUT: like test/run_test.sh, every run gets a private directory
 # (mktemp -d, passed to Lua as MGBA_TEST_DIR) for the test's results,
-# screenshots, the game's save file and this script's logs. Only the video
-# goes to the shared $RECORDINGS_DIR, under a timestamped name.
+# screenshots, the game's save file, the live capture and this script's
+# logs. Only the encoded video goes to the shared $RECORDINGS_DIR, under a
+# timestamped name.
 #
 # ONE AT A TIME: only one recording can run at a time on a machine, even
 # from different worktrees. It records the whole virtual display :1, which
@@ -26,6 +27,22 @@
 # Autodev runs ticket sessions side by side, and each may record. Headless
 # runs (test/run_test.sh) don't touch :1 or mgba-qt, so they can run
 # alongside a recording.
+#
+# CAPTURE FAST, THEN ENCODE SMALL: the screen is captured live with x264's
+# fastest settings (preset ultrafast, Constrained Baseline). They keep up
+# with the screen even while suites run alongside, so no frame is dropped,
+# but the files are big: about 3 Mbps, 40 MB for a 100-second test, too much
+# to stream to a phone over Tailscale. So the capture goes into the run's
+# own directory, and once it ends, test/tools/encode_recording.sh encodes
+# it again, slowly and well (H.264 High, CRF 28, peaks capped at 1 Mbps; the
+# script explains each setting). The kept video is 5 to 8 times smaller
+# and the scripting log reads the same. The encode doesn't need the display,
+# so it runs after the lock is released, and at low CPU priority: about 6
+# seconds per 100 seconds of video, while the next recording can already
+# start. Once the encode has worked the capture is deleted; if it fails,
+# the capture is kept as the video instead, and the script says so. The
+# last lines say what it did, e.g. "captured 39.9 MB, kept 4.9 MB (0.38
+# Mbps)".
 #
 ###############################################################################
 set -uo pipefail
@@ -90,6 +107,9 @@ mkdir -p "$RECORDINGS_DIR"
 TEST_NAME="$(basename "$TEST_SCRIPT" .lua)"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 OUTPUT="$RECORDINGS_DIR/${TEST_NAME}_${TIMESTAMP}.mp4"
+# The live capture, in the run's own directory until it is encoded into
+# $OUTPUT (see CAPTURE FAST, THEN ENCODE SMALL).
+CAPTURE="$RUN_DIR/capture.mp4"
 
 # Kill any stale mGBA so its final screen doesn't bleed into the recording.
 pkill -x mgba-qt 2>/dev/null || true
@@ -141,13 +161,15 @@ PYEOF
 export DISPLAY=:1
 
 # Step 1: start recording before mGBA opens so the full boot sequence is captured.
+# These are the fast live-capture settings (see CAPTURE FAST, THEN ENCODE
+# SMALL); step 6 encodes the result small.
 echo "Recording..."
 ffmpeg -f x11grab -r 30 -s "${VIRT_W}x${VIRT_H}" -i :1 \
     -vf "crop=1324:${VIRT_H}:0:0,scale=1280:-2" \
     -c:v libx264 -profile:v baseline -level 3.1 \
     -preset ultrafast -pix_fmt yuv420p \
     -movflags +faststart \
-    "$OUTPUT" > "$RUN_DIR/ffmpeg-record.log" 2>&1 9>&- &
+    "$CAPTURE" > "$RUN_DIR/ffmpeg-record.log" 2>&1 9>&- &
 FFMPEG_PID=$!
 
 # Step 2: launch mGBA with the private config dir.
@@ -228,9 +250,29 @@ kill -INT "$FFMPEG_PID" 2>/dev/null
 wait "$FFMPEG_PID" 2>/dev/null || true
 kill "$MGBA_PID" 2>/dev/null || true
 
+# The display is no longer needed, so let the next recording start: release
+# the machine-wide lock (flock -u) and close its descriptor.
+flock -u 9
+exec 9>&-
+
 echo ""
 if [ -f "$RESULTS_FILE" ]; then
     cat "$RESULTS_FILE"
     echo ""
+fi
+
+# Step 6: encode the capture small into $OUTPUT (see CAPTURE FAST, THEN
+# ENCODE SMALL). --move deletes the capture once the encode has worked, and
+# keeps it as the video if the encode fails; either way the script prints
+# what it did.
+if [ ! -f "$CAPTURE" ]; then
+    echo "ERROR: no video was captured (see $RUN_DIR/ffmpeg-record.log)"
+    exit 1
+fi
+echo "Encoding for streaming (another recording can start meanwhile)..."
+bash "$SCRIPT_DIR/tools/encode_recording.sh" --move "$CAPTURE" "$OUTPUT"
+if [ ! -f "$OUTPUT" ]; then
+    echo "ERROR: the video couldn't be saved in $RECORDINGS_DIR; it is still at $CAPTURE"
+    exit 1
 fi
 echo "Recording saved: $OUTPUT"

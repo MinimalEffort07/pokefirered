@@ -102,8 +102,18 @@ local function hash_of(path)
 end
 
 -- The names of everything in folder `dir`, sorted, joined with spaces.
+-- LC_ALL=C sorts by plain character codes, whatever the machine's language.
 local function listing(dir)
-    return (first_line("ls -A " .. sh_quote(dir) .. " | tr '\\n' ' '"):gsub("%s+$", ""))
+    return (first_line("LC_ALL=C ls -A " .. sh_quote(dir) .. " | tr '\\n' ' '"):gsub("%s+$", ""))
+end
+
+-- Every file under folder `dir`, with its permissions, size, modification
+-- time and SHA-256, one per line: two equal snapshots mean nothing in the
+-- folder changed.
+local function snapshot(dir)
+    local _, output = run("cd " .. sh_quote(dir) .. " && LC_ALL=C find . -type f "
+        .. "-printf '%P %m %s %T@ ' -exec sha256sum {} ';' | LC_ALL=C sort")
+    return output
 end
 
 -- What ffprobe says about the first video stream of `path`: a table with
@@ -165,10 +175,12 @@ end
 
 -- Make a 5-second synthetic capture at `path` (see THE SYNTHETIC CAPTURE).
 -- The settings are record_test.sh's live capture, with ffmpeg's test
--- pattern in place of the screen.
-local function make_capture(path)
+-- pattern in place of the screen. `filter`, if given, changes the pattern
+-- (e.g. "negate"), so two captures can differ.
+local function make_capture(path, filter)
     local code, output = run("ffmpeg -nostdin -v error -y "
         .. "-f lavfi -i testsrc2=size=1280x618:rate=30 -t 5 "
+        .. (filter and ("-vf " .. filter .. " ") or "")
         .. "-c:v libx264 -profile:v baseline -level 3.1 -preset ultrafast "
         .. "-pix_fmt yuv420p -movflags +faststart " .. sh_quote(path))
     if code ~= 0 then
@@ -295,6 +307,99 @@ fw.run(function()
     fw.assert_true(output:find("kept as it was captured", 1, true) ~= nil,
         "E2M: it says the capture is kept as the video")
     fw.assert_eq(listing(m .. "/kept"), "bad.mp4 good.mp4", "E2M: no half-written file left behind")
+
+    ---------------------------------------------------------------------------
+    -- E3 The shrink tool
+    ---------------------------------------------------------------------------
+    -- The folder: two captures with set modification times, a video that is
+    -- already High profile (E1's), a video in a subfolder and a file that
+    -- isn't a video. `pristine` keeps copies of the captures to compare the
+    -- originals against.
+    local folder = work .. "/kept"
+    local pristine = work .. "/pristine"
+    run("mkdir -p " .. sh_quote(folder .. "/sub") .. " " .. sh_quote(pristine))
+    local captures = {
+        { name = "a.mp4", when = "2026-01-02 03:04:05" },
+        { name = "b.mp4", when = "2026-03-04 05:06:07", filter = "negate" },
+    }
+    for _, c in ipairs(captures) do
+        fw.assert_true(make_capture(pristine .. "/" .. c.name, c.filter), "E3: made capture " .. c.name)
+        set_mtime(pristine .. "/" .. c.name, c.when)
+        c.mtime = mtime_of(pristine .. "/" .. c.name)
+        c.hash = hash_of(pristine .. "/" .. c.name)
+        run("cp -p " .. sh_quote(pristine .. "/" .. c.name) .. " " .. sh_quote(folder .. "/" .. c.name))
+    end
+    fw.assert_neq(captures[1].hash, captures[2].hash, "E3: the two captures differ")
+    run("cp -p " .. sh_quote(e1_video) .. " " .. sh_quote(folder .. "/high.mp4"))
+    run("cp -p " .. sh_quote(capture) .. " " .. sh_quote(folder .. "/sub/c.mp4"))
+    local notes = io.open(folder .. "/notes.txt", "w")
+    notes:write("not a video\n")
+    notes:close()
+    local untouched = {
+        { path = folder .. "/high.mp4", hash = hash_of(folder .. "/high.mp4"), mtime = mtime_of(folder .. "/high.mp4") },
+        { path = folder .. "/sub/c.mp4", hash = hash_of(folder .. "/sub/c.mp4"), mtime = mtime_of(folder .. "/sub/c.mp4") },
+        { path = folder .. "/notes.txt", hash = hash_of(folder .. "/notes.txt"), mtime = mtime_of(folder .. "/notes.txt") },
+    }
+
+    code, output = run("bash " .. sh_quote(SHRINK) .. " " .. sh_quote(folder))
+    fw.log("E3 shrink_recordings.sh, first run -> exit " .. tostring(code) .. ":\n" .. output)
+    fw.assert_eq(code, 0, "E3: the first run exits 0")
+    fw.assert_eq(listing(folder), "a.mp4 b.mp4 high.mp4 notes.txt originals sub",
+        "E3: the folder holds the same files, plus originals/, and nothing half-written")
+    fw.assert_eq(listing(folder .. "/originals"), "a.mp4 b.mp4", "E3: originals/ holds the two captures")
+    for _, c in ipairs(captures) do
+        local video = folder .. "/" .. c.name
+        local original = folder .. "/originals/" .. c.name
+        check_encoded("E3 " .. c.name, video, pristine .. "/" .. c.name)
+        fw.assert_eq(mtime_of(video), c.mtime, "E3 " .. c.name .. ": the new video keeps the modification time")
+        fw.assert_eq(hash_of(original), c.hash, "E3 " .. c.name .. ": the original is unchanged")
+        fw.assert_eq(mtime_of(original), c.mtime, "E3 " .. c.name .. ": the original keeps its modification time")
+        fw.assert_true(output:find(c.name .. ": captured", 1, true) ~= nil,
+            "E3 " .. c.name .. ": it says what it did with the video")
+    end
+    for _, u in ipairs(untouched) do
+        fw.assert_eq(hash_of(u.path), u.hash, "E3: untouched: " .. u.path:match("kept/(.*)$"))
+        fw.assert_eq(mtime_of(u.path), u.mtime, "E3: modification time untouched: " .. u.path:match("kept/(.*)$"))
+    end
+    fw.assert_eq(listing(folder .. "/sub"), "c.mp4", "E3: the subfolder gets no originals/")
+    fw.assert_true(output:find("2 shrunk", 1, true) ~= nil, "E3: the first run says 2 shrunk")
+
+    local before = snapshot(folder)
+    code, output = run("bash " .. sh_quote(SHRINK) .. " " .. sh_quote(folder))
+    fw.log("E3 shrink_recordings.sh, second run -> exit " .. tostring(code) .. ":\n" .. output)
+    fw.assert_eq(code, 0, "E3: the second run exits 0")
+    fw.assert_true(before:find("originals/a.mp4", 1, true) ~= nil,
+        "E3: the snapshot lists the folder's files")
+    fw.assert_eq(snapshot(folder), before, "E3: the second run changes nothing")
+    fw.assert_true(output:find("0 shrunk", 1, true) ~= nil, "E3: the second run says 0 shrunk")
+
+    ---------------------------------------------------------------------------
+    -- E3F The shrink tool leaves a video it can't shrink as it is
+    ---------------------------------------------------------------------------
+    -- broken.mp4 doesn't encode; clash.mp4 would, but originals/ already
+    -- holds a file of that name, which must never be written over.
+    local f3 = work .. "/cant"
+    run("mkdir -p " .. sh_quote(f3 .. "/originals"))
+    run("cp -p " .. sh_quote(broken) .. " " .. sh_quote(f3 .. "/broken.mp4"))
+    run("cp -p " .. sh_quote(capture) .. " " .. sh_quote(f3 .. "/clash.mp4"))
+    run("cp -p " .. sh_quote(e1_video) .. " " .. sh_quote(f3 .. "/originals/clash.mp4"))
+    before = snapshot(f3)
+    code, output = run("bash " .. sh_quote(SHRINK) .. " " .. sh_quote(f3))
+    fw.log("E3F shrink_recordings.sh -> exit " .. tostring(code) .. ":\n" .. output)
+    fw.assert_eq(code, 1, "E3F: a video it can't shrink makes it exit 1")
+    fw.assert_eq(snapshot(f3), before, "E3F: both videos and originals/ are left as they were")
+    fw.assert_eq(listing(f3), "broken.mp4 clash.mp4 originals", "E3F: nothing half-written left behind")
+    fw.assert_true(output:find("broken.mp4: encode failed, left as it was", 1, true) ~= nil,
+        "E3F: it says broken.mp4 is left as it was")
+    fw.assert_true(output:find("clash.mp4: left as it was", 1, true) ~= nil,
+        "E3F: it says clash.mp4 is left as it was")
+
+    -- An empty folder of the same shape: nothing to do, and no originals/.
+    local empty = work .. "/empty"
+    run("mkdir -p " .. sh_quote(empty))
+    code, output = run("bash " .. sh_quote(SHRINK) .. " " .. sh_quote(empty))
+    fw.assert_eq(code, 0, "E3F: a folder without videos exits 0")
+    fw.assert_eq(listing(empty), "", "E3F: a folder without videos gets no originals/")
 
     fw.finish()
 end)
