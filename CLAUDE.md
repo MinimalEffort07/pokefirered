@@ -192,10 +192,26 @@ ln -s "$(git worktree list | head -1 | cut -d' ' -f1)/tools/agbcc" tools/agbcc
 - Build must be clean: `make -j$(nproc) firered`
 
 **8. Record a test run**
+Write the recording's notes first, then record with them on stdin (`--notes -`), as a heredoc:
 ```bash
-bash test/record_test.sh test/tests/<relevant_test>.lua
+bash test/record_test.sh --notes - test/tests/<relevant_test>.lua <<'EOF'
+ticket: <T> <the ticket's title>
+parent: <N> <the parent issue's title>
+
+## What's tested
+…
+## The problem
+…
+## What you should see
+…
+EOF
 ```
-Move the recording to `~/recordings/` as per project convention.
+The notes are for the owner, who watches the video on their phone, so write them in plain words:
+- **What's tested:** the scenarios the test plays, in more detail than the test's name.
+- **The problem:** what was wrong or missing before the change.
+- **What you should see:** the moments to watch for, in order, and roughly when in a long video ("about 40 s in, the BAG closes and the same four patches still shake").
+
+Leave `pr:` out: the PR doesn't exist yet, so step 11 adds its number. `record_test.sh` checks the notes before it starts (`--check` only checks). Its last two lines are the `mv` that keeps the video and its notes file in `~/recordings/`, and the recording's own page. Run that `mv`, and keep the page's link for the PR.
 
 **9. Update the README and the system map**
 Add or update the feature description and include a demo GIF if the feature has visible in-game behaviour. Update `docs/SYSTEM_MAP.md` too when the change touches anything on it (see "System map").
@@ -210,10 +226,16 @@ gh pr create --title "Fix #<T>: <short description>" --body "..."
 ```
 PR body must reference the ticket and parent issue numbers, summarise what changed, and list what was tested. It also has a `## What changes for you` section: two or three plain sentences telling the owner what is different for them, such as a new command, a new board behaviour, a new rule for tests or a feature to try. When nothing is, it says `Nothing: internal only.`
 
-Once the frontier's PRs are created, post the following in your response to the user, with one `Branch README` line per branch:
+With a recording, the PR body links each recording's own page: one `Recording: http://100.76.129.86:8080/r/<name>` line per recording, with `<name>` as `record_test.sh` printed it. Once the PR exists and you know its number, put it into each recording's notes, so its card links the PR:
+```bash
+python3 test/tools/recording_notes.py set-pr <name> <PR>
 ```
-Recordings available at: http://100.116.114.81:8080
+
+Once the frontier's PRs are created, post the following in your response to the user, with one `Recording` line per recording (the same lines as in the PR bodies) and one `Branch README` line per branch:
+```
+Recordings available at: http://100.76.129.86:8080
 (run: python3 test/serve_recordings.py)
+Recording: http://100.76.129.86:8080/r/<name>
 
 Branch README: https://github.com/MinimalEffort07/pokefirered/blob/<branch-name>/README.md
 ```
@@ -283,7 +305,9 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - Run `bash test/run_suite.sh` before opening the PR. It takes about 10 minutes, and longer while another session runs its own, which is more than one foreground command may run. So start it in the background with its output in a log file, and before opening the PR wait for it to finish with a loop on that log (e.g. `until grep -q "^SUITE" suite.log; do sleep 15; done`).
 - Report your result once, at the very end, after every step has finished. Never report while a command is still running.
 - `record_test.sh` waits for any other recording on the machine to finish (it takes a machine-wide lock itself), so a recording may start late.
-- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the tests run with the suite result, the "Recordings available at…" and "Branch README" lines (or "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
+- Every recording you make has notes (step 8). In an autodev session, `record_test.sh` refuses to record without them, and refuses notes whose `ticket:` isn't your ticket or that have no `parent:` (your ticket's `## Parent`). Your settings deny any command naming the session variables, heredocs included, so if your notes must name them, write the notes to a file with the Write tool and pass `--notes FILE`.
+- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the tests run with the suite result, the "Recordings available at…" and "Branch README" lines with a `Recording: http://100.76.129.86:8080/r/<name>` line under them for each recording (or "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
+- `open-pr` prints the PR's number (`#97 <its URL>`). Then run `python3 test/tools/recording_notes.py set-pr <name> <PR>` for each recording (step 11).
 - Push only your own branch: `git push -u origin issue-<T>-<slug>`. Never push to master, force-push or merge.
 - If you can't finish, push the unfinished branch before reporting `failed`.
 
@@ -293,7 +317,7 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
   - `read <PR>` shows the PR's comments, reviews and inline comments (each inline one with its file and line), with an id on each, and marks the owner's unhandled ones `[unhandled]`. `read <T>` shows the ticket.
   - `pr-comment` replies on your PR, with the body on stdin. It adds the handled-through marker naming the comment your prompt names.
 - Address every unhandled comment from the owner up to and including the one your prompt names, in one pass. Leave newer ones alone: they get a follow-up session.
-- For each change: TDD, a clean build, `cd automation && python3 -m unittest` if `automation/` changed, the README and `docs/SYSTEM_MAP.md` if they describe what changed, and a fresh recording if the change is visible in-game. Then run `bash test/run_suite.sh` in the background and wait on its log, as in the ticket role.
+- For each change: TDD, a clean build, `cd automation && python3 -m unittest` if `automation/` changed, the README and `docs/SYSTEM_MAP.md` if they describe what changed, and a fresh recording if the change is visible in-game. A fresh recording gets notes too (step 8), and its PR's number is filled in by itself, so it needs no `set-pr`; link its page in your reply with a `Recording:` line. Then run `bash test/run_suite.sh` in the background and wait on its log, as in the ticket role.
 - A comment that only asks a question needs no change: answer it in the reply.
 - Push only your own branch (`git push origin <the PR's branch>`), then `pr-comment` what you did about each comment (and, if that changes what's different for the owner, an updated "What changes for you"), @mentioning @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it). Report `done` once the reply is posted.
 - Never merge master in (the merge session does that), merge, squash, rebase or force-push.

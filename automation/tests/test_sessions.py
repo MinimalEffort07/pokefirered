@@ -581,6 +581,17 @@ class RolePermissions(unittest.TestCase):
                 self.assertIn("Bash(python3 *automation/bin/issue.py *)", allow)
                 self.assertEqual([r for r in allow if r.startswith("Bash(gh")], [])
 
+    def test_ticket_and_fixup_roles_may_run_the_recording_notes_helper(self):
+        # CLAUDE.md step 11: a ticket session runs `set-pr` after open-pr
+        # to put its PR's number into each recording's notes file (#111).
+        # A fix-up's own recordings get the number by themselves, but it may
+        # still need `set-pr` for one the ticket session left without it,
+        # or `check` to try its notes.
+        for role in ("ticket", "fixup"):
+            with self.subTest(role=role):
+                self.assertIn("Bash(python3 test/tools/recording_notes.py:*)",
+                              self.rules(role)["allow"])
+
     def test_the_grill_role_reaches_github_only_through_issue_py(self):
         # automation/bin/issue.py withholds untrusted authors' text and only
         # changes the session's own issue; a plain gh allow rule would let

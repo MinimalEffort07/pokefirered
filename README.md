@@ -122,20 +122,22 @@ Four patches shake. The BAG opens and closes, and the same four still shake.
 
   ```
   mv /tmp/mgba-recordings/<name>.mp4 /tmp/mgba-recordings/<name>.json ~/recordings/
-  http://100.116.114.81:8080/r/<name>
+  http://100.76.129.86:8080/r/<name>
   ```
+- **Autodev's sessions must write them.** In a session autodev started, `record_test.sh` (`--check` included) refuses to record without notes, and refuses notes whose `ticket:` isn't the session's own ticket or that have no `parent:`. So every recording on a PR says what it's for. A fix-up's notes get its PR's number by themselves. A ticket session records before its PR exists, so once it's open the session runs `python3 test/tools/recording_notes.py set-pr <name> <PR>`, which puts the number into that recording's notes file (in `~/recordings`, or else `/tmp/mgba-recordings`). Its PR links each recording's own page. When you record, notes stay optional.
 
-`test/tests/test_recording_notes.lua` checks the notes `--check` accepts and refuses, the name, the notes file the helper writes, and how the page shows notes files, including broken ones.
+`test/tests/test_recording_notes.lua` checks the notes `--check` accepts and refuses, the name, the notes file the helper writes, and how the page shows notes files, including broken ones. It also checks the rules for autodev's sessions, and `set-pr`.
 
-**The recordings page.** `test/serve_recordings.py` shows the videos at http://100.116.114.81:8080 (`autodev-recordings.service` runs it):
+**The recordings page.** `test/serve_recordings.py` shows the videos at http://100.76.129.86:8080 (`autodev-recordings.service` runs it):
 
 - **Two sections, each newest first.** Kept recordings (`~/recordings`, kept for good) come first, then scratch ones (`/tmp/mgba-recordings`, not kept yet and cleared on reboot). "Newest" goes by when a recording was made: the time in its notes file, or, for a video without one, its modification time (when its recording ended, which `mv` keeps). Videos in subfolders aren't listed, and nor is a notes file without its video.
 - **A card per video, from its notes file.** The title is the ticket, "#90 Shaking patches survive a field reload", linked to it; with no ticket in the notes, the test's name. Under it come "Part of #87 …" and "PR #97", each linked, when the notes name them. Then the three notes, under "What's tested", "The problem" and "What you should see": beside the video on a wide screen, above it on a phone. A small facts line says when it was recorded (this machine's time), the test, the branch and commit ("with uncommitted changes" when so), the result ("215 of 215 checks passed", "3 of 215 checks failed", "no checks: a demo or probe" or "no result: the test didn't finish"), the size, the file name, and a link to its own page. A recording made without notes says "No notes for this recording."
 - **A card for a video without a notes file** (one recorded before notes existed) takes its title from the file name: `issue-24-safety-net.mp4` is "#24 safety net", linked to issue #24, and `issue-90_test_x_20261020_134554.mp4` is "#90 test_x". Other names lose only their `_<date>_<time>` ending: `test_follower_swap_20261020_145947.mp4` is "test_follower_swap". Its facts are when it was recorded, its size and its file name, and it says "No notes for this recording." A notes file that can't be read gets the same card, saying "notes file unreadable": no single file can break the page.
 - **A page per recording.** `/r/<name>`, where `<name>` is the file name without `.mp4`, shows just that video, so a phone loads one video instead of all of them. It looks in `~/recordings` first, then `/tmp/mgba-recordings`, so a link made before a video was moved still works.
 - **Videos stream.** The page answers requests in parallel and sends each video in pieces, so a seek, a second video or the page itself never waits behind a slow download.
-- **Previewing a branch's page.** Port 8080 runs master's page. To see a branch's, run `python3 test/serve_recordings.py --port 8081` in that checkout and open http://100.116.114.81:8081. `--kept DIR` and `--scratch DIR` point it at other folders. `--print PATH` prints what a GET of `PATH` (`/` or `/r/<name>`) would return, status code first, without opening a port; `test/tests/test_recordings_page.lua` checks the page that way, on fixture folders of its own.
+- **Previewing a branch's page.** Port 8080 runs master's page. To see a branch's, run `python3 test/serve_recordings.py --port 8081` in that checkout and open http://100.76.129.86:8081. `--kept DIR` and `--scratch DIR` point it at other folders. `--print PATH` prints what a GET of `PATH` (`/` or `/r/<name>`) would return, status code first, without opening a port; `test/tests/test_recordings_page.lua` checks the page that way, on fixture folders of its own.
 - **One file.** The server imports only Python's standard library, and reads the notes files itself rather than through the helper, because autodev restarts the page when a merge changes that one file.
+- **Its address is WSL's.** 100.76.129.86 is WSL's own Tailscale address (`tailscale ip -4` in WSL). The server runs inside WSL, so the Windows machine's Tailscale address doesn't reach it. `test/tests/test_recordings_page.lua` checks that every page address in the repo uses WSL's.
 
 **The whole suite.** `test/run_suite.sh` is the check a change must pass before it is merged:
 
@@ -160,7 +162,7 @@ Autodev takes an issue from the board to a PR that is ready to merge, with nobod
 **What it does.** Add one of your issues to the **pokefirered autodev** board. Every 2 minutes a systemd user timer runs one *tick* of the dispatcher, which looks at the board and moves each card on:
 
 1. A grill session designs the issue by itself, taking every recommended answer, posts the design on the issue, and breaks it into tickets.
-2. Each ticket whose blockers are all closed gets its own worktree (a separate checkout of the repo on the ticket's own branch) and a ticket session: TDD, a clean build, `run_suite.sh`, a recording if the game changes, the README and the system map, a code review, then a PR that @mentions you and says what changes for you.
+2. Each ticket whose blockers are all closed gets its own worktree (a separate checkout of the repo on the ticket's own branch) and a ticket session: TDD, a clean build, `run_suite.sh`, a recording with notes if the game changes, the README and the system map, a code review, then a PR that @mentions you, says what changes for you and links each recording's page.
 3. Your feedback on the PR starts a fix-up session. Your `/merge` starts a merge session, which merges master in, tests that exact tree again, and merges with a merge commit. If merging master in conflicts, it resolves the conflict, explains how on the PR, and waits for a fresh `/merge` from you instead of merging.
 4. Once every ticket of the issue is closed, the issue is closed too.
 

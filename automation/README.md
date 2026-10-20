@@ -28,9 +28,9 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
 2. **A ticket in `Todo` with nothing open blocking it** gets its own worktree, `~/projects/minimaleffort/pokefirered-autodev-worktrees/issue-<T>`, beside the clone. The worktree is on a new branch, `issue-<T>-<slug>`, cut from master, with `tools/agbcc` linked. The slug is the title's first five words, or fewer if five would go over 40 characters. If the folder is gone but the branch is still there, the worktree is made again on that branch. A ticket session starts in it, and the card moves to `In progress`.
 3. **The ticket session** follows CLAUDE.md's "Autonomous mode" for the ticket role, steps 7–11:
    - TDD, a clean build and `bash test/run_suite.sh`
-   - a recording if anything changes in the game (recordings take turns: see "How it runs")
+   - a recording if anything changes in the game (recordings take turns: see "How it runs"). It always has notes: which ticket and feature it's for, what it tests, what the problem was and what you should see. `test/record_test.sh` refuses to record in a session without them, or with notes for another ticket or without the parent.
    - the README and `docs/SYSTEM_MAP.md`, then a code review against master
-   - finally `issue.py open-pr`, which only opens a PR from the ticket's own `issue-<T>-*` branch, and only when the body has Fixes #<T>, an @mention of you and a "What changes for you" section, all written outside code (GitHub ignores the first two inside code)
+   - finally `issue.py open-pr`, which only opens a PR from the ticket's own `issue-<T>-*` branch, and only when the body has Fixes #<T>, an @mention of you and a "What changes for you" section, all written outside code (GitHub ignores the first two inside code). The body links each recording's own page (`Recording: http://100.76.129.86:8080/r/<name>`). Once the PR is open, `python3 test/tools/recording_notes.py set-pr <name> <PR>` puts its number into each recording's notes, so the recording's card links the PR.
 
    It has 3 hours.
 4. **On the first tick after it ends**, the dispatcher looks on GitHub for the ticket's open PR: one from an `issue-<T>-*` branch of this repo, opened by the bot or by you (you may finish a parked ticket yourself). A PR from a fork, or opened by anyone else, doesn't count.
@@ -60,7 +60,7 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
 1. **On the next tick,** if your newest unhandled comment, review or inline comment on an `In review` ticket's PR is anything but `/merge`, a fix-up session starts in the ticket's worktree, and the card moves to `In progress`. It handles every comment of yours queued up to that one, all together. It has 90 minutes. Inline comments you make in a review count from when you submit the review, since nobody sees them before.
 2. **The fix-up session** follows CLAUDE.md's "Autonomous mode" for the fix-up role:
    - `issue.py read <PR>` shows it the PR's comments, reviews and inline comments (each inline one with its file and line), and marks your unhandled ones.
-   - It brings the branch up to date (you may have pushed to it), then makes the changes with TDD, builds, runs `run_suite.sh`, and records again if anything changes in the game.
+   - It brings the branch up to date (you may have pushed to it), then makes the changes with TDD, builds, runs `run_suite.sh`, and records again if anything changes in the game. A fresh recording has notes too, and gets the PR's number by itself.
    - It pushes, then replies on the PR with `issue.py pr-comment`, @mentioning you and saying what it changed for each comment. The reply's handled-through marker names the comment it was started for. A question needs no change: the reply answers it.
 3. **On the first tick after it ends:**
    - **Reply posted:** the card goes back to `In review`. Commits aren't required, since a question only needs an answer; the reply is what you read before your next `/merge`.

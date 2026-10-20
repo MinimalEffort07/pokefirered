@@ -36,7 +36,9 @@
 --   recordings from any worktree know about each other and take turns.
 --   Three more /tmp names are allowed because no file in them is used under
 --   the same name by two runs: mktemp templates, record_test.sh's video
---   folder (each video gets a timestamped name), and fw.out_path's fallback
+--   folder (each video gets a timestamped name; the recordings page reads
+--   it, and recording_notes.py's set-pr finds notes files there), and
+--   fw.out_path's fallback
 --   for scripts loaded by hand, which run_test.sh never uses.
 --
 -- Run:
@@ -76,6 +78,9 @@ local ALLOWED = {
          .. "recording runs at a time" },
     { path = "/tmp/mgba-recordings", file = "test/serve_recordings.py",
       why = "serves record_test.sh's video folder, read only" },
+    { path = "/tmp/mgba-recordings", file = "test/tools/recording_notes.py",
+      why = "set-pr finds a recording's notes file there (after ~/recordings) "
+         .. "by the name a person gives it, and changes only that file" },
     { path = "/tmp", file = "test/lib/framework.lua",
       why = "fw.out_path's fallback for a script loaded by hand in mGBA; "
          .. "run_test.sh and record_test.sh always set MGBA_TEST_DIR" },

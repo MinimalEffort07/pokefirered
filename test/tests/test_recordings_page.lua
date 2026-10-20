@@ -25,6 +25,16 @@
 --   A5  All text is HTML-escaped and every link URL-encoded: a video named
 --       x<b>&y.mp4 shows as x&lt;b&gt;&amp;y, and its page link works.
 --
+-- ADDR checks the page's address (asked for on PR #117). The server runs
+-- inside WSL and listens on all of WSL's addresses, so the owner's phone
+-- reaches it at WSL's own Tailscale address, 100.76.129.86 (what
+-- `tailscale ip -4` prints in WSL). The Windows machine is a separate device
+-- on the tailnet, with an address of its own (100.116.114.81), and the page
+-- isn't served there. record_test.sh's last line must use WSL's address,
+-- and so must every recordings-page link the repo's files write down
+-- (README.md, CLAUDE.md, automation/README.md, docs/SYSTEM_MAP.md, and
+-- record_test.sh's own comment): any http://100.x.y.z in a tracked file.
+--
 -- THE FIXTURES are tiny files of zeros named like real recordings, each with
 -- its modification time set by `touch -d` in the machine's local time, which
 -- is also the time the page shows. They sit in this run's own folder, so
@@ -381,6 +391,45 @@ local function check_escaping(page, kept_cards)
     fw.assert_true(r.body:find("<b>", 1, true) == nil, "A5: no raw <b> on /r/x%3Cb%3E%26y")
 end
 
+-- ADDR: the page's address, wherever the repo writes it down.
+local PAGE_HOST = "http://100.76.129.86"
+local PAGE_ADDRESS = PAGE_HOST .. ":8080"
+local FILES_WITH_ADDRESS = {
+    "test/record_test.sh", "README.md", "CLAUDE.md", "automation/README.md", "docs/SYSTEM_MAP.md",
+}
+
+local function check_address()
+    fw.log("--- ADDR: the page's address is WSL's Tailscale address ---")
+    -- record_test.sh prints PAGE_URL/<name> as its last line.
+    local f = io.open(project_dir .. "test/record_test.sh", "r")
+    local script = f and f:read("a") or ""
+    if f then f:close() end
+    fw.assert_eq(script:match('\nPAGE_URL="([^"]*)"'), PAGE_ADDRESS .. "/r",
+        "ADDR: record_test.sh's PAGE_URL is " .. PAGE_ADDRESS .. "/r")
+
+    -- Every http://100.x.y.z in a tracked file, as path:address lines. Any
+    -- port is fine (README.md's branch preview is on 8081); the host isn't.
+    local cmd = "git -C " .. sh_quote(project_dir)
+        .. " grep -I -o -E 'http://100\\.[0-9]+\\.[0-9]+\\.[0-9]+(:[0-9]+)?' 2>&1"
+    local pipe = io.popen(cmd, "r")
+    local out = pipe and pipe:read("a") or ""
+    if pipe then pipe:close() end
+    local found, wrong = {}, {}
+    for line in out:gmatch("[^\n]+") do
+        local path, address = line:match("^(.-):(http://.*)$")
+        if address == nil or address:match("^http://[0-9.]+") ~= PAGE_HOST then
+            wrong[#wrong + 1] = line
+        elseif address == PAGE_ADDRESS then
+            found[path] = true
+        end
+    end
+    fw.assert_eq(#wrong, 0, "ADDR: no other 100.x.y.z host in a tracked file")
+    for _, line in ipairs(wrong) do fw.log("  other address: " .. line) end
+    for _, path in ipairs(FILES_WITH_ADDRESS) do
+        fw.assert_true(found[path] == true, "ADDR: " .. path .. " links " .. PAGE_ADDRESS)
+    end
+end
+
 -------------------------------------------------------------------------------
 -- Test
 -------------------------------------------------------------------------------
@@ -402,6 +451,7 @@ fw.run(function()
     check_titles(page, kept_cards, scratch_cards)
     check_pages(kept_cards, scratch_cards)
     check_escaping(page, kept_cards)
+    check_address()
 
     fw.log(#all .. " cards on /")
     fw.finish()
