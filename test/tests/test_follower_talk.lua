@@ -71,12 +71,6 @@ local function context_status()
     return emu:read8(sym.addr("sGlobalScriptContextStatus"))
 end
 
--- gPlayerAvatar.tileTransitionState (offset 3): 0 when the player is not in
--- the middle of a step or a turn.
-local function player_still()
-    return emu:read8(sym.addr("gPlayerAvatar") + 3) == 0
-end
-
 local function tile_str(x, y)
     if x == nil then return "(none)" end
     return string.format("(%d,%d)", x, y)
@@ -103,14 +97,24 @@ end
 
 -- Tap `key_name` for one frame, so the player turns that way without
 -- stepping, and wait until the turn is over. Returns the facing direction.
-local function tap_turn(key_name, want_dir)
+local function tap_turn(key_name)
     fw.press(key_name)
-    fw.wait_until(function()
-        local _, _, facing = follower.player()
-        return facing == want_dir and player_still() and mm.player_has_control()
-    end, 30, "player turned " .. key_name)
+    follower.wait_still(30)
     local _, _, facing = follower.player()
     return facing
+end
+
+-- Press A (held for one frame), then call each(n) on each of the next
+-- `frames` frames (n = 1 is the frame the game reads the press); stop early
+-- when it returns true.
+local function press_a_then(frames, each)
+    emu:addKey(fw.KEY.A)
+    for n = 1, frames do
+        fw.yield()
+        if n == 1 then emu:clearKey(fw.KEY.A) end
+        if each(n) then break end
+    end
+    emu:clearKey(fw.KEY.A)
 end
 
 -------------------------------------------------------------------------------
@@ -133,18 +137,15 @@ local function k1()
     local watch = follower.new_watch(name)
     watch.attach()   -- checks every frame while the code below presses keys
 
-    facing = tap_turn("UP", follower.DIR_NORTH)
+    facing = tap_turn("UP")
     px, py = follower.player()
     fw.assert_true(facing == follower.DIR_NORTH and px == 8 and py == 14, string.format(
         "K1: tapping UP turns the player north without a step (facing %s on %s)",
         tostring(facing), tile_str(px, py)))
 
-    -- Press A (held for one frame), then check each of the next 30 frames.
+    -- Press A, then check each of the next 30 frames.
     local first_bad = nil
-    emu:addKey(fw.KEY.A)
-    for n = 1, 30 do
-        fw.yield()
-        if n == 1 then emu:clearKey(fw.KEY.A) end
+    press_a_then(30, function(n)
         local x, y = follower.player()
         local fol = follower.read()
         local status = context_status()
@@ -155,7 +156,7 @@ local function k1()
                 "frame %d: script status %d, controls locked %d, player %s, Pikachu %s",
                 n, status, locked, tile_str(x, y), fol and tile_str(fol.x, fol.y) or "(none)")
         end
-    end
+    end)
     fw.assert_true(first_bad == nil, string.format(
         "K1: for 30 frames after A, no script runs, the controls stay unlocked and neither moves%s",
         first_bad and (" (" .. first_bad .. ")") or ""))
@@ -195,21 +196,17 @@ local function k2()
     local watch = follower.new_watch(name)
     watch.attach()
 
-    local facing = tap_turn("LEFT", follower.DIR_WEST)
+    local facing = tap_turn("LEFT")
     local px, py = follower.player()
     fw.assert_true(facing == follower.DIR_WEST and px == 22 and py == 28, string.format(
         "K2: the player faces the man, west, from (22,28) (facing %s on %s)",
         tostring(facing), tile_str(px, py)))
 
-    -- Press A (held for one frame) and wait for his script to start.
+    -- Press A and wait for his script to start.
     local started = nil
-    emu:addKey(fw.KEY.A)
-    for n = 1, 10 do
-        fw.yield()
-        if n == 1 then emu:clearKey(fw.KEY.A) end
-        if context_status() ~= CONTEXT_SHUTDOWN then started = n break end
-    end
-    emu:clearKey(fw.KEY.A)
+    press_a_then(10, function(n)
+        if context_status() ~= CONTEXT_SHUTDOWN then started = n return true end
+    end)
     fw.assert_true(started ~= nil, string.format(
         "K2: A starts a script within 10 frames%s",
         started and (" (frame " .. started .. ")") or ""))

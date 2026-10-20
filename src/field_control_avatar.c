@@ -454,18 +454,20 @@ static const u8 *GetInteractionScript(struct MapPosition *position, u8 metatileB
  * GetObjectEventScriptPointerByObjectEventId() does that lookup, and it
  * assumes the template exists.
  *
- * Two objects on the field have no template, because the game creates them
- * at run time rather than loading them from the map:
+ * Objects the game creates at run time, rather than loading them from the
+ * map, have no template. Two of them are skipped here:
  *   - the player (local id LOCALID_PLAYER);
  *   - the walking Pokemon (local id LOCALID_FOLLOWER, created by
  *     SpawnFollowerSprite() in src/pokemon_follower.c).
- * For them the lookup finds nothing and reads its "script pointer" from a
- * NULL template instead, that is from address 0x10 in the GBA's BIOS ROM.
- * Game code can't read the BIOS (the hardware hands back a leftover value
- * from the last BIOS call), so the pointer is garbage, and the script
- * engine runs whatever bytes it points at. Pressing A at the walking Pokemon
- * used to freeze the game this way (ticket #98): the script never ended, and
- * the player never got control back.
+ * (The others, roaming Pokemon and remote multiplayer players, are not
+ * handled here.) For such an object the lookup finds nothing and reads its
+ * "script pointer" from a NULL template instead, that is from address 0x10,
+ * inside the GBA's BIOS ROM. The BIOS can only be read by its own code: a
+ * read from game code gets the last instruction the BIOS itself fetched,
+ * not the BIOS contents. So the pointer is garbage, and the script engine
+ * runs whatever bytes it points at. Pressing A at the walking Pokemon used
+ * to freeze the game this way (ticket #98): the script never ended, and the
+ * player never got control back.
  *
  * So the A-button lookups treat both as if no object stood there: on plain
  * ground nothing happens (no message, no sound), and the lookup goes on to
@@ -517,12 +519,7 @@ static const u8 *GetInteractedObjectEventScript(struct MapPosition *position, u8
     u8 objectEventId;
     const u8 *script;
 
-    /*
-     * The object in front of the player. No object, the player or the
-     * walking Pokemon all count as "nobody there" (IsTalkableObjectEvent):
-     * returning NULL lets GetInteractionScript go on to signs, hidden items
-     * and the tile itself.
-     */
+    // The walking Pokemon counts as nobody there (see IsTalkableObjectEvent).
     objectEventId = GetObjectEventIdByPosition(position->x, position->y, position->elevation);
     if (!IsTalkableObjectEvent(objectEventId))
     {
