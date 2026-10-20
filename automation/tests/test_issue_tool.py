@@ -151,8 +151,9 @@ class Writing(unittest.TestCase):
         self.assertEqual(gh.writes, [])
 
 
-PR_BODY = ("Fixes #68\nPart of #67\n\nSummary.\n\n"
-           "Suite: 41 passed.\n\n@MinimalEffort07")
+WHAT_CHANGES = "## What changes for you\n\nNothing: internal only.\n\n"
+PR_BODY = ("Fixes #68\nPart of #67\n\nSummary.\n\n" + WHAT_CHANGES
+           + "Suite: 41 passed.\n\n@MinimalEffort07")
 
 
 class OpeningPRs(unittest.TestCase):
@@ -194,6 +195,23 @@ class OpeningPRs(unittest.TestCase):
                      PR_BODY + "\n\nResolves MinimalEffort07/pokefirered#48",
                      PR_BODY + "\n\nfixed: https://github.com/MinimalEffort07/"
                                "pokefirered/issues/70"):
+            with self.subTest(body=body):
+                gh = FakeRest({})
+                with self.assertRaises(issue_tool.Refused):
+                    issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note", body)
+                self.assertEqual(gh.writes, [])
+
+    def test_the_body_must_say_what_changes_for_the_owner(self):
+        # The owner keeps up with what each PR changes for them by reading
+        # this section (CLAUDE.md, "System map" and step 11).
+        for body in (PR_BODY.replace(WHAT_CHANGES, ""),
+                     # A sentence isn't the section.
+                     PR_BODY.replace("## What changes for you", "What changes for you"),
+                     # Inside code it isn't a heading on GitHub either.
+                     PR_BODY.replace(WHAT_CHANGES, "```\n" + WHAT_CHANGES + "```\n\n"),
+                     # An empty section says nothing.
+                     PR_BODY.replace(WHAT_CHANGES, "## What changes for you\n\n## Tests\n\n"),
+                     PR_BODY.replace(WHAT_CHANGES, "") + "\n\n## What changes for you\n"):
             with self.subTest(body=body):
                 gh = FakeRest({})
                 with self.assertRaises(issue_tool.Refused):

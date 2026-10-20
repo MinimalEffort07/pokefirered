@@ -122,6 +122,11 @@ CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+"
                      r"(?:(?:[\w.-]+/[\w.-]+)?#|https://github\.com/[\w.-]+/"
                      r"[\w.-]+/issues/)(\d+)", re.IGNORECASE)
 
+# A PR body's "## What changes for you" heading with some text under it
+# (anything but another heading) before the next heading or the end.
+WHAT_CHANGES = re.compile(r"^## What changes for you[ \t]*\n(?:[ \t]*\n)*[ \t]*[^#\s]",
+                          re.IGNORECASE | re.MULTILINE)
+
 
 def _prose(body):
     """The body without fenced blocks and `code spans`: GitHub neither
@@ -157,6 +162,14 @@ def open_pr(gh, config, ticket, title, head, body):
     if not re.search(r"\bFixes #%d\b" % ticket, _prose(body)):
         raise Refused("the PR body must say \"Fixes #%d\" (not in code)" % ticket)
     _check_mention(config, body, "PR body")
+    # The owner keeps up with what each PR changes for them by reading this
+    # section (CLAUDE.md, "System map" and step 11), so it must be a real
+    # heading with something under it.
+    if not WHAT_CHANGES.search(_prose(body)):
+        raise Refused("the PR body needs a \"## What changes for you\" section "
+                      "(not in code): two or three plain sentences on what is "
+                      "different for @%s, or \"Nothing: internal only.\""
+                      % config.owner)
     # Merging closes every issue a closing keyword names. Checked in the
     # whole body, code included, to be safe.
     others = sorted({int(n) for n in CLOSING.findall(body)} - {ticket})
