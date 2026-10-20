@@ -2,9 +2,10 @@
 #define GUARD_POKE_RADAR_H
 
 // Gen 4 PokeRadar mechanic: using the key item in grass spawns four shaking
-// grass patches. Stepping into a patch forces a wild encounter of a chained
-// species. Repeatedly defeating/catching the same species builds a chain that
-// raises the number of shiny PID rerolls on subsequent chained encounters.
+// grass patches. Stepping into a patch starts a wild battle at once, of the
+// chained species if there is one. Repeatedly defeating/catching the same
+// species builds a chain that raises the number of shiny PID rerolls on
+// subsequent chained encounters.
 //
 // State lives in SaveBlock1::unused_348C[] (pre-existing 400-byte slack), so
 // the save format size is unchanged. A magic number detects first-run and
@@ -17,7 +18,7 @@
 
 #define POKE_RADAR_MAGIC                     0x50524452u  // 'PRDR'
 #define POKE_RADAR_FLAG_PATCHES_ACTIVE       (1 << 0)
-#define POKE_RADAR_FLAG_FROM_PATCH_ENCOUNTER (1 << 1)
+#define POKE_RADAR_FLAG_FROM_PATCH_ENCOUNTER (1 << 1)  // set only during a patch battle
 
 struct PokeRadar
 {
@@ -40,6 +41,7 @@ struct PokeRadar *PokeRadar_Get(void);
 bool8 PokeRadar_IsUsableHere(void);
 void  PokeRadar_Activate(void);
 void  PokeRadar_OnStep(void);
+bool8 PokeRadar_TryStartPatchBattle(void);
 void  PokeRadar_OnEncounterStart(u16 species);
 bool8 PokeRadar_TryInjectShiny(u16 species, u32 *personalityOut);
 void  PokeRadar_OnBattleEnd(u8 outcome);

@@ -40,7 +40,19 @@
 --   * pr.assert_object_sprites(): every object still has its own sprite;
 --   * pr.raise_encounter_rate(), pr.wait_for_battle(), pr.play_battle(action):
 --     a wild battle, ended by RUN or by FIGHT;
---   * pr.reset(): a test's setup between scenarios.
+--   * pr.reset(), pr.start_in_grass(name) (on Route 1's grass at
+--     pr.GRASS_X, pr.GRASS_Y), pr.scenario(name, fn): a test's setup
+--     between scenarios, and pr.walk_follower(name),
+--     pr.assert_follower_sprite(name, when): the WALK follower;
+--   * pr.on_field(), pr.field_running(), pr.in_battle(): where the game's
+--     main loop is, and pr.wait_step_done(): the end of the player's step;
+--   * pr.walk_on_grass_onto(label, what, is_target), pr.walk_into_patch(label),
+--     pr.walk_off_grass(label): walking along the grass without spoiling
+--     the patches, then into one or off the grass (issue #89), and
+--     pr.live_patch_sprites(): every patch sprite left;
+--   * pr.is_wild_battle() (pr.BATTLE_TYPE_TRAINER), pr.wild_species(),
+--     pr.forget_wild_species(), pr.wild_message_up(): the wild battle, its
+--     Pokemon, and its "Wild PIDGEY appeared!" on screen.
 -- Tiles there are map coordinates (data/maps/<Map>/map.json), as in
 -- test/lib/walk.lua; the radar struct stores its patch tiles 7 higher
 -- (MAP_OFFSET, the engine's margin around every map).
@@ -52,6 +64,8 @@ local ADDR = dofile(script_dir .. "addresses.lua")
 local sym = dofile(script_dir .. "symbols.lua")
 local mm = dofile(script_dir .. "mt_moon.lua")
 local follower = dofile(script_dir .. "follower.lua")
+local warp = dofile(script_dir .. "warp.lua")
+local walk = dofile(script_dir .. "walk.lua")
 
 local pr = {}
 
@@ -217,7 +231,8 @@ end
 local MAP_OFFSET = mm.MAP_OFFSET
 
 -- Constants read from the game's own headers.
-pr.MB_TALL_GRASS = mm.read_defines("include/constants/metatile_behaviors.h").MB_TALL_GRASS
+local MB = mm.read_defines("include/constants/metatile_behaviors.h")
+pr.MB_TALL_GRASS = MB.MB_TALL_GRASS
 pr.FLDEFF_UNUSED_GRASS = mm.read_defines("include/constants/field_effects.h").FLDEFF_UNUSED_GRASS
 local SPECIES_PIKACHU = mm.read_defines("include/constants/species.h").SPECIES_PIKACHU
 local MOVE_THUNDERBOLT = mm.read_defines("include/constants/moves.h").MOVE_THUNDERBOLT
@@ -248,6 +263,14 @@ function pr.on_field()
     return sym.is_func(callback2(), "CB2_Overworld")
 end
 
+-- The field is still running and drawn, its sprites with it: the main loop
+-- is CB2_Overworld, or CB2_OverworldBasic, which a battle's screen
+-- transition switches to while it plays on top of the field
+-- (BattleTransition_StartOnField).
+function pr.field_running()
+    return pr.on_field() or sym.is_func(callback2(), "CB2_OverworldBasic")
+end
+
 -- The main loop is the battle's.
 function pr.in_battle()
     return sym.is_func(callback2(), "BattleMainCB2")
@@ -268,6 +291,24 @@ end
 -- The player could take a step or open a menu right now.
 function pr.player_ready()
     return pr.on_field() and mm.player_has_control() and standing_still()
+end
+
+-- Wait for the step the player has just begun (their tile has changed) to
+-- end, up to `timeout` frames (default 60). The game walks a step in 16
+-- frames, but tileTransitionState only leaves 0 on a frame after the tile
+-- changes, so this waits to see the player moving first. Returns true once
+-- the player stands still again.
+function pr.wait_step_done(timeout)
+    local moving = false
+    for _ = 1, timeout or 60 do
+        if not standing_still() then
+            moving = true
+        elseif moving then
+            return true
+        end
+        fw.yield()
+    end
+    return standing_still()
 end
 
 -------------------------------------------------------------------------------
@@ -329,6 +370,18 @@ function pr.assert_live_patches(label)
         fw.assert_true(pr.is_live_patch(id), string.format(
             "%s: patch %d at (%d,%d) is a live shaking-grass sprite (id %d)", label, i, x, y, id))
     end
+end
+
+-- The ids of every sprite that is a live shaking-grass patch, out of all
+-- MAX_SPRITES (64) of them, not just the ids the radar stored: a list that
+-- is empty once the radar has removed its patches. Only meaningful on the
+-- field: a battle frees every field sprite and fills gSprites with its own.
+function pr.live_patch_sprites()
+    local ids = {}
+    for id = 0, ADDR.MAX_SPRITES - 1 do
+        if pr.is_live_patch(id) then ids[#ids + 1] = id end
+    end
+    return ids
 end
 
 -- A test's setup between scenarios: no patches and no chain, and `charges`
@@ -509,8 +562,12 @@ local POCKET_KEY_ITEMS = GLOBAL.POCKET_KEY_ITEMS - 1
 
 -- From the START menu: open the BAG, go to KEY ITEMS and open the POKe
 -- RADAR's menu (USE / REGISTER / CANCEL, the cursor on USE). Asserts each
--- step; returns true when the menu is open.
-local function open_radar_menu(label)
+-- step; returns true when the menu is open. `opts` (optional), for a demo:
+-- once the radar is under the cursor in KEY ITEMS, with its description
+-- shown below the list, the bag stays so for opts.linger frames, then
+-- opts.before_menu() runs and A opens the item's menu.
+local function open_radar_menu(label, opts)
+    opts = opts or {}
     if not pr.choose_start_menu(pr.STARTMENU_BAG, label) then return false end
     if not fw.assert_true(wait_task("Task_BagMenu_HandleInput", 300, "bag open"),
             label .. ": the bag opened") then
@@ -529,6 +586,8 @@ local function open_radar_menu(label)
     if not fw.assert_eq(fw.read16(pocket), POCKET_KEY_ITEMS, label .. ": the KEY ITEMS pocket is open") then
         return false
     end
+    fw.wait_frames(opts.linger or 0)
+    if opts.before_menu then opts.before_menu() end
     for _ = 1, 10 do
         if pr.task_running("Task_FieldItemContextMenuHandleInput") then break end
         fw.press("A")
@@ -544,9 +603,9 @@ end
 -- START > BAG > KEY ITEMS > POKe RADAR > USE. Returns true right after the
 -- A press on USE (the action the "not frozen" check counts from), and the
 -- frames since that press: 2 (fw.press holds A for a frame, then lets go
--- for one).
-function pr.use_from_bag(label)
-    if not open_radar_menu(label) then return false end
+-- for one). `opts`: see open_radar_menu.
+function pr.use_from_bag(label, opts)
+    if not open_radar_menu(label, opts) then return false end
     fw.wait_frames(10)
     fw.press("A")   -- USE, under the cursor
     return true, 2
@@ -738,7 +797,8 @@ end
 
 -- Hold the D-pad toward a free tile next to the player (pr.free_neighbour,
 -- with `grass`) until the player's tile changes, for up to 60 frames, then
--- let go and wait up to 60 more frames for the step to finish. Returns a
+-- let go and wait up to 60 more frames for the step to finish
+-- (pr.wait_step_done). Returns a
 -- table: { x, y, key } (the target tile and the key held; x is nil if no
 -- tile next to the player was free), { from_x, from_y } (the player's tile
 -- before), and `moved`, the frames it took to move onto the target (nil if
@@ -759,10 +819,7 @@ function pr.try_step(grass)
         end
     end
     emu:clearKey(idx)
-    for _ = 1, 60 do
-        if standing_still() then break end
-        fw.yield()
-    end
+    if step.moved then pr.wait_step_done(60) end
     return step
 end
 
@@ -808,6 +865,203 @@ function pr.assert_object_sprites(label)
         fw.assert_true(ok, string.format(
             "%s: object %d's sprite (id %d%s) is in use and linked to it", label, o.index, id, who))
     end
+end
+
+-------------------------------------------------------------------------------
+-- A scenario's setup
+-------------------------------------------------------------------------------
+
+-- A tall-grass tile on Route 1 with grass all around, so the radar has
+-- plenty of tiles within its 6-tile radius to shake and the player has
+-- grass to step onto.
+pr.GRASS_X, pr.GRASS_Y = 12, 24
+
+-- Start a scenario: a recharged radar with no chain (pr.reset), the player
+-- on Route 1's grass at (pr.GRASS_X, pr.GRASS_Y) (with the follower, if it
+-- is out), no roaming Pokemon nearby and a Repel. The warp's map load also
+-- unlocks the field controls, so a scenario that froze the player doesn't
+-- spoil the next. Returns true if the setup worked.
+function pr.start_in_grass(name)
+    fw.log("=== " .. name .. " ===")
+    pr.reset(1)
+    pr.set_repel(5000)
+    local warped
+    if follower.object_index() ~= nil then
+        warped = follower.warp(ADDR.MAP_GROUP_KANTO, ADDR.MAP_NUM_ROUTE1, pr.GRASS_X, pr.GRASS_Y)
+    else
+        warped = warp.warp_to_pos(ADDR.MAP_GROUP_KANTO, ADDR.MAP_NUM_ROUTE1, pr.GRASS_X, pr.GRASS_Y)
+    end
+    if not fw.assert_true(warped, name .. ": warped onto Route 1's grass") then return false end
+    fw.assert_true(fw.wait_until(pr.player_ready, 300, "control after the warp"),
+        name .. ": the player has control after the warp")
+    fw.assert_true(follower.clear_roamers(), name .. ": no roaming Pokemon nearby")
+    local x, y = mm.player_tile()
+    -- In the mGBA window (test/record_test.sh), play the rest of the
+    -- scenario in real time so a recording shows it; pr.scenario() speeds
+    -- up again. Headless, this does nothing.
+    fw.slow_down(name)
+    return fw.assert_true(x == pr.GRASS_X and y == pr.GRASS_Y
+            and follower.map_snapshot().behavior(x, y) == pr.MB_TALL_GRASS,
+        string.format("%s: the player stands in tall grass at (%d,%d)", name, x or -1, y or -1))
+end
+
+-- Run scenario `fn` (called with `name`) and log its own counts.
+function pr.scenario(name, fn)
+    local pass0, fail0 = fw.counts()
+    fn(name)
+    fw.speed_up()
+    local pass1, fail1 = fw.counts()
+    fw.log(string.format("[%s] %d passed, %d failed", name, pass1 - pass0, fail1 - fail0))
+end
+
+-- START > POKEMON > PIKACHU > WALK: the party's PIKACHU (pr.give_party)
+-- comes out and walks behind the player, for good. PIKACHU's menu lists
+-- SUMMARY first and WALK second (SetPartyMonFieldSelectionActions,
+-- src/party_menu.c); the menu's task keeps its cursor in data[0] (at
+-- pr.TASK_DATA). Returns true once the follower is out and the player has
+-- control.
+local WALK_ROW = 1
+function pr.walk_follower(name)
+    if not pr.choose_start_menu(pr.STARTMENU_POKEMON, name) then return false end
+    if not fw.assert_true(fw.wait_until(function()
+            return pr.task_running("Task_HandleChooseMonInput") ~= nil
+        end, 300, "POKEMON menu"), name .. ": the POKEMON menu opened") then
+        return false
+    end
+    -- A on PIKACHU (the cursor starts on it, the only one) opens its menu.
+    -- The menu ignores input while it fades in, so press until it opens.
+    local menu = nil
+    for _ = 1, 10 do
+        fw.wait_frames(20)
+        menu = pr.task_running("Task_HandleSelectionMenuInput")
+        if menu then break end
+        fw.press("A")
+    end
+    if not fw.assert_true(menu ~= nil, name .. ": PIKACHU's menu opened") then return false end
+    for _ = 1, 5 do
+        if fw.read16(menu + pr.TASK_DATA) == WALK_ROW then break end
+        fw.press("DOWN")
+        fw.wait_frames(6)
+    end
+    fw.press("A")          -- WALK: back to the field, PIKACHU behind the player
+    return fw.assert_true(fw.wait_until(function()
+        return follower.object_index() ~= nil and pr.player_ready()
+    end, 600, "follower out"), name .. ": PIKACHU walks behind the player after WALK")
+end
+
+-- Assert the follower is out and its sprite is in use and linked to its
+-- object. `when` ends the assertion's text, e.g. "after USE".
+function pr.assert_follower_sprite(name, when)
+    local i = follower.object_index()
+    if not fw.assert_true(i ~= nil, string.format("%s: the follower is out %s", name, when)) then
+        return
+    end
+    local ok, id = pr.object_sprite_ok(i)
+    fw.assert_true(ok, string.format(
+        "%s: the follower's sprite (id %d) is in use and linked to its object (%d) %s",
+        name, id, i, when))
+end
+
+-------------------------------------------------------------------------------
+-- Walking without spoiling the patches (issue #89)
+-------------------------------------------------------------------------------
+
+-- Walk along tall grass that isn't a patch to the tile next to a target
+-- tile, then step onto the target: the nearest tile by walking steps that
+-- `is_target(x, y, snap)` accepts (snap: follower.map_snapshot()). The walk
+-- keeps the patches as they are, because a step off the grass clears them
+-- and a step into one is the radar's own action; only the last step, onto
+-- the target, may do either. `what` names the target in the assertions.
+-- Returns true once the player's tile is the target (the step onto it has
+-- just begun: the game finishes it on its own), and the target's x, y.
+function pr.walk_on_grass_onto(label, what, is_target)
+    if not fw.assert_true(fw.wait_until(pr.player_ready, 300, "ready to walk"),
+            label .. ": the player can walk") then
+        return false
+    end
+    local snap = follower.map_snapshot()
+    -- Every tile the walk must not step on, as a set of mm.key(x, y).
+    local avoid = {}
+    for y = 0, snap.grid.h - 1 do
+        for x = 0, snap.grid.w - 1 do
+            if snap.behavior(x, y) ~= pr.MB_TALL_GRASS or pr.is_patch_tile(x, y) then
+                avoid[mm.key(x, y)] = true
+            end
+        end
+    end
+    -- Walking steps from the player to every grass tile the walk may use
+    -- (mm.bfs: a breadth-first search over the map's walkable tiles), then
+    -- the closest of those tiles next to a target. Ties go to the first in
+    -- reading order, so the choice doesn't depend on Lua's table order.
+    local px, py = mm.player_tile()
+    local dist = mm.bfs(snap.grid, px, py, function(x, y)
+        return avoid[mm.key(x, y)] or snap.warp(x, y)
+    end)
+    local best = nil
+    for k, d in pairs(dist) do
+        local x, y = k % 1000, k // 1000
+        for _, dir in ipairs(DIRS) do
+            local tx, ty = x + dir.dx, y + dir.dy
+            local order = { d, ty, tx, y, x }
+            local better = best == nil
+            if not better then
+                for i = 1, #order do
+                    if order[i] ~= best.order[i] then
+                        better = order[i] < best.order[i]
+                        break
+                    end
+                end
+            end
+            if better and is_target(tx, ty, snap) then
+                best = { x = x, y = y, tx = tx, ty = ty, order = order }
+            end
+        end
+    end
+    if not fw.assert_true(best ~= nil, string.format(
+            "%s: %s can be reached from (%d,%d) along tall grass that isn't a patch", label, what, px, py)) then
+        return false
+    end
+    fw.log(string.format("[%s] %s at (%d,%d): walking to (%d,%d) first, %d steps",
+        label, what, best.tx, best.ty, best.x, best.y, best.order[1]))
+    if best.x ~= px or best.y ~= py then
+        local result = walk.to(best.x, best.y, { avoid = avoid })
+        if not fw.assert_true(result.ok and not result.warped, string.format(
+                "%s: walked along the grass to (%d,%d), next to %s%s", label, best.x, best.y, what,
+                result.why and (": " .. result.why) or "")) then
+            return false
+        end
+    end
+    -- The last step. An object (the follower, say) may stand on the target
+    -- for a moment: the player then only bumps into it, so try again.
+    for _ = 1, 10 do
+        fw.wait_until(pr.player_ready, 120, "ready for the last step")
+        if walk.step_onto(best.tx, best.ty) then break end
+        fw.wait_frames(15)
+    end
+    local x, y = mm.player_tile()
+    return fw.assert_true(x == best.tx and y == best.ty, string.format(
+        "%s: the player stepped from (%d,%d) onto %s at (%d,%d)", label, best.x, best.y, what,
+        best.tx, best.ty)), best.tx, best.ty
+end
+
+-- Walk into the nearest live patch (pr.walk_on_grass_onto). Returns true
+-- once the player's tile is the patch's, and the patch's tile.
+function pr.walk_into_patch(label)
+    if not fw.assert_true(pr.patches_active(), label .. ": there are patches to walk into") then
+        return false
+    end
+    return pr.walk_on_grass_onto(label, "a shaking patch", function(x, y)
+        return pr.is_patch_tile(x, y)
+    end)
+end
+
+-- Walk to the nearest tile off the tall grass (plain ground: MB_NORMAL, not
+-- solid and not a warp) without spoiling the patches on the way, and step
+-- onto it (pr.walk_on_grass_onto).
+function pr.walk_off_grass(label)
+    return pr.walk_on_grass_onto(label, "plain ground off the grass", function(x, y, snap)
+        return not snap.solid(x, y) and not snap.warp(x, y) and snap.behavior(x, y) == MB.MB_NORMAL
+    end)
 end
 
 -------------------------------------------------------------------------------
@@ -915,6 +1169,49 @@ function pr.play_battle(action)
         press("A", 8)
     end
     return fw.read8(outcome_addr), frames - decided_at
+end
+
+-- gBattleTypeFlags bit set for a trainer battle: BATTLE_TYPE_TRAINER,
+-- (1 << 3) in include/constants/battle.h. A wild battle has it clear.
+pr.BATTLE_TYPE_TRAINER = 0x08
+
+function pr.is_wild_battle()
+    return (fw.read32(ADDR.gBattleTypeFlags) & pr.BATTLE_TYPE_TRAINER) == 0
+end
+
+-- The wild Pokemon's species: gBattleMons[1].species (struct BattlePokemon,
+-- 0x58 bytes each, species the u16 at 0; battler 1 is the opponent). The
+-- battle copies it in during its intro, before "Wild PIDGEY appeared!",
+-- and it stays there after the battle until the next one.
+local function wild_species_addr()
+    return sym.addr("gBattleMons") + ADDR.BATTLEMON_SIZE
+end
+
+function pr.wild_species()
+    return fw.read16(wild_species_addr())
+end
+
+-- Clear gBattleMons[1].species (outside a battle, where nothing reads it),
+-- so the next value pr.wild_species() reads is the next battle's own.
+function pr.forget_wild_species()
+    emu:write16(wild_species_addr(), 0)
+end
+
+-- "Wild PIDGEY appeared!" is the battle's message: the battle's text buffer
+-- gDisplayedStringBattle starts with the ROM's sText_WildPkmnAppeared
+-- ("Wild {B_OPPONENT_MON1_NAME} appeared!"), compared up to its first
+-- placeholder (0xFD, the Pokemon's name, which the game fills in) or its
+-- end (0xFF, EOS), as pr.oak_message_up does. "Wild " is 5 characters, so
+-- 32 is plenty.
+function pr.wild_message_up()
+    local text = sym.addr("sText_WildPkmnAppeared")
+    local shown = sym.addr("gDisplayedStringBattle")
+    for i = 0, 31 do
+        local c = fw.read8(text + i)
+        if c == 0xFD or c == 0xFF then return i > 0 end
+        if fw.read8(shown + i) ~= c then return false end
+    end
+    return true
 end
 
 return pr

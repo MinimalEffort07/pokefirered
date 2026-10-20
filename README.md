@@ -47,7 +47,7 @@ This is a fork of the PRET project with custom features. Development is AI-assis
 
   ![Walk With Pokemon](gifs/WalkWithPokemon.gif)
 
-- **Shiny Chaining (Gen 4 PokéRadar)** — Granted at game start. Use in tall grass to spawn shaking patches; defeating or catching the same species from patches builds a chain, boosting shiny odds up to ~1/200 at chain 40.
+- **Shiny Chaining (Gen 4 PokéRadar)** — Granted at game start. Use it in tall grass and four patches of grass nearby start shaking. Step into a shaking patch and a wild Pokémon jumps out at once, even with a Repel on; stepping off the grass makes the patches go. Defeating or catching the same species from patches builds a chain, boosting shiny odds up to ~1/200 at chain 40.
 
   ![Shiny Chaining](gifs/shinyChaining.gif)
 

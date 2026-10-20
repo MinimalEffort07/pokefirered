@@ -11,9 +11,9 @@
  * MECHANIC SUMMARY:
  *   1. Player uses the PokeRadar key item while standing in tall grass.
  *   2. Four nearby grass patches visually "shake" (field-effect sprites).
- *   3. Stepping into a shaking patch triggers a wild encounter of a species
- *      that becomes locked as the "chained species" (subsequent patch-forced
- *      encounters reuse that species).
+ *   3. Stepping into a shaking patch starts a wild battle at once (see
+ *      PATCH BATTLES below). Its species becomes locked as the "chained
+ *      species": later patch battles are that species.
  *   4. Each successful KO or capture increments a chain counter (cap: 40).
  *   5. The chain counter grants extra shiny PID rerolls per encounter:
  *        rerolls = 1 + floor(min(chain, 40) / 5)
@@ -22,6 +22,33 @@
  *        - Engaging a different species in a wild encounter (patch or normal)
  *        - Fleeing / teleporting / losing the wild battle
  *        - Stepping off tall grass
+ *
+ * PATCH BATTLES:
+ *   The overworld handles the player's input once per frame in
+ *   ProcessPlayerFieldInput (src/field_control_avatar.c). On the frame a
+ *   step ends it runs, in order: the trainers' line of sight, map scripts,
+ *   the per-step work (PokeRadar_OnStep among it, then step-triggered
+ *   scripts such as a coord event or the Repel running out), walk-in signs,
+ *   and last the random wild encounter roll. Each of these may "take" the
+ *   step, and then nothing after it runs. PokeRadar_TryStartPatchBattle
+ *   sits just before the random roll, in its place: if the step ended on a
+ *   live patch tile, the battle starts and the roll never happens. The
+ *   battle ignores Repel and the encounter rate (the patch IS the
+ *   encounter); its Pokemon comes from the map's grass table as usual
+ *   (PokeRadarWildEncounter in src/wild_encounter.c). If anything earlier
+ *   took the step, the patch is left alone and still shakes.
+ *
+ *   All four patches go away as the battle starts. The next use needs a
+ *   charge again.
+ *
+ * THE FROM-PATCH FLAG:
+ *   POKE_RADAR_FLAG_FROM_PATCH_ENCOUNTER tells the wild-battle code that
+ *   the battle being set up came out of a patch, so GenerateWildMon
+ *   (src/wild_encounter.c) uses the chain species and PokeRadar_OnBattleEnd
+ *   grows the chain on a win. It is set only for that battle: just before
+ *   the patch battle's Pokemon is made, and cleared when the battle ends.
+ *   At every other moment it is 0, so a random battle never counts as a
+ *   patch's.
  *
  * STATE STORAGE:
  *   `struct PokeRadar` is laid out inside the pre-existing 400-byte
@@ -45,9 +72,12 @@
  *   - src/new_game.c       : grant item + init struct on new game
  *   - src/load_save.c      : ensure-init + grant item on pre-existing saves
  *   - src/item_use.c       : field-use handler (ItemUseOutOfBattle_PokeRadar)
- *   - src/wild_encounter.c : force species on patch encounter + inject shiny
+ *   - src/wild_encounter.c : start the patch battle, force the chain
+ *                            species on it + inject shiny
  *   - src/battle_main.c    : chain increment / break on wild-battle exit
- *   - src/field_control_avatar.c : per-step tick for recharge + off-grass break
+ *   - src/field_control_avatar.c : per-step tick for recharge + off-grass
+ *                            break, and the patch battle in place of the
+ *                            random encounter roll
  * ============================================================================
  */
 
@@ -62,6 +92,7 @@
 #include "overworld.h"
 #include "random.h"
 #include "poke_radar.h"
+#include "wild_encounter.h"
 #include "constants/battle.h"
 #include "constants/field_effects.h"
 #include "constants/items.h"
@@ -280,9 +311,19 @@ void PokeRadar_Activate(void)
 
 void PokeRadar_OnStep(void)
 {
+    /* Called on every completed step, before step-triggered scripts get
+     * their turn (see PATCH BATTLES in the overview). A step INTO a patch
+     * is not handled here: PokeRadar_TryStartPatchBattle does that later in
+     * the same frame, so a script that takes this step leaves the patch. */
     struct PokeRadar *r = PokeRadar_Get();
     s16 px, py;
     u8 behavior;
+
+    /* No battle is being set up during a step, so the from-patch flag must
+     * be 0 here. Older builds set it on the patch step and could leave it
+     * set in a save; clear it so the next random battle isn't taken for a
+     * patch's. */
+    r->flags &= ~POKE_RADAR_FLAG_FROM_PATCH_ENCOUNTER;
 
     /* Recharge tick — independent of patches/chain. */
     if (r->stepsUntilCharge > 0)
@@ -299,26 +340,56 @@ void PokeRadar_OnStep(void)
     PlayerGetDestCoords(&px, &py);
     behavior = MapGridGetMetatileBehaviorAt(px, py);
 
-    /* Patch-step detection: if the player just stepped onto one of the
-     * patch tiles, flag the next encounter as a forced patch encounter.
-     * We also sweep the sprites now so the visual disappears instantly. */
-    if ((r->flags & POKE_RADAR_FLAG_PATCHES_ACTIVE)
-        && IsPositionOccupiedByPatch(r, px, py))
-    {
-        r->flags |= POKE_RADAR_FLAG_FROM_PATCH_ENCOUNTER;
-        PokeRadar_ClearPatches();
-        return;
-    }
-
     /* Off-grass detection: stepping onto a non-tall-grass tile breaks the
-     * chain. This is the primary chain-break vector besides wild-battle
-     * outcomes. We only care if the player has an active chain or active
-     * patches — otherwise it's a normal step with no radar state to clear. */
+     * chain and removes the patches. This is the primary chain-break vector
+     * besides wild-battle outcomes. We only care if the player has an
+     * active chain or active patches — otherwise it's a normal step with no
+     * radar state to clear. (A patch tile is always tall grass, so a step
+     * into a patch never gets here.) */
     if (!MetatileBehavior_IsTallGrass(behavior))
     {
         if (r->chainCount > 0 || (r->flags & POKE_RADAR_FLAG_PATCHES_ACTIVE))
             PokeRadar_BreakChain();
     }
+}
+
+bool8 PokeRadar_TryStartPatchBattle(void)
+{
+    /* Called from ProcessPlayerFieldInput on the frame a step ends, in
+     * place of the random wild encounter roll, once nothing earlier (a
+     * trainer, a script, a sign) has taken the step. If the player now
+     * stands on a live patch, start its wild battle and return TRUE: the
+     * overworld then stops handling input, as for any battle. Otherwise
+     * return FALSE and the random roll goes ahead as usual.
+     *
+     * Map coordinates here (PlayerGetDestCoords, patchX/patchY) include
+     * the 7-tile margin the engine keeps around every map (MAP_OFFSET),
+     * so they match the ones PokeRadar_Activate stored. */
+    struct PokeRadar *r = PokeRadar_Get();
+    s16 px, py;
+
+    PlayerGetDestCoords(&px, &py);
+    if (!IsPositionOccupiedByPatch(r, px, py))
+        return FALSE;
+
+    /* The flag must be set before the Pokemon is made: GenerateWildMon
+     * reads it to pick the chain species. PokeRadar_OnBattleEnd clears it
+     * when the battle is over. */
+    r->flags |= POKE_RADAR_FLAG_FROM_PATCH_ENCOUNTER;
+    if (!PokeRadarWildEncounter())
+    {
+        /* No battle after all (a map without grass Pokemon, or wild
+         * battles switched off): the patch stays, and so does the rule
+         * that the flag is 0 outside a patch battle. */
+        r->flags &= ~POKE_RADAR_FLAG_FROM_PATCH_ENCOUNTER;
+        return FALSE;
+    }
+
+    /* The battle's screen transition has only just begun, on the field, so
+     * removing the four shaking sprites now makes them vanish as the player
+     * lands in the grass. */
+    PokeRadar_ClearPatches();
+    return TRUE;
 }
 
 void PokeRadar_OnEncounterStart(u16 species)

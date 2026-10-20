@@ -244,8 +244,9 @@ int ProcessPlayerFieldInput(struct FieldInput *input)
         RunMassageCooldownStepCounter();
         IncrementResortGorgeousStepCounter();
         IncrementBirthIslandRockStepCount();
-        /* PokeRadar per-step tick: recharge counter, detect step-onto-patch
-         * for forced encounters, and break the chain on stepping off grass. */
+        /* PokeRadar per-step tick: recharge counter, and break the chain
+         * on stepping off grass. A step into a shaking patch is handled
+         * below, where the random encounter roll would be. */
         PokeRadar_OnStep();
         if (TryStartStepBasedScript(&position, metatileBehavior, playerDirection) == TRUE)
         {
@@ -267,6 +268,16 @@ int ProcessPlayerFieldInput(struct FieldInput *input)
             GetPlayerPosition(&position);
             metatileBehavior = MapGridGetMetatileBehaviorAt(position.x, position.y);
         }
+    }
+    /* PokeRadar: a step that ends on one of its shaking grass patches
+     * starts the patch's wild battle here, in place of the random encounter
+     * roll just below (src/poke_radar.c, PATCH BATTLES). Everything above
+     * keeps its turn first: if a trainer, a script or a sign took this
+     * step, we never get here and the patch stays. */
+    if (input->tookStep && PokeRadar_TryStartPatchBattle() == TRUE)
+    {
+        gFieldInputRecord.checkStandardWildEncounter = TRUE;
+        return TRUE;
     }
     if (input->checkStandardWildEncounter && CheckStandardWildEncounter(metatileAttributes) == TRUE)
     {
