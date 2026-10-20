@@ -28,6 +28,14 @@ the run's result. A card shows all of it. A video without a notes file
 A notes file that can't be read or used gets that card too, saying so: no
 single file can break the page.
 
+`recording_notes.py add-notes` gives such an old video notes later. Its
+notes file has null for what nobody knows any more (the branch, commit
+and result) and a notes_added_at time, so its card says "notes added
+<date>" (this machine's time, to the minute) where a result would be, and
+makes no claim about how the run ended. Its recorded_at is the time in
+the video's name, else the video's modification time, so the card stays
+where it was on the page.
+
 Run with no arguments it serves port 8080, as autodev-recordings.service
 does. To preview a branch's page, run it in that checkout on a spare port:
   python3 test/serve_recordings.py --port 8081

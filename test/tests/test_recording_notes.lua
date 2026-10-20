@@ -1,7 +1,8 @@
 -------------------------------------------------------------------------------
 -- test_recording_notes.lua: recordings carry notes, the recordings page
--- shows them, and autodev's sessions must write them (issues #110 and #111,
--- part of #103)
+-- shows them, autodev's sessions must write them (issues #110 and #111,
+-- part of #103), and recordings kept before notes existed can get notes
+-- without moving on the page (issue #122, part of #120)
 -------------------------------------------------------------------------------
 -- A recording's notes say which ticket, feature (the parent issue) and PR it
 -- belongs to, what it tests, what the problem was and what you should see.
@@ -63,6 +64,41 @@
 --   D7  set-pr sets "pr" in an existing notes file in either folder (kept
 --       first, as on the page), leaving the rest as it was. It refuses a
 --       name with no notes file, a PR that isn't a number, and a path.
+--
+-- N1 to N7 are issue #122's: `recording_notes.py add-notes NAME NOTES
+-- [--test TEST] [--kept DIR]` gives notes to a recording kept before notes
+-- existed. Its commands run in Sydney's time (SYDNEY below), so a UTC
+-- offset shows, and changes with summer time.
+--
+--   N1  On test_x_20261017_120000.mp4, recorded_at is 2026-10-17T12:00:00
+--       with that date's offset (+11:00), whatever the video's modification
+--       time; a July stamp gets +10:00. The test is --test's path from the
+--       repo root (null without --test); the ticket, parent, PR and notes
+--       are the notes'; branch, commit, uncommitted_changes and result are
+--       null; notes_added_at, last, is now with this machine's offset.
+--   N2  On issue-24-safety-net.mp4, which has no stamp, recorded_at is the
+--       video's modification time, and so it is for an impossible stamp
+--       (month 13). A test outside the repo is its full path.
+--   N3  A folder modelled on ~/recordings: stamped and unstamped names, a
+--       stamped video modified hours after its stamp, and a newer video
+--       whose notes file the helper's write made. Every video without a
+--       notes file gets notes, the page's cards keep their order, and the
+--       written notes file stays as it was.
+--   N4  Such a card has its ticket as title, "Part of #22 ..." and "PR
+--       #33", the three notes, its test and "notes added <date>" (to the
+--       minute, as "Recorded"), and no result, branch or commit, and no
+--       "No notes for this recording.". A notes_added_at the page can't
+--       read makes the notes file unreadable (a C7 fixture).
+--   N5  Refused, with a message, every file in the folder staying byte for
+--       byte as it was: a name with no video, a video whose notes file
+--       record_test.sh wrote, a video with an unreadable notes file, notes
+--       missing a section (every problem listed), and a path.
+--   N6  add-notes again on a video it gave notes rewrites them with the new
+--       text, keeping recorded_at though the video was touched since.
+--   N7  In a ticket session for #90, add-notes accepts notes naming
+--       ticket: 24 with no parent:; in a fix-up session they don't get its
+--       PR. record_test.sh --check (and the helper's check) still refuses
+--       the same notes for a recording in that session.
 --
 -- THE PAGE FIXTURES are tiny videos of zeros, each with a notes file
 -- written by the helper (so the page is checked against the format the

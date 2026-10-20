@@ -28,6 +28,12 @@ record_test.sh:
       as it was. It looks in ~/recordings first, then /tmp/mgba-recordings,
       as the recordings page does; --kept and --scratch name other folders.
       A ticket session runs it once its PR is open (see AUTODEV SESSIONS).
+  python3 test/tools/recording_notes.py add-notes NAME NOTES [--test TEST] [--kept DIR]
+      Give notes NOTES ("-" reads stdin) to the recording named NAME (as
+      the recordings page shows it, with or without .mp4), one kept before
+      notes existed, by writing NAME.json beside NAME.mp4 in ~/recordings
+      (--kept names another folder). TEST is the test it recorded. See OLD
+      RECORDINGS.
 
 record_test.sh writes the notes file into its run's own directory as the
 recording starts (once it has its turn), so the branch, commit and
@@ -69,7 +75,33 @@ session makes says what it is for:
 
 test/record_test.sh itself refuses to record without notes in a session. A
 ticket session records before its PR exists, so it runs set-pr after
-opening the PR. A person (no AUTODEV_ROLE) sees none of this.
+opening the PR. A person (no AUTODEV_ROLE) sees none of this. add-notes
+doesn't follow these rules either (see OLD RECORDINGS).
+
+OLD RECORDINGS: videos kept before notes existed (#110) have no notes
+file, so their cards have no notes. add-notes gives one notes, without
+moving it on the recordings page, which lists the newest first:
+
+  - "recorded_at" comes from the stamp record_test.sh ends a video's name
+    with (_YYYYMMDD_HHMMSS, when the recording started), in this machine's
+    time with that date's UTC offset. With no valid stamp it is the
+    video's modification time, which is when the recording ended (mv and
+    test/tools/shrink_recordings.sh keep it). It is never the time the
+    notes are added, which would list the video as the newest.
+  - What nobody knows any more is null: "branch", "commit",
+    "uncommitted_changes" and "result". "test" is TEST's path (as for
+    write), or null without --test. "notes_added_at" says when the notes
+    were written, and the page's card says "notes added <date>" in place
+    of a result.
+  - It refuses, saying why and changing nothing: a name with no such video
+    in the folder; a video whose notes file record_test.sh wrote (one with
+    no "notes_added_at": every fresh recording has one); a notes file it
+    can't read; and notes the parser refuses, listing every problem.
+  - It may rewrite a notes file it wrote itself, to fix the notes, keeping
+    its "recorded_at".
+  - An autodev session's rules (see AUTODEV SESSIONS) don't apply, because
+    an old video belongs to an old ticket. Refusing notes files
+    record_test.sh wrote is what keeps it off fresh recordings.
 
 THE NOTES FILE is JSON. What the notes don't give is null:
 
@@ -97,6 +129,10 @@ THE NOTES FILE is JSON. What the notes don't give is null:
   - "result" is the test's own pass and fail counts, from the results file
     test/lib/framework.lua writes when a test finishes, and null when there
     is none: the test didn't finish.
+  - "notes_added_at", the last field, is only in a notes file add-notes
+    wrote: when it wrote it, with this machine's UTC offset (e.g.
+    "2026-10-21T14:05:33+11:00"). record_test.sh never writes it. See OLD
+    RECORDINGS.
 
 The recordings page reads this format itself, without importing this
 file (see its ONE SELF-CONTAINED FILE), so test/tests/
