@@ -9,6 +9,7 @@ from autodev.board import issue_numbers, section
 from autodev.decide import (HANDLED_THROUGH, MARKER, PARKED, FixupOutcome,
                             GrillOutcome, MergeOutcome, PrComment, PullRequest,
                             Ticket, TicketOutcome, merge_cancelled)
+from autodev.gh import GhError
 from autodev.worktrees import branch_prefix
 
 # The grill session marks its design comment with this hidden tag
@@ -23,6 +24,9 @@ mutation SetStatus($board: ID!, $item: ID!, $field: ID!, $option: String!) {
   }
 }
 """
+
+# What GitHub says when asked to change an archived card.
+ARCHIVED = "The item is archived and cannot be updated"
 
 ADD_TO_BOARD = """
 mutation AddToBoard($board: ID!, $issue: ID!) {
@@ -49,12 +53,13 @@ class GitHub:
 
     def sub_issues(self, parent):
         """{number: is_open} for each of `parent`'s sub-issues that is one of
-        its tickets: its "## Parent" section names `parent`, as on the
-        board. A sub-issue the owner linked by hand isn't one."""
+        its tickets: the first issue its "## Parent" section names is
+        `parent`, as on the board. A sub-issue the owner linked by hand
+        isn't one."""
         subs = self.gh.rest_list("repos/%s/issues/%d/sub_issues"
                                  % (self.config.repo, parent))
         return {s["number"]: s["state"] == "open" for s in subs
-                if parent in issue_numbers(section(s["body"], "Parent"))}
+                if issue_numbers(section(s["body"], "Parent"))[:1] == [parent]}
 
     # ── actions ───────────────────────────────────────────────────────────
 
@@ -62,9 +67,17 @@ class GitHub:
         self._set_item_status(self.items[issue].item_id, status)
 
     def _set_item_status(self, item_id, status):
-        self.gh.graphql(SET_STATUS, board=self.board.id, item=item_id,
-                        field=self.board.status_field_id,
-                        option=self.board.status_options[status])
+        try:
+            self.gh.graphql(SET_STATUS, board=self.board.id, item=item_id,
+                            field=self.board.status_field_id,
+                            option=self.board.status_options[status])
+        except GhError as e:
+            # The board archives a card as its issue closes, so a card read
+            # at the start of the tick may be archived by the time its
+            # Status is set, just after the tick closed its issue. It's off
+            # the board, so there's no Status left to keep.
+            if ARCHIVED not in str(e):
+                raise
 
     def close_issue(self, issue):
         self.gh.rest("PATCH", "repos/%s/issues/%d" % (self.config.repo, issue),

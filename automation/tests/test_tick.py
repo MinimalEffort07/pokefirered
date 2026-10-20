@@ -21,6 +21,9 @@ CONFIG = Config(
     repo="MinimalEffort07/pokefirered",
     board_title="pokefirered autodev",
 )
+# For read_state: a clone with no worktrees beside it.
+NO_CLONE = Config(owner="MinimalEffort07", repo="MinimalEffort07/pokefirered",
+                  board_title="pokefirered autodev", clone="/nonexistent/clone")
 
 
 def run_tick(fixture):
@@ -157,9 +160,8 @@ class ReadState(unittest.TestCase):
             Item(90, "MinimalEffort07-Autodev", "Todo", True),
             Item(91, "MinimalEffort07-Autodev", "In review", True),
         ], 0)
-        config = Config(owner="MinimalEffort07", repo="MinimalEffort07/pokefirered",
-                        board_title="pokefirered autodev", clone="/nonexistent/clone")
-        code, state = read_state(github, config, snapshot, FakeRegistry(), io.StringIO())
+        code, state = read_state(github, NO_CLONE, snapshot, FakeRegistry(),
+                                 io.StringIO())
         self.assertEqual(code, 0)
         self.assertEqual(github.asked, [
             ("pr", 88, True), ("parked_at", 88), ("pr", 89, True),
@@ -183,10 +185,8 @@ class ReadState(unittest.TestCase):
             Item(63, "MinimalEffort07", "In progress", False, is_open=False),
             Item(64, "someone-else", "Todo", False),
         ], 0)
-        config = Config(owner="MinimalEffort07", repo="MinimalEffort07/pokefirered",
-                        board_title="pokefirered autodev", clone="/nonexistent/clone")
         log = io.StringIO()
-        code, state = read_state(github, config, snapshot, FakeRegistry(), log)
+        code, state = read_state(github, NO_CLONE, snapshot, FakeRegistry(), log)
         self.assertEqual(code, 1)
         self.assertEqual(github.asked, [
             ("sub_issues", 45), ("sub_issues", 46), ("sub_issues", 61)])

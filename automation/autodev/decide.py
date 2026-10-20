@@ -131,10 +131,10 @@ class State:
     parked_at: dict = field(default_factory=dict)
     # Tickets that have a worktree
     worktrees: frozenset = frozenset()
-    # {number: is_open} for the tickets among each sub-issue of the owner's
-    # open parents in Todo or In progress, by parent. The board's
+    # For each of the owner's open parents in Todo or In progress, the
+    # tickets among its sub-issues, as {number: is_open}. The board's
     # "Auto-archive items" workflow archives a ticket's card as it closes,
-    # and archived cards aren't read, so these are how a parent's closed
+    # and archived cards aren't read, so this is how a parent's closed
     # tickets are known. A parent GitHub couldn't report this tick is
     # missing.
     sub_issues: dict = field(default_factory=dict)
@@ -237,9 +237,10 @@ def plan(state):
     a group when one of its actions fails, but carries on with the others,
     so one broken issue can't stall the whole board."""
     groups = []
+    on_board = {i.number for i in state.items}
     for session in state.sessions:
         if not session.running and session.role in DONE_CHECKS:
-            groups.append(_on_board(state, _keep_paused(
+            groups.append(_without_gone_cards(on_board, _keep_paused(
                 state, session.issue, _finished(state, session))))
     free = state.max_sessions - sum(1 for s in state.sessions if s.running)
     has_session = {s.issue for s in state.sessions}
@@ -288,7 +289,6 @@ def plan(state):
             ready.append((_priority("ticket", item, places), []))
     # A ticket closed by hand usually leaves the board before any tick sees
     # its card closed, so its worktree is found from the worktrees instead.
-    on_board = {i.number for i in state.items}
     groups += [[RemoveWorktree(n)] for n in sorted(state.worktrees - on_board)
                if n in state.closed and n not in has_session]
     # While a usage limit lasts nothing starts, including the moment it is
@@ -309,13 +309,16 @@ RANKS = {"merge": 0, "fixup": 1, "ticket": 2, "grill": 3}
 
 
 def _places(state):
-    """Each parent's place in line: the number of its lowest ticket on the
-    board, open or closed (#102). Issue numbers only go up, so the parent
-    whose first ticket is lowest was grilled first, whatever its own number:
-    an old issue added to the board late lines up behind the features
-    already in flight. Only tickets the owner or the bot wrote count, so
-    nobody else can move a parent up by naming it in an issue of theirs."""
-    places = {}
+    """Each parent's place in line: the number of its lowest ticket, open or
+    closed (#102), on the board or among its sub-issues (whose closed cards
+    the board archives). Issue numbers only go up, so the parent whose
+    first ticket is lowest was grilled first, whatever its own number: an
+    old issue added to the board late lines up behind the features already
+    in flight. Only tickets the owner or the bot wrote count, so nobody
+    else can move a parent up by naming it in an issue of theirs; only
+    someone who can write to the repo can link a sub-issue."""
+    places = {parent: min(tickets) for parent, tickets in state.sub_issues.items()
+              if tickets}
     for i in state.items:
         if i.has_parent and i.parent is not None and _trusted(state, i):
             places[i.parent] = min(places.get(i.parent, i.number), i.number)
@@ -342,12 +345,17 @@ def _new_parent(state, item):
     # and trust"); anything else is parked without its text being read.
     if item.author != state.owner:
         return _untrusted(state, item)
-    if (("grill", item.number) not in state.requeued
-            and _tickets(state, item.number)):
-        # It has tickets and its grill wasn't cut short, so it was grilled
-        # already: the owner moved it from Paused back to Todo, which means
-        # "carry on" (D8).
-        return [SetStatus(item.number, IN_PROGRESS)]
+    if ("grill", item.number) not in state.requeued:
+        if _tickets(state, item.number):
+            # It has tickets and its grill wasn't cut short, so it was
+            # grilled already: the owner moved it from Paused back to Todo,
+            # which means "carry on" (D8).
+            return [SetStatus(item.number, IN_PROGRESS)]
+        if item.number not in state.sub_issues:
+            # Its tickets' cards may all be archived, and GitHub couldn't
+            # say this tick. Grilling it again would make every ticket
+            # twice, so it waits for a tick that can tell.
+            return []
     # Launch first: if the Status update then fails, the session record
     # still stops a second launch on the next tick.
     return [Launch("grill", item.number), SetStatus(item.number, GRILLING)]
@@ -454,8 +462,9 @@ def merge_cancelled(owner, comments, merge_id):
 def _tickets(state, parent):
     """A parent's tickets, as {number: is_open}: the issues whose
     "## Parent" names it, among its sub-issues on GitHub (the grill links
-    every ticket as one) and on the board. The board alone isn't enough: it archives a
-    ticket's card as the ticket closes, and archived cards aren't read."""
+    every ticket as one) and on the board. The board alone isn't enough:
+    it archives a ticket's card as the ticket closes, and archived cards
+    aren't read."""
     tickets = dict(state.sub_issues.get(parent, {}))
     tickets.update((i.number, i.is_open) for i in state.items
                    if i.has_parent and i.parent == parent)
@@ -534,13 +543,13 @@ def _parked_ticket(state, item):
     return []
 
 
-def _on_board(state, actions):
+def _without_gone_cards(on_board, actions):
     """A finished session's actions, less the Status of any card no longer
-    on the board: the board archives a ticket's card as it closes, often
-    while its merge session is still finishing, and an archived card isn't
-    read, so there is nothing to set. Trying failed the rest of the group,
-    Finish included, so every tick tried again (2026-10-20)."""
-    on_board = {i.number for i in state.items}
+    on the board (`on_board` holds the issue numbers of the cards there):
+    the board archives a ticket's card as it closes, often while its merge
+    session is still finishing, and an archived card isn't read, so there
+    is nothing to set. Trying failed the rest of the group, Finish
+    included, so every tick tried again (2026-10-20)."""
     return [a for a in actions
             if not (isinstance(a, SetStatus) and a.issue not in on_board)]
 

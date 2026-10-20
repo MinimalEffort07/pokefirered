@@ -33,11 +33,15 @@ def ticket(number, status="Todo", parent=67, blocked_by=(), author=BOT,
 
 def state(items=(), sessions=(), outcomes=None, max_sessions=2, closed=(),
           prs=None, worktrees=(), sub_issues=None):
+    # Unless a test says otherwise, GitHub reported every parent's
+    # sub-issues, and none of them is a ticket.
+    if sub_issues is None:
+        sub_issues = {i.number: {} for i in items if not i.has_parent}
     return State(owner=OWNER, bot=BOT, items=list(items),
                  sessions=list(sessions), outcomes=outcomes or {},
                  max_sessions=max_sessions, closed=frozenset(closed),
                  prs=prs or {}, worktrees=frozenset(worktrees),
-                 sub_issues=sub_issues or {})
+                 sub_issues=sub_issues)
 
 
 class Plans(unittest.TestCase):
@@ -52,7 +56,7 @@ class Plans(unittest.TestCase):
             owner=OWNER, items=[item(60, status="Grilling"), item(61)],
             sessions=[Session("grill", 60, "sid-60", running=False,
                               result={"outcome": "done"})],
-            outcomes={60: outcome}))
+            outcomes={60: outcome}, sub_issues={61: {}}))
         self.assertEqual(groups, [
             [LinkSubIssue(60, 70), SetStatus(60, "In progress"),
              Finish("grill", 60)],
@@ -156,6 +160,15 @@ class Tickets(unittest.TestCase):
             item(61, is_open=False), ticket(68, is_open=False),
             ticket(70, "Blocked", is_open=False)]))
         self.assertEqual([a for a in actions if isinstance(a, Launch)], [])
+
+    def test_a_parents_place_counts_tickets_whose_cards_left_the_board(self):
+        # One slot free. #74's first ticket, #70, is closed and its card was
+        # archived, but it still puts #74 ahead of #76 (first ticket #79).
+        self.assertEqual([a for a in decide(state(
+            [item(74, "In progress"), item(76, "In progress"),
+             ticket(79, parent=76), ticket(81, parent=74)],
+            sub_issues={74: {70: False, 81: True}, 76: {79: True}},
+            max_sessions=1)) if isinstance(a, Launch)], [Launch("ticket", 81)])
 
     def test_D6_free_slots_go_to_the_top_items_by_priority(self):
         # Tickets before grills, and among tickets the parent grilled first:
@@ -531,7 +544,7 @@ class Parents(unittest.TestCase):
         # Its board tickets are all closed, but GitHub may know an open one.
         self.assertEqual(decide(state([
             item(67, status="In progress"),
-            ticket(68, "Done", parent=67, is_open=False)])), [])
+            ticket(68, "Done", parent=67, is_open=False)], sub_issues={})), [])
 
 
 class Pausing(unittest.TestCase):
@@ -562,6 +575,15 @@ class Pausing(unittest.TestCase):
         # Its tickets all closed while it was paused, and the board archived
         # their cards. Its sub-issues show it was grilled.
         self.assertEqual(decide(state([item(67)], sub_issues={67: {68: False}})),
+                         [SetStatus(67, "In progress")])
+
+    def test_a_parent_in_todo_whose_sub_issues_couldnt_be_read_waits(self):
+        # With no tickets on the board, nothing says whether it was grilled
+        # already, and grilling it twice would make every ticket twice.
+        # One with a ticket on the board was grilled, whatever GitHub says.
+        self.assertEqual(decide(state([item(67)], sub_issues={})), [])
+        self.assertEqual(decide(state([item(67), ticket(68, "Done", is_open=False)],
+                                      sub_issues={})),
                          [SetStatus(67, "In progress")])
 
     def test_a_requeued_grill_is_grilled_again_though_some_tickets_exist(self):
