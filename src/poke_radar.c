@@ -68,6 +68,42 @@
  *   return the created `spriteId` via `FieldEffectStart`'s result path so
  *   we can track each patch for later destruction.
  *
+ * FIELD RELOAD (and why a stored sprite id is checked before it is used):
+ *   The GBA draws every moving picture (the player, the NPCs, the shaking
+ *   grass) as a "sprite": a small image the hardware places anywhere on
+ *   screen, described by an entry in its OAM table (Object Attribute
+ *   Memory). The game keeps its own table of sprites, gSprites[], with
+ *   MAX_SPRITES (64) slots, and copies it into OAM every frame. Each patch
+ *   is one slot, and the struct keeps the slot's number (patchSpriteId) so
+ *   the patch can be removed later. But a slot number is only a seat
+ *   number: it says nothing about who sits there now.
+ *
+ *   The field (the overworld) empties all 64 slots whenever it is rebuilt
+ *   (ResumeMap in src/overworld.c calls ResetSpriteData) and then makes the
+ *   sprites it needs again from scratch. That happens on coming back from
+ *   a full-screen menu such as the BAG or POKEMON (those screens clear the
+ *   sprite table for their own pictures), on Continue, and on every warp.
+ *   A battle clears it too. The patches' tiles and flag survive in
+ *   SaveBlock1, but their sprites are gone, and their old slot numbers may
+ *   now belong to anything: an NPC's tall grass, the follower, the player,
+ *   or during a battle one of the battle's sprites.
+ *
+ *   So, once the objects' sprites exist again, every rebuild calls
+ *   PokeRadar_OnFieldReload (from InitObjectEventsLocal,
+ *   ReloadObjectsAndRunReturnToFieldMapScript and InitObjectEventsLink):
+ *     - on the patches' own map (patchMapGroup/patchMapNum), each patch
+ *       gets a fresh shaking-grass sprite on its tile, and its new slot
+ *       number is stored;
+ *     - on any other map, the patches are forgotten: the flag is cleared
+ *       and the slots set to "none", and no sprite is stopped, since none
+ *       of the sprites there is ours. Coming back to the first map does
+ *       not bring them back.
+ *   And PokeRadar_ClearPatches stops a sprite only if it is one of the
+ *   radar's own live patches (IsOwnPatchSprite: in use, and made from the
+ *   shaking grass's sprite template). Any other stored slot is just
+ *   forgotten: stopping it would destroy whatever sprite sits there now,
+ *   the player's own, say, or a battle sprite at the end of a battle.
+ *
  * HOOKS (files outside this module):
  *   - src/new_game.c       : grant item + init struct on new game
  *   - src/load_save.c      : ensure-init + grant item on pre-existing saves
@@ -78,12 +114,15 @@
  *   - src/field_control_avatar.c : per-step tick for recharge + off-grass
  *                            break, and the patch battle in place of the
  *                            random encounter roll
+ *   - src/overworld.c      : bring the patches back, or forget them, when
+ *                            the field is rebuilt (FIELD RELOAD)
  * ============================================================================
  */
 
 #include "global.h"
 #include "gflib.h"
 #include "event_data.h"
+#include "event_object_movement.h"
 #include "field_effect.h"
 #include "field_player_avatar.h"
 #include "fieldmap.h"
@@ -179,6 +218,50 @@ static bool8 IsPositionOccupiedByPatch(struct PokeRadar *r, s16 x, s16 y)
     return FALSE;
 }
 
+/* Is sprite slot `spriteId` one of the radar's own live patches? It must be
+ * in use and made from the template FldEff_UnusedGrass makes its sprites
+ * from: nothing else in the game uses that template, so this tells our
+ * patches apart from whatever sprite took a stale slot (FIELD RELOAD in the
+ * overview). CreateSprite stores the template's address in the sprite. */
+static bool8 IsOwnPatchSprite(u8 spriteId)
+{
+    return spriteId < MAX_SPRITES
+        && gSprites[spriteId].inUse
+        && gSprites[spriteId].template == gFieldEffectObjectTemplatePointers[FLDEFFOBJ_UNUSED_GRASS];
+}
+
+/* Forget every patch without touching any sprite: no patch tiles, no slot
+ * numbers, PATCHES_ACTIVE cleared. */
+static void ForgetPatches(struct PokeRadar *r)
+{
+    u8 i;
+    for (i = 0; i < POKE_RADAR_PATCH_COUNT; i++)
+    {
+        r->patchSpriteId[i] = PATCH_SPRITE_NONE;
+        r->patchX[i] = 0;
+        r->patchY[i] = 0;
+    }
+    r->patchMapGroup = 0;
+    r->patchMapNum = 0;
+    r->flags &= ~POKE_RADAR_FLAG_PATCHES_ACTIVE;
+}
+
+/* Start one shaking-grass field effect on map tile (x, y) (in the engine's
+ * coordinates, with the MAP_OFFSET margin). Returns its sprite slot, or
+ * PATCH_SPRITE_NONE if every slot was taken. */
+static u8 SpawnPatchSprite(s16 x, s16 y)
+{
+    u32 spriteId;
+    gFieldEffectArguments[0] = x;
+    gFieldEffectArguments[1] = y;
+    gFieldEffectArguments[2] = 0;   /* sprite subpriority */
+    gFieldEffectArguments[3] = 2;   /* OAM priority */
+    spriteId = FieldEffectStart(FLDEFF_UNUSED_GRASS);
+    if (spriteId >= MAX_SPRITES)
+        return PATCH_SPRITE_NONE;
+    return spriteId;
+}
+
 void PokeRadar_ClearPatches(void)
 {
     struct PokeRadar *r = PokeRadar_Get();
@@ -190,7 +273,9 @@ void PokeRadar_ClearPatches(void)
     for (i = 0; i < POKE_RADAR_PATCH_COUNT; i++)
     {
         u8 spriteId = r->patchSpriteId[i];
-        if (spriteId < MAX_SPRITES && gSprites[spriteId].inUse)
+        /* Only our own sprite: a stored slot may hold another sprite by now
+         * (FIELD RELOAD in the overview), and that one is left alone. */
+        if (IsOwnPatchSprite(spriteId))
         {
             /* FieldEffectStop frees the sprite AND releases its tile/palette
              * allocations; ActiveListRemove removes one entry for the fldeff.
@@ -198,11 +283,48 @@ void PokeRadar_ClearPatches(void)
              * so we must Stop once per patch. */
             FieldEffectStop(&gSprites[spriteId], FLDEFF_UNUSED_GRASS);
         }
-        r->patchSpriteId[i] = PATCH_SPRITE_NONE;
-        r->patchX[i] = 0;
-        r->patchY[i] = 0;
     }
-    r->flags &= ~POKE_RADAR_FLAG_PATCHES_ACTIVE;
+    ForgetPatches(r);
+}
+
+void PokeRadar_OnFieldReload(void)
+{
+    /* Called by src/overworld.c each time the field has been rebuilt, once
+     * the objects' sprites exist again (see FIELD RELOAD in the overview).
+     * The rebuild freed every sprite, the patches' with them, so the
+     * stored slot numbers name nothing of ours: they are replaced or
+     * forgotten here, never stopped. */
+    struct PokeRadar *r = PokeRadar_Get();
+    u8 i, live = 0;
+
+    if (!(r->flags & POKE_RADAR_FLAG_PATCHES_ACTIVE))
+        return;
+
+    if (r->patchMapGroup != gSaveBlock1Ptr->location.mapGroup
+     || r->patchMapNum != gSaveBlock1Ptr->location.mapNum)
+    {
+        ForgetPatches(r);
+        return;
+    }
+
+    for (i = 0; i < POKE_RADAR_PATCH_COUNT; i++)
+    {
+        if (r->patchSpriteId[i] == PATCH_SPRITE_NONE)
+            continue;
+        r->patchSpriteId[i] = SpawnPatchSprite(r->patchX[i], r->patchY[i]);
+        if (r->patchSpriteId[i] != PATCH_SPRITE_NONE)
+        {
+            live++;
+        }
+        else
+        {
+            /* No free slot: that tile stops being a patch. */
+            r->patchX[i] = 0;
+            r->patchY[i] = 0;
+        }
+    }
+    if (live == 0)
+        ForgetPatches(r);
 }
 
 void PokeRadar_BreakChain(void)
@@ -212,8 +334,6 @@ void PokeRadar_BreakChain(void)
     r->chainCount = 0;
     r->chainSpecies = SPECIES_NONE;
     r->flags &= ~POKE_RADAR_FLAG_FROM_PATCH_ENCOUNTER;
-    r->chainMapGroup = 0;
-    r->chainMapNum = 0;
 }
 
 void PokeRadar_Activate(void)
@@ -270,24 +390,13 @@ void PokeRadar_Activate(void)
     }
 
     /* Spawn up to POKE_RADAR_PATCH_COUNT shaking-grass field effects. */
-    for (i = 0; i < POKE_RADAR_PATCH_COUNT; i++)
-    {
-        r->patchSpriteId[i] = PATCH_SPRITE_NONE;
-        r->patchX[i] = 0;
-        r->patchY[i] = 0;
-    }
-
+    ForgetPatches(r);
     for (i = 0, j = 0; i < POKE_RADAR_PATCH_COUNT && i < nCand; i++)
     {
-        u32 spriteId;
-        gFieldEffectArguments[0] = candX[i];
-        gFieldEffectArguments[1] = candY[i];
-        gFieldEffectArguments[2] = 0;   /* elevation */
-        gFieldEffectArguments[3] = 2;   /* OAM priority */
-        spriteId = FieldEffectStart(FLDEFF_UNUSED_GRASS);
-        if (spriteId < MAX_SPRITES)
+        u8 spriteId = SpawnPatchSprite(candX[i], candY[i]);
+        if (spriteId != PATCH_SPRITE_NONE)
         {
-            r->patchSpriteId[j] = (u8)spriteId;
+            r->patchSpriteId[j] = spriteId;
             r->patchX[j] = candX[i];
             r->patchY[j] = candY[i];
             j++;
@@ -295,18 +404,19 @@ void PokeRadar_Activate(void)
     }
 
     if (j > 0)
+    {
         r->flags |= POKE_RADAR_FLAG_PATCHES_ACTIVE;
+        /* The patches belong to this map: a field rebuilt on any other
+         * map forgets them (PokeRadar_OnFieldReload). */
+        r->patchMapGroup = gSaveBlock1Ptr->location.mapGroup;
+        r->patchMapNum = gSaveBlock1Ptr->location.mapNum;
+    }
     r->flags &= ~POKE_RADAR_FLAG_FROM_PATCH_ENCOUNTER;
 
     /* Consume the charge and arm the recharge counter. */
     if (r->charges > 0)
         r->charges--;
     r->stepsUntilCharge = POKE_RADAR_RECHARGE_STEPS;
-
-    /* Record the map so the chain's map-binding is visible for diagnostics
-     * (we do not currently break chain on map change per the design spec). */
-    r->chainMapGroup = gSaveBlock1Ptr->location.mapGroup;
-    r->chainMapNum = gSaveBlock1Ptr->location.mapNum;
 }
 
 void PokeRadar_OnStep(void)
