@@ -154,12 +154,22 @@ end
 -- tile is free.
 local function arrive(name, map, x, y)
     fw.log(string.format("--- %s: warp to %d.%d (%d,%d) ---", name, map[1], map[2], x, y))
+    fw.speed_up()   -- the setup runs fast in the mGBA window; see watch_from_here
     if not fw.assert_true(follower.warp(map[1], map[2], x, y),
             string.format("%s: warped the player to (%d,%d)", name, x, y)) then
         return false
     end
     return fw.assert_true(follower.wait_still(300),
         name .. ": player and follower standing still before the start")
+end
+
+-- Start watching the follower (follower.new_watch) for scenario `name`. In
+-- the mGBA window (bash test/record_test.sh) the scenario plays in real time
+-- from here, so a recording shows each swap at its own speed; arrive()
+-- fast-forwards again. Headless runs are unaffected.
+local function watch_from_here(name)
+    fw.slow_down(name)
+    return follower.new_watch(name)
 end
 
 -- Assert where the player and the follower stand before a scenario starts.
@@ -233,6 +243,7 @@ local function w1()
     -- Walk down onto the exit (4,6). DOWN is let go as soon as the warp
     -- starts (SaveBlock1's location changes), so on Route 2 only the game's
     -- own step out of the cave moves the player.
+    fw.slow_down(name)
     local left = fw.hold_until("DOWN", function() return on_map(ROUTE2) end, 120, 1)
     if not fw.assert_true(left, "W1: walked onto Diglett's Cave's exit; the map becomes Route 2") then
         return
@@ -248,7 +259,7 @@ local function w1()
     if not fw.assert_true(spawned, "W1: Pikachu spawns on the player's tile, the cave mouth (17,11)") then
         return
     end
-    local watch = follower.new_watch(name)
+    local watch = watch_from_here(name)
     watch.attach()
     -- The game's own step out of the cave, south onto (17,12), then
     -- control comes back.
@@ -292,7 +303,7 @@ local function w2()
     end
     if not check_start(name, 6, 9, follower.DIR_NORTH, 6, 8) then return end
     follower.set_rng(SEED)
-    local watch = follower.new_watch(name)
+    local watch = watch_from_here(name)
 
     key_down("UP")
     local entered = watch.run_until(180, function() return on_map(HOUSE_1F) end)
@@ -327,7 +338,7 @@ local function w3()
     if not arrive(name, VIRIDIAN, 8, 14) then return end
     if not check_start(name, 8, 14, follower.DIR_SOUTH, 8, 13) then return end
     follower.set_rng(SEED)
-    local watch = follower.new_watch(name)
+    local watch = watch_from_here(name)
 
     local took = up_the_path(watch, { "B", "UP" }, 90)
     watch.finish()
@@ -350,7 +361,7 @@ local function w4()
     if not fw.assert_true(riding, "W4: the player arrives on the bicycle") then return end
     if not check_start(name, 8, 14, follower.DIR_SOUTH, 8, 13) then return end
     follower.set_rng(SEED)
-    local watch = follower.new_watch(name)
+    local watch = watch_from_here(name)
 
     local took = up_the_path(watch, { "UP" }, 90)
     watch.finish()
@@ -381,7 +392,7 @@ local function w5()
     if not fw.assert_true(ready, "W5: the player stands in the house with control") then return end
     if not check_start(name, 4, 8, follower.DIR_NORTH, 3, 8) then return end
     follower.set_rng(SEED)
-    local watch = follower.new_watch(name)
+    local watch = watch_from_here(name)
     fw.assert_true(watch.snap.warp(4, 8), "W5: the doormat (4,8) is a warp")
 
     -- LEFT: the player onto (3,8), Pikachu onto the doormat.
@@ -421,7 +432,7 @@ local function w6(seed)
     -- Pikachu 6 tiles up the path, and UP held from this same frame.
     follower.place(8, 8)
     follower.set_rng(seed)
-    local watch = follower.new_watch(name)
+    local watch = watch_from_here(name)
 
     key_down("UP")
     local reached = watch.run(240, function()
@@ -487,7 +498,7 @@ local function w8(how, seed)
     -- Pikachu up the path, and the keys held from this same frame.
     follower.place(8, setup.pikachu_y)
     follower.set_rng(seed)
-    local watch = follower.new_watch(name)
+    local watch = watch_from_here(name)
 
     local bumped = false
     for _, k in ipairs(setup.keys) do key_down(k) end
@@ -529,7 +540,7 @@ local function w9(how, keys)
     if not arrive(name, INDIGO, 11, 16) then return end
     if not check_start(name, 11, 16, follower.DIR_SOUTH, 11, 15) then return end
     follower.set_rng(SEED)
-    local watch = follower.new_watch(name)
+    local watch = watch_from_here(name)
     hold_until_swapped(watch, keys, 1, 90)
     watch.finish()
     check_swap(name, watch, how, 11, 16, 11, 15)
@@ -552,7 +563,7 @@ local function w10()
         return
     end
     follower.set_rng(SEED)
-    local watch = follower.new_watch(name)
+    local watch = watch_from_here(name)
 
     -- Uphill: UP (with B) into Pikachu, north of the player.
     hold_until_swapped(watch, "UP", 1, 90)
@@ -579,7 +590,7 @@ local function w7()
     end
     if not fw.assert_true(man ~= nil, "W7: the man stands at (21,28)") then return end
     follower.set_rng(SEED)
-    local watch = follower.new_watch(name)
+    local watch = watch_from_here(name)
 
     local moved = nil
     key_down("LEFT")
