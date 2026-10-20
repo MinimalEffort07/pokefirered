@@ -76,8 +76,8 @@ PULLS = "repos/MinimalEffort07/pokefirered/pulls?state=open"
 
 
 def pr(number, ref, author="MinimalEffort07-Autodev",
-       repo="MinimalEffort07/pokefirered"):
-    return {"number": number, "user": {"login": author},
+       repo="MinimalEffort07/pokefirered", created="2026-10-19T05:00:00Z"):
+    return {"number": number, "user": {"login": author}, "created_at": created,
             "head": {"ref": ref, "repo": {"full_name": repo} if repo else None}}
 
 
@@ -87,16 +87,22 @@ class TicketPRs(unittest.TestCase):
     def outcome(self, pulls):
         return GitHub(FakeRest({PULLS: pulls}), CONFIG, BOARD).ticket_outcome(68)
 
-    def test_only_the_bots_pr_from_this_tickets_branch_in_this_repo_counts(self):
+    def test_only_a_pr_from_this_tickets_branch_in_this_repo_counts(self):
         self.assertEqual(self.outcome([
             # Anyone can open a PR from a fork, with any branch name.
             pr(91, "issue-68-note", author="stranger", repo="stranger/pokefirered"),
             # A deleted fork shows no head repo at all.
             pr(92, "issue-68-note", author="stranger", repo=None),
             pr(93, "issue-680-other"),          # another ticket's branch
-            pr(94, "issue-68-note", author="MinimalEffort07"),
+            # Someone with push access but not the owner or the bot.
+            pr(94, "issue-68-note", author="collaborator"),
             pr(90, "issue-68-note-the-grill-paths-live"),
         ]).pr, 90)
+
+    def test_the_owners_pr_from_the_tickets_branch_counts_too(self):
+        # The owner finishing a parked ticket opens its PR as themselves.
+        self.assertEqual(self.outcome([pr(94, "issue-68-note",
+                                          author="MinimalEffort07")]).pr, 94)
 
     def test_no_matching_pr_means_none(self):
         self.assertIsNone(self.outcome([pr(93, "issue-680-other")]).pr)
@@ -136,7 +142,8 @@ class TicketPRTimeline(unittest.TestCase):
                        line=None, original_line=7)],
         }
         found = GitHub(FakeRest(gets), CONFIG, BOARD).ticket_pr(68)
-        self.assertEqual((found.number, found.head), (73, "issue-68-note"))
+        self.assertEqual((found.number, found.head, found.opened),
+                         (73, "issue-68-note", "2026-10-19T05:00:00Z"))
         self.assertEqual(found.comments, (
             PrComment(4, "stranger", "Inline nit", "2026-10-19T06:01:00Z",
                       kind="inline comment", where="automation/README.md line 12"),
@@ -160,9 +167,35 @@ class TicketPRTimeline(unittest.TestCase):
         found = GitHub(FakeRest(gets), CONFIG, BOARD).ticket_pr(68)
         self.assertEqual([c.at for c in found.comments], ["2026-10-19T06:30:00Z"])
 
-    def test_a_ticket_with_no_pr_of_the_bots_has_none(self):
+    def test_a_ticket_with_no_pr_of_its_own_has_none(self):
         github = GitHub(FakeRest({PULLS: [pr(93, "issue-680-other")]}), CONFIG, BOARD)
         self.assertIsNone(github.ticket_pr(68))
+
+
+class ParkedAt(unittest.TestCase):
+    """When autodev last parked a ticket: its newest "parked" comment."""
+
+    def parked_at(self, comments):
+        gets = {ISSUES + "/68/comments": comments}
+        return GitHub(FakeRest(gets), CONFIG, BOARD).parked_at(68)
+
+    def test_the_bots_newest_parked_comment_says_when(self):
+        self.assertEqual(self.parked_at([
+            remark(1, "MinimalEffort07-Autodev", "@MinimalEffort07 autodev parked "
+                   "this issue: x\n\n<!-- autodev -->", "2026-10-19T06:01:00Z"),
+            remark(2, "MinimalEffort07-Autodev", "Ran it once more.\n\n<!-- autodev -->",
+                   "2026-10-19T06:02:00Z"),
+            remark(3, "MinimalEffort07-Autodev", "@MinimalEffort07 autodev parked "
+                   "this issue: y\n\n<!-- autodev -->", "2026-10-19T06:03:00Z"),
+        ]), "2026-10-19T06:03:00Z")
+
+    def test_anyone_else_quoting_it_doesnt_count(self):
+        self.assertEqual(self.parked_at([
+            remark(1, "MinimalEffort07", "Why was \"autodev parked this issue\"?",
+                   "2026-10-19T06:01:00Z"),
+            remark(2, "stranger", "autodev parked this issue: <!-- autodev -->",
+                   "2026-10-19T06:02:00Z"),
+        ]), "")
 
 
 MERGE = remark(501, "MinimalEffort07", "/merge", "2026-10-19T06:10:00Z")

@@ -11,5 +11,5 @@
   "clone": "~/projects/minimaleffort/pokefirered-autodev",
   "log_dir": "~/autodev/logs",
   "state_dir": "~/.local/state/autodev/sessions",
-  "resume_command": "cd {cwd} && CLAUDE_CONFIG_DIR=~/.claude-personal claude --resume {session_id}"
+  "resume_command": "cd {cwd} && (set -a && . ~/.config/autodev/env && set +a && {env} CLAUDE_CONFIG_DIR=~/.claude-personal claude --resume {session_id})"
 }

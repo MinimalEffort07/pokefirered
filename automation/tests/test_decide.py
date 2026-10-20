@@ -179,6 +179,7 @@ def needs_human(reason):
     return Comment(61, (
         "@MinimalEffort07 autodev parked this issue: %s\n\n"
         "To pick up where the grill session stopped: `claude --resume sid-61`"
+        "\n\nOnce it's sorted, move the card back to `Todo`."
         "\n\n<!-- autodev -->") % reason)
 
 
@@ -282,6 +283,8 @@ class FinishedTickets(unittest.TestCase):
             "@MinimalEffort07 autodev parked this issue: %s\n\n"
             "To pick up where the ticket session stopped: "
             "`cd /clone-worktrees/issue-68 && claude --resume sid-68`"
+            "\n\nOnce it's sorted, it comes back by itself when its PR is "
+            "opened or you comment on its PR, or move the card back to `Todo`."
             "\n\n<!-- autodev -->") % reason), Finish("ticket", 68)]
 
     def test_D15_a_done_ticket_whose_pr_github_shows_goes_to_in_review(self):
@@ -677,7 +680,10 @@ class Crashes(unittest.TestCase):
             Comment(68, "@MinimalEffort07 autodev parked this issue: the ticket "
                         "session crashed a second time (systemd says "
                         "\u201csignal\u201d)\n\nTo pick up where the ticket session "
-                        "stopped: `cd /w && claude --resume sid-68`\n\n<!-- autodev -->"),
+                        "stopped: `cd /w && claude --resume sid-68`"
+                        "\n\nOnce it's sorted, it comes back by itself when its PR is "
+            "opened or you comment on its PR, or move the card back to `Todo`."
+                        "\n\n<!-- autodev -->"),
             Finish("ticket", 68, crashed=True),
         ])
 
@@ -735,6 +741,8 @@ class FinishedMerges(unittest.TestCase):
                 "answered about a conflict\n\n"
                 "To pick up where the merge session stopped: "
                 "`cd /clone-worktrees/issue-68 && claude --resume sid-m68`"
+                "\n\nOnce it's sorted, it comes back by itself when its PR is "
+            "opened or you comment on its PR, or move the card back to `Todo`."
                 "\n\n<!-- autodev -->"))])
 
     def test_a_merge_stopped_at_its_time_limit_needs_a_human(self):
@@ -786,6 +794,8 @@ class FinishedFixUps(unittest.TestCase):
                 "handling comment 9001\n\n"
                 "To pick up where the fix-up session stopped: "
                 "`cd /clone-worktrees/issue-68 && claude --resume sid-f68`"
+                "\n\nOnce it's sorted, it comes back by itself when its PR is "
+            "opened or you comment on its PR, or move the card back to `Todo`."
                 "\n\n<!-- autodev -->"))])
 
     def test_a_fix_up_that_replied_and_then_crashed_is_done(self):
@@ -809,6 +819,125 @@ class FinishedFixUps(unittest.TestCase):
     def test_a_fix_up_stopped_at_its_time_limit_needs_a_human(self):
         self.assertIn("the fix-up session hit its 90-minute time limit",
                       self.run_finished(None, ended_by="timeout")[1].body)
+
+
+class ResumeCommands(unittest.TestCase):
+    """The resume command in a parked comment reopens the session with what
+    issue.py needs to know it is that session: its role, its issue and, for
+    a merge or fix-up, its PR and the comment it answers. Without them the
+    resumed session can only read, so it could never finish the work."""
+
+    def parked_body(self, session):
+        return [a for a in decide(State(
+            owner=OWNER, bot=BOT, items=[ticket(68, "In progress")],
+            sessions=[session], outcomes={68: TicketOutcome(pr=None)
+                                          if session.role == "ticket"
+                                          else FixupOutcome(replied=False)},
+            resume_command="cd {cwd} && {env} claude --resume {session_id}"))
+            if isinstance(a, Comment)][0].body
+
+    def test_a_ticket_session_resumes_as_that_ticket_session(self):
+        body = self.parked_body(Session(
+            "ticket", 68, "sid-68", running=False,
+            result={"outcome": "failed", "reason": "stuck"}, cwd="/w"))
+        self.assertIn("`cd /w && AUTODEV_ROLE=ticket AUTODEV_ISSUE=68 "
+                      "claude --resume sid-68`", body)
+
+    def test_a_fix_up_session_also_gets_its_pr_and_comment(self):
+        body = self.parked_body(Session(
+            "fixup", 68, "sid-f68", running=False,
+            result={"outcome": "failed", "reason": "stuck"}, cwd="/w", pr=73,
+            handled_through=9001))
+        self.assertIn("`cd /w && AUTODEV_ROLE=fixup AUTODEV_ISSUE=68 AUTODEV_PR=73 "
+                      "AUTODEV_HANDLED_THROUGH=9001 claude --resume sid-f68`", body)
+
+    def test_the_configured_command_runs_as_the_bot_in_a_subshell(self):
+        # config.json's command: the bot's token (GH_TOKEN, from the env
+        # file) so gh and git act as the bot, as the session did; loaded in
+        # a subshell, so it doesn't stay in the owner's own shell.
+        # The raw file: its paths keep their ~ for the shell to expand.
+        import json
+        import os
+        path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
+        with open(path) as f:
+            raw = json.load(f)
+        command = raw["resume_command"].format(
+            cwd="/w", session_id="sid-68",
+            env="AUTODEV_ROLE=ticket AUTODEV_ISSUE=68")
+        self.assertRegex(command, r"^cd /w && \(.*\)$")
+        self.assertIn("set -a && . %s && set +a" % raw["env_file"], command)
+        self.assertIn("AUTODEV_ROLE=ticket AUTODEV_ISSUE=68 ", command)
+        self.assertIn("claude --resume sid-68", command)
+
+
+def parked(pr_comments=(), opened=1, parked_at=10, author=BOT, number=68):
+    """Ticket `number` in Needs human, autodev having parked it at
+    `parked_at` minutes in (None: nobody but the owner did), with its PR
+    opened at `opened` minutes in (None: no PR) saying `pr_comments`."""
+    prs = {} if opened is None else {number: PullRequest(
+        number=73, head="issue-%d-note" % number, comments=tuple(pr_comments),
+        opened="2026-10-19T06:%02d:00Z" % opened)}
+    return State(owner=OWNER, bot=BOT,
+                 items=[ticket(number, "Needs human", author=author)], prs=prs,
+                 parked_at={} if parked_at is None
+                 else {number: "2026-10-19T06:%02d:00Z" % parked_at})
+
+
+class ParkedTickets(unittest.TestCase):
+    """A ticket autodev parked in Needs human comes back once the owner has
+    dealt with it: they say so on its PR, or its PR appears (the owner, or
+    the resumed session, finished the work). Anything from before it was
+    parked is what it was parked over, so it never starts the work again."""
+
+    def test_the_owners_merge_on_its_pr_after_parking_launches_a_merge(self):
+        self.assertEqual(decide(parked([said(501, OWNER, "/merge", 20)])), [
+            MakeWorktree(68, "issue-68-note"),
+            Launch("merge", 68, pr=73, handled_through=501),
+            SetStatus(68, "In progress"),
+        ])
+
+    def test_the_owners_feedback_after_parking_launches_a_fix_up(self):
+        self.assertEqual(decide(parked([said(9001, OWNER, "Reword it.", 20)])), [
+            MakeWorktree(68, "issue-68-note"),
+            Launch("fixup", 68, pr=73, handled_through=9001),
+            SetStatus(68, "In progress"),
+        ])
+
+    def test_feedback_from_before_it_was_parked_does_not_start_it_again(self):
+        # A fix-up for it failed: that is why it was parked.
+        self.assertEqual(decide(parked([said(9001, OWNER, "Reword it.", 5)])), [])
+
+    def test_a_pr_opened_since_it_was_parked_sends_it_to_review(self):
+        # The resumed ticket session, or the owner, opened it.
+        self.assertEqual(decide(parked(opened=20)), [SetStatus(68, "In review")])
+
+    def test_its_pr_appearing_and_a_merge_after_parking_launch_the_merge(self):
+        # Issue #88: parked with no PR; then the PR, then the owner's /merge.
+        self.assertEqual(decide(parked([said(501, OWNER, "/merge", 30)], opened=20))[1],
+                         Launch("merge", 68, pr=73, handled_through=501))
+
+    def test_a_pr_that_was_open_when_it_was_parked_keeps_it_parked(self):
+        self.assertEqual(decide(parked(opened=1)), [])
+
+    def test_with_no_pr_it_stays_parked(self):
+        self.assertEqual(decide(parked(opened=None)), [])
+
+    def test_others_comments_on_its_pr_are_ignored(self):
+        for author in ("someone-else", BOT):
+            with self.subTest(author=author):
+                self.assertEqual(decide(parked([said(501, author, "/merge", 20)])), [])
+
+    def test_a_card_the_owner_moved_to_needs_human_is_left_alone(self):
+        # Autodev always comments when it parks something, so a card with no
+        # such comment is the owner's own; Paused is the stop switch, but
+        # this is theirs too.
+        self.assertEqual(decide(parked([said(501, OWNER, "/merge", 20)],
+                                       opened=20, parked_at=None)), [])
+
+    def test_someone_elses_ticket_stays_parked(self):
+        # Parked for its author (D2): nothing on a PR changes that.
+        self.assertEqual(decide(parked([said(501, OWNER, "/merge", 20)],
+                                       author="someone-else")), [])
 
 
 if __name__ == "__main__":

@@ -108,5 +108,62 @@ class TickLogsTheBoard(unittest.TestCase):
         self.assertEqual(gh.mutations, [])
 
 
+class FakeGitHub:
+    """read_state's view of GitHub: each ticket's PR and when it was parked,
+    recording what was asked for."""
+
+    def __init__(self, prs, parked):
+        self.prs, self.parked, self.asked = prs, parked, []
+
+    def ticket_pr(self, number, comments=True):
+        self.asked.append(("pr", number, comments))
+        return self.prs.get(number)
+
+    def parked_at(self, number):
+        self.asked.append(("parked_at", number))
+        return self.parked.get(number, "")
+
+
+class FakeRegistry:
+    def load(self, now=None):
+        return []
+
+    def paused_until(self):
+        return 0.0
+
+    def crashes(self):
+        return {}
+
+    def requeued(self):
+        return set()
+
+
+class ReadState(unittest.TestCase):
+    def test_a_parked_tickets_pr_and_when_it_was_parked_are_read(self):
+        # So the owner can hand it back from its PR. A ticket in review gets
+        # its PR's comments, one in Todo only whether it has a PR, and a
+        # parked one with no PR doesn't need its parked time.
+        from autodev.board import Board, Item
+        from autodev.decide import PullRequest
+        from autodev.dispatcher import read_state
+        pr = PullRequest(number=92, head="issue-88-note", opened="2026-10-20T00:07:22Z")
+        github = FakeGitHub({88: pr}, {88: "2026-10-19T21:05:37Z"})
+        snapshot = Board(3, "pokefirered autodev", [
+            Item(88, "MinimalEffort07-Autodev", "Needs human", True),
+            Item(89, "MinimalEffort07-Autodev", "Needs human", True),
+            Item(90, "MinimalEffort07-Autodev", "Todo", True),
+            Item(91, "MinimalEffort07-Autodev", "In review", True),
+        ], 0)
+        config = Config(owner="MinimalEffort07", repo="MinimalEffort07/pokefirered",
+                        board_title="pokefirered autodev", clone="/nonexistent/clone")
+        code, state = read_state(github, config, snapshot, FakeRegistry(), io.StringIO())
+        self.assertEqual(code, 0)
+        self.assertEqual(github.asked, [
+            ("pr", 88, True), ("parked_at", 88), ("pr", 89, True),
+            ("pr", 90, False), ("pr", 91, True)])
+        self.assertEqual(state.prs, {88: pr})
+        self.assertEqual(state.parked_at, {88: "2026-10-19T21:05:37Z"})
+
+
 if __name__ == "__main__":
     unittest.main()
