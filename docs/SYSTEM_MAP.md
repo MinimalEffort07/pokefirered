@@ -184,8 +184,8 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/lib/walk.lua` | Walks the player somewhere for real: plans a route over the loaded map and presses the D-pad one tile at a time. |
 | `test/lib/warp.lua` | Warps the player straight to a map, for tests and tools that don't need the walk. |
 | `test/lib/character_select.lua` | Boots a new game through Oak's speech to the character list. |
-| `test/lib/frame_capture.lua` | With `MGBA_FRAME_DIR` set, saves every second frame and its caption for a GIF. |
-| `test/lib/follower.lua` | The walking Pokémon harness: a save state with it walking, where it stands, and the per-frame walkable-tile rule. |
+| `test/lib/frame_capture.lua` | With `MGBA_FRAME_DIR` set, saves every second frame and its caption for a GIF; it can pause, so a warp the demo makes isn't filmed. |
+| `test/lib/follower.lua` | The walking Pokémon harness: a save state with it walking, where it stands, the per-frame walkable-tile rule, and a record of each time you swap places with it (a swap may leave it on a doormat or ladder, which the rule allows until its next step). |
 | `test/lib/poke_radar.lua` | Reads and writes the Poké Radar chain state, and plays the radar. |
 | `test/lib/route14_battle.lua` | Starts the Kiri and Jan double battle on Route 14, for the type-colour tests. |
 | `test/lib/mt_moon.lua` | The Mt. Moon harness: enter a floor with a chosen random state, read back the generated cave, search it, save and Continue. |
@@ -195,7 +195,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/lib/mt_moon_tiles.lua` | Compares a generated floor's tiles with vanilla's, for the look and density checks. |
 | `test/tests/` | The tests and demos. `test/tests/mt_moon_checks/` holds the Mt. Moon property checks. `suite_fixtures/` and `framework_fixtures/` hold the small scripts that `test/tests/test_run_suite.lua` and `test/tests/test_framework_rules.lua` run to check the runners. |
 | `test/demos/` | A demo kept outside the suite. |
-| `test/tools/captioned_gif.py` | Turns a demo's captured frames into a captioned README GIF. |
+| `test/tools/captioned_gif.py` | Turns a demo's captured frames into a captioned README GIF (`--font-size` for long captions). |
 | `test/tools/render_cave.py` | Draws a map, vanilla or a dumped generated cave, to PNG. |
 | `test/tools/dump_mtmoon_grid.lua` | Dumps generated Mt. Moon caves by seed for `test/tools/render_cave.py`. |
 | `test/tools/create_route14_battle_fixture.lua` | Saves a state inside the Route 14 double battle, for checking the colours by hand. |

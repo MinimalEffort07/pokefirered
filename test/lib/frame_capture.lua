@@ -5,6 +5,7 @@
 -- Set MGBA_FRAME_DIR to a directory and, between start() and stop(), every
 -- second emulated frame is saved there as frame_NNNNN.png (30 fps of the
 -- 60 fps game), plus captions.tsv with the caption active for each frame.
+-- pause() and resume() leave out the frames in between.
 -- With MGBA_FRAME_DIR unset, every function here does nothing.
 --
 --   MGBA_FRAME_DIR=/tmp/frames bash test/run_test.sh test/tests/<test>.lua
@@ -43,6 +44,19 @@ function capture.stop()
         captions_file:close()
         captions_file = nil
     end
+end
+
+-- Leave frames out between pause() and resume(), e.g. while a test's warp
+-- loads another map: the video cuts straight from the last frame before the
+-- pause to the first one after. Unlike start(), resume() keeps the frames
+-- already saved and goes on numbering from there.
+function capture.pause()
+    active = false
+end
+
+function capture.resume()
+    if not enabled or captions_file == nil then return end
+    active = true
 end
 
 -- Text describing what the video shows from now on (written to captions.tsv).

@@ -12,7 +12,7 @@ an empty bar.
 
 USAGE (python3 standard library and ffmpeg; run from anywhere)
 
-    python3 -I test/tools/captioned_gif.py FRAME_DIR OUTPUT.gif [--font FONT.ttf]
+    python3 -I test/tools/captioned_gif.py FRAME_DIR OUTPUT.gif [--font FONT.ttf] [--font-size N]
 
 e.g., after a demo recorded with MGBA_FRAME_DIR=/tmp/follower_demo:
 
@@ -26,6 +26,11 @@ README GIFs are.
 FONT: DejaVu Sans Bold by default (the fonts-dejavu-core package on Debian
 and Ubuntu); --font takes any TrueType file. ffmpeg needs its drawtext
 filter, which comes with builds linked against libfreetype.
+
+FONT SIZE: 18 pixels by default, which fits about 44 characters across the
+480-pixel bar. A longer caption is centred and runs off both edges, so for a
+GIF with one, pass a smaller --font-size (it applies to all its captions,
+so they match): 15 fits about 52 characters.
 """
 
 import argparse
@@ -64,6 +69,8 @@ def main():
     parser.add_argument("frame_dir", help="directory with frame_NNNNN.png and captions.tsv")
     parser.add_argument("output", help="the GIF to write")
     parser.add_argument("--font", default=DEFAULT_FONT, help="TrueType font for the captions")
+    parser.add_argument("--font-size", type=int, default=FONT_SIZE,
+                        help="caption size in pixels (default %d)" % FONT_SIZE)
     args = parser.parse_args()
 
     captions = os.path.join(args.frame_dir, "captions.tsv")
@@ -96,7 +103,7 @@ def main():
             filters.append(
                 "drawtext=fontfile=%s:textfile=%s:fontsize=%d:fontcolor=white"
                 ":x=(w-text_w)/2:y=%d+(%d-text_h)/2:enable='between(n,%d,%d)'"
-                % (font, text_file, FONT_SIZE, h, BAR_H, first, last))
+                % (font, text_file, args.font_size, h, BAR_H, first, last))
         # Every second frame (15 fps), one shared palette, no dithering.
         graph = (",".join(filters) + ",fps=15,split[a][b];"
                  "[a]palettegen=stats_mode=full[p];[b][p]paletteuse=dither=none")

@@ -58,6 +58,7 @@
 #include "new_menu_helpers.h"
 #include "overworld.h"
 #include "party_menu.h"
+#include "pokemon_follower.h"
 #include "quest_log.h"
 #include "quest_log_player.h"
 #include "random.h"
@@ -564,8 +565,16 @@ static void PlayerNotOnBikeTurningInPlace(u8 direction, u16 heldKeys)
 static void PlayerNotOnBikeMoving(u8 direction, u16 heldKeys)
 {
     u8 collision = CheckForPlayerAvatarCollision(direction);
+    /*
+     * Walking or running into the walking Pokemon swaps places with it
+     * instead of bumping (issue #99, "SWAPPING PLACES" in
+     * pokemon_follower.c): the player takes the step below as if the tile
+     * were free, and the follower steps onto the tile they leave. It never
+     * happens while surfing (CanPlayerSwapWithFollower refuses).
+     */
+    bool8 swap = (collision == COLLISION_OBJECT_EVENT && CanPlayerSwapWithFollower(direction));
 
-    if (collision != COLLISION_NONE)
+    if (collision != COLLISION_NONE && !swap)
     {
         if (collision == COLLISION_LEDGE_JUMP)
         {
@@ -600,7 +609,6 @@ static void PlayerNotOnBikeMoving(u8 direction, u16 heldKeys)
         else
             PlayerRun(direction);
         gPlayerAvatar.flags |= PLAYER_AVATAR_FLAG_DASH;
-        return;
     }
     else
     {
@@ -609,6 +617,10 @@ static void PlayerNotOnBikeMoving(u8 direction, u16 heldKeys)
         else
             PlayerWalkNormal(direction);
     }
+
+    /* The follower's half of the swap, matched to the step just chosen */
+    if (swap)
+        StartFollowerSwapStep(direction);
 }
 
 bool32 PlayerIsMovingOnRockStairs(u8 direction)
