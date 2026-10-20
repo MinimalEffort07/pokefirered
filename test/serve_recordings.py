@@ -14,8 +14,9 @@ Pages:
                      without .mp4). It looks in the kept folder first,
                      then scratch, so a link made before a video was
                      moved still works.
-  /final/<file>.mp4  the video files themselves (kept, then scratch);
-  /scratch/<file>.mp4  browsers ask for them in pieces to seek.
+  /final/<file>.mp4    a kept video file, and
+  /scratch/<file>.mp4  a scratch one. Browsers ask for them in pieces,
+                       to start playing early and to seek.
 
 Run with no arguments it serves port 8080, as autodev-recordings.service
 does. To preview a branch's page, run it in that checkout on a spare port:
@@ -152,7 +153,8 @@ def list_videos(source):
     except OSError:
         return []
     for entry in entries:
-        if not entry.name.endswith(".mp4"):
+        # A file called just ".mp4" has no name to give its page, /r/<name>.
+        if not entry.name.endswith(".mp4") or entry.name == ".mp4":
             continue
         try:
             if not entry.is_file():
@@ -181,11 +183,13 @@ def url_part(text):
 
 
 def format_size(size):
-    """A file size in plain words, e.g. "39.9 MB"."""
+    """A file size in plain words, e.g. "39.9 MB". The unit goes by the
+    rounded number, so 999999 bytes is "1.0 MB", not "1000.0 KB"."""
     if size < 1000:
         return "1 byte" if size == 1 else f"{size} bytes"
-    if size < 1000 * 1000:
-        return f"{size / 1000:.1f} KB"
+    kb = f"{size / 1000:.1f}"
+    if float(kb) < 1000:
+        return f"{kb} KB"
     return f"{size / 1e6:.1f} MB"
 
 
@@ -239,7 +243,7 @@ def index_page(sources):
         if not videos:
             parts.append('<p class="empty">(no recordings)</p>')
         parts.extend(card(v) for v in videos)
-    return PAGE.format(title="mGBA Test Recordings", body="\n".join(parts))
+    return PAGE.format(title="mGBA Recordings", body="\n".join(parts))
 
 
 def recording_page(video):
@@ -264,8 +268,8 @@ def render(path, sources):
     """The page for a GET of `path`, as (status, HTML), or None when `path`
     isn't a page (it may be a video). Shared by the server and --print.
 
-    The path is split at its slashes before %-decoding, so an encoded slash
-    (%2F) stays part of a name and can't climb out of a folder."""
+    /r/<name> only finds a name the folders' own listings hold (find_video),
+    so a decoded "../x" or "sub/x" is just a name that isn't there: 404."""
     path = path.split("?", 1)[0]
     if path == "/":
         return 200, index_page(sources)
@@ -312,7 +316,9 @@ def byte_range(header, size):
 
 
 def video_file(path, sources):
-    """The file a GET of /<label>/<file>.mp4 asks for, or None."""
+    """The file a GET of /<label>/<file>.mp4 asks for, or None. The path is
+    split at its slashes before %-decoding, so an encoded slash (%2F) stays
+    part of the file name, and find_video then finds no such file."""
     parts = path.split("?", 1)[0].split("/")
     if len(parts) != 3 or parts[0] != "":
         return None
@@ -327,6 +333,15 @@ def video_file(path, sources):
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        try:
+            self._answer()
+        except ConnectionError:
+            # The browser hung up: it does that to every request it no
+            # longer needs, e.g. when the viewer seeks. Nothing to do, and
+            # no traceback in the service's journal.
+            pass
+
+    def _answer(self):
         sources = self.server.sources
         page = render(self.path, sources)
         if page is not None:
@@ -376,17 +391,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.end_headers()
             f.seek(start)
-            try:
-                while remaining > 0:
-                    chunk = f.read(min(CHUNK_BYTES, remaining))
-                    if not chunk:
-                        break       # the file got shorter while being sent
-                    self.wfile.write(chunk)
-                    remaining -= len(chunk)
-            except ConnectionError:
-                # The browser hung up: it does that to every request it no
-                # longer needs, e.g. when the viewer seeks. Nothing to do.
-                pass
+            while remaining > 0:
+                chunk = f.read(min(CHUNK_BYTES, remaining))
+                if not chunk:
+                    break           # the file got shorter while being sent
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
 
     def _send_html(self, status, text):
         # A name that isn't valid UTF-8 becomes "?" rather than an error.
@@ -451,6 +461,9 @@ def main():
     print(f"Serving recordings at http://0.0.0.0:{args.port}")
     for source in sources:
         print(f"  [{source.label}] {source.directory}")
+    # Under systemd, print's output waits in a buffer until it fills; flush
+    # so the service's journal shows these lines at once.
+    sys.stdout.flush()
     server.serve_forever()
 
 

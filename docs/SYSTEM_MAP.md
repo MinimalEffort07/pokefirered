@@ -176,7 +176,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/run_suite.sh` | Runs every top-level test, 4 at a time, in about 10 minutes. Must pass before a merge. |
 | `test/suite_exclude.txt` | The tests the suite skips, each with a one-line reason. The suite refuses to start on a line without one. |
 | `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. |
-| `test/serve_recordings.py` | The recordings page on port 8080, run by `autodev-recordings.service`: kept videos, then scratch ones, each newest first, titled from their file names ("#24 safety net"), each with its own page at `/r/<name>`. It streams videos in pieces and answers requests in parallel. `--port 8081` previews a branch's page; `--print PATH` prints a page without opening a port, which is how `test/tests/test_recordings_page.lua` checks it. The dispatcher restarts it when a merge changes this file, so it must stay one file that imports only Python's standard library. |
+| `test/serve_recordings.py` | The recordings page on port 8080, run by `autodev-recordings.service`: the videos newest first, each with its own page. `--port 8081` previews a branch's page. `test/tests/test_recordings_page.lua` checks it. The dispatcher restarts it when a merge changes this file, so it must stay one file that imports only Python's standard library. |
 | `test/mgba-qt.sh` | Opens the patched mGBA window by hand. |
 | `test/lib/framework.lua` | The test framework: press buttons, wait frames, assert, write results. Every test loads it. |
 | `test/lib/addresses.lua` | Where game variables sit in memory, for the older tests that hard-code addresses. |

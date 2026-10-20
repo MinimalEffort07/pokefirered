@@ -61,29 +61,32 @@ local ROOT = fw.out_path("recordings-fixture")
 local KEPT = ROOT .. "/kept"
 local SCRATCH = ROOT .. "/scratch"
 
--- Each fixture video: its folder, its name, its size in bytes and its
--- modification time. The lists are in the order the page must show them,
--- newest first.
+-- Each fixture video: its name, its size in bytes, its modification time,
+-- and the size its card must show. The lists are in the order the page must
+-- show them, newest first.
 local KEPT_VIDEOS = {
-    { name = "test_follower_swap_20261020_145947.mp4", size = 2500000, mtime = "2026-10-20 15:01" },
-    { name = "issue-90_test_x_20261020_134554.mp4",    size = 1234,    mtime = "2026-10-05 10:00" },
-    { name = "route4_no_warp.mp4",                     size = 5,       mtime = "2026-10-01 10:00" },
-    { name = "issue-24-safety-net.mp4",                size = 24,      mtime = "2026-09-15 09:30" },
-    { name = "x<b>&y.mp4",                             size = 7,       mtime = "2026-09-10 08:00" },
-    { name = "both_folders.mp4",                       size = 11,      mtime = "2026-08-01 12:00" },
+    { name = "test_follower_swap_20261020_145947.mp4", size = 2500000, mtime = "2026-10-20 15:01", shows = "2.5 MB" },
+    { name = "issue-90_test_x_20261020_134554.mp4",    size = 1234,    mtime = "2026-10-05 10:00", shows = "1.2 KB" },
+    { name = "route4_no_warp.mp4",                     size = 5,       mtime = "2026-10-01 10:00", shows = "5 bytes" },
+    { name = "issue-24-safety-net.mp4",                size = 24,      mtime = "2026-09-15 09:30", shows = "24 bytes" },
+    { name = "x<b>&y.mp4",                             size = 7,       mtime = "2026-09-10 08:00", shows = "7 bytes" },
+    { name = "both_folders.mp4",                       size = 11,      mtime = "2026-08-01 12:00", shows = "11 bytes" },
 }
+-- 999999 bytes rounds up to 1000.0 KB, so it must show as 1.0 MB.
 local SCRATCH_VIDEOS = {
-    { name = "both_folders.mp4",                 size = 22, mtime = "2026-10-21 09:00" },
-    { name = "scratch_new_20261020_160000.mp4",  size = 3,  mtime = "2026-10-20 16:00" },
-    { name = "scratch_old_20261019_120000.mp4",  size = 4,  mtime = "2026-10-19 12:00" },
-    { name = "only_scratch_20261018_100000.mp4", size = 6,  mtime = "2026-10-18 10:00" },
+    { name = "both_folders.mp4",                 size = 22,     mtime = "2026-10-21 09:00", shows = "22 bytes" },
+    { name = "scratch_new_20261020_160000.mp4",  size = 999999, mtime = "2026-10-20 16:00", shows = "1.0 MB" },
+    { name = "scratch_old_20261019_120000.mp4",  size = 1,      mtime = "2026-10-19 12:00", shows = "1 byte" },
+    { name = "only_scratch_20261018_100000.mp4", size = 999,    mtime = "2026-10-18 10:00", shows = "999 bytes" },
 }
 -- Files the page must not list or serve: a newer video in a subfolder of the
--- kept folder, a file that isn't a video, and a video beside the two folders
+-- kept folder, a file that isn't a video, a file called just ".mp4" (its
+-- name would be empty, and its page /r/), and a video beside the two folders
 -- (what /r/..%2Fsomething would reach if the server joined paths blindly).
 local OTHER_FILES = {
     { path = KEPT .. "/sub/sub_video_20261025_000000.mp4", size = 8, mtime = "2026-10-25 00:00" },
     { path = KEPT .. "/readme.txt",                        size = 9, mtime = "2026-10-22 00:00" },
+    { path = KEPT .. "/.mp4",                              size = 12, mtime = "2026-10-23 00:00" },
     { path = ROOT .. "/something.mp4",                     size = 10, mtime = "2026-10-22 00:00" },
 }
 
@@ -246,15 +249,6 @@ local TITLES = {
     ["route4_no_warp.mp4"]                     = { "route4_no_warp" },
 }
 
--- What each kept fixture's card must show as its time and size: the
--- fixture's own time, and its size in plain words.
-local FACTS = {
-    ["test_follower_swap_20261020_145947.mp4"] = "2.5 MB",
-    ["issue-90_test_x_20261020_134554.mp4"]    = "1.2 KB",
-    ["route4_no_warp.mp4"]                     = "5 bytes",
-    ["issue-24-safety-net.mp4"]                = "24 bytes",
-}
-
 local function card_named(list, file)
     for _, c in ipairs(list) do
         if c.file == file then return c end
@@ -262,7 +256,7 @@ local function card_named(list, file)
     return nil
 end
 
-local function check_titles(page, kept_cards)
+local function check_titles(page, kept_cards, scratch_cards)
     local ok = true
     for file, want in pairs(TITLES) do
         local c = card_named(kept_cards, file)
@@ -274,14 +268,21 @@ local function check_titles(page, kept_cards)
         ok = fw.assert_eq(link, want_link, "A3: " .. file .. "'s title links to "
             .. tostring(want_link)) and ok
     end
-    for _, v in ipairs(KEPT_VIDEOS) do
-        local c = card_named(kept_cards, v.name)
-        local text = c and c.text or ""
-        ok = fw.assert_true(text:find("Recorded " .. v.mtime, 1, true) ~= nil,
-            "A3: " .. v.name .. "'s card shows when it was recorded: " .. v.mtime) and ok
-        if FACTS[v.name] then
-            ok = fw.assert_true(text:find(FACTS[v.name], 1, true) ~= nil,
-                "A3: " .. v.name .. "'s card shows its size: " .. FACTS[v.name]) and ok
+    -- Every card, in both sections, shows the fixture's own time and its
+    -- size in plain words. Its file name is in it too: that's how
+    -- card_named found it.
+    for _, section in ipairs({ { "kept", KEPT_VIDEOS, kept_cards },
+                               { "scratch", SCRATCH_VIDEOS, scratch_cards } }) do
+        local label, videos, section_cards = section[1], section[2], section[3]
+        for _, v in ipairs(videos) do
+            local c = card_named(section_cards, v.name)
+            local text = c and c.text or ""
+            local what = "A3: " .. label .. " card " .. v.name
+            ok = fw.assert_true(c ~= nil, what .. " shows its file name") and ok
+            ok = fw.assert_true(text:find("Recorded " .. v.mtime .. " ", 1, true) ~= nil,
+                what .. " shows when it was recorded: " .. v.mtime) and ok
+            ok = fw.assert_true(text:find(" " .. v.shows .. " ", 1, true) ~= nil,
+                what .. " shows its size: " .. v.shows) and ok
         end
     end
     if not ok then dump("/", page) end
@@ -337,23 +338,23 @@ local function check_pages(kept_cards, scratch_cards)
         fw.assert_true(r.body:find("<source", 1, true) == nil, "A4: " .. path .. " shows no video")
     end
 
-    -- Every card on / links to its page, and the link works.
-    for _, c in ipairs(kept_cards) do
+    -- Every card on / links to its page, and the link works. (The scratch
+    -- both_folders card's page shows the kept video of that name, as above.)
+    local all_cards = {}
+    for _, c in ipairs(kept_cards) do all_cards[#all_cards + 1] = c end
+    for _, c in ipairs(scratch_cards) do all_cards[#all_cards + 1] = c end
+    for _, c in ipairs(all_cards) do
         local link = c.text:match('href="(/r/[^"]*)"')
         local want = "/r/" .. url_encode((c.file or ""):gsub("%.mp4$", ""))
-        local ok = fw.assert_eq(link, want, "A4: kept card " .. tostring(c.file) .. " links to its page")
+        local ok = fw.assert_eq(link, want, "A4: card " .. tostring(c.file) .. " links to its page")
         if ok then
             local r = get(link)
             ok = fw.assert_eq(r.status, 200, "A4: " .. link .. " returns 200")
-            ok = fw.assert_eq(cards(r.body)[1] and cards(r.body)[1].file, c.file,
+            local shown = cards(r.body)[1]
+            ok = fw.assert_eq(shown and shown.file, c.file,
                 "A4: " .. link .. " shows " .. tostring(c.file)) and ok
             if not ok then dump(link, r) end
         end
-    end
-    for _, c in ipairs(scratch_cards) do
-        local link = c.text:match('href="(/r/[^"]*)"')
-        local want = "/r/" .. url_encode((c.file or ""):gsub("%.mp4$", ""))
-        fw.assert_eq(link, want, "A4: scratch card " .. tostring(c.file) .. " links to its page")
     end
 end
 
@@ -390,6 +391,7 @@ fw.run(function()
 
     local page = get("/")
     fw.assert_eq(page.status, 200, "GET / returns 200")
+    fw.assert_eq(page.code, 0, "--print / exits 0")
     local all = cards(page.body)
     local scratch_at = page.body:find('id="scratch"', 1, true) or (#page.body + 1)
     local kept_cards = cards(page.body:sub(1, scratch_at - 1))
@@ -397,7 +399,7 @@ fw.run(function()
 
     check_newest_first(page, kept_cards)
     check_sections(page, kept_cards, scratch_cards)
-    check_titles(page, kept_cards)
+    check_titles(page, kept_cards, scratch_cards)
     check_pages(kept_cards, scratch_cards)
     check_escaping(page, kept_cards)
 
