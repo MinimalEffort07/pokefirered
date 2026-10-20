@@ -67,6 +67,7 @@ Finer-grained cleans: `clean-tools`, `clean-generated` (headers generated from J
 - **One test:** `bash test/run_test.sh test/tests/<test>.lua` exits 0 = pass, 1 = fail, 124 = timed out (`MGBA_TEST_TIMEOUT`, default 60 s). Each run writes to its own `mktemp` folder, printed as `Output:`, so runs can go in parallel.
 - **Whole suite:** `bash test/run_suite.sh` is the merge gate. It runs every top-level `test/tests/*.lua` 4 at a time, each with `MGBA_TEST_TIMEOUT=1500`, and exits 0 only if every test it ran passed; the whole run takes about 10 minutes. Its summary gives each test's result and seconds; failing and timed-out runs keep their folder (with `run_test.log`), passing runs' folders are deleted. Name test files to run a subset (exclusions still apply); `--help` lists the options.
 - **Exclusions:** `test/suite_exclude.txt` lists the tests the suite skips, one per line: the test name, then a one-line reason. Every exclusion needs a reason and must name an existing test; the suite refuses to start on a line that breaks either rule. Exclude only a test that needs a fixture made by hand or makes no assertions (a demo or probe declaring `fw.allow_no_assertions`); a failing test gets fixed.
+- **Moments:** in the mGBA window (a recording) a test fast-forwards except at its moments, which it marks with `fw.show`/`fw.show_next` and which play at normal speed for about a second. A test never sets the speed itself. The README's "Tests" section says how to use them and where they go.
 - The README's "Tests" section has the framework rules (a test with zero assertions fails). `test/tests/test_run_suite.lua` and `test_framework_rules.lua` test the runners themselves.
 
 ## Toolchain Requirements
@@ -202,7 +203,9 @@ Their PR says "No recording: no in-game behaviour changes." and the rest of this
 
 In a session autodev started, `record_test.sh` backs the rule up: it refuses to record (and so does `--check`) when the branch changes no file the ROM is built from. That is every file that differs from where the branch left master (`git merge-base HEAD origin/master`): commits, staged and unstaged edits, untracked new files, deletions and renames. The game is anything under `src/`, `include/`, `asm/`, `data/`, `graphics/`, `sound/`, `constants/` or `tools/`, plus the top-level `Makefile`, `config.mk`, `*.mk`, `ld_script*.ld`, `sym_*.txt` and `charmap.txt`. With no `origin/master` or no commit shared with it, it can't tell, so it refuses too. It judges paths, not the screen: a `src/` change you can't see, such as a refactor, gets past it, and the rule above still says not to record it. Your own recordings are never refused.
 
-For a change you can see, write the recording's notes first, then record with them on stdin (`--notes -`), as a heredoc:
+For a change you can see, first check that the test marks its moments (`fw.show`, `fw.show_next`; the README's "Tests" section has the rule for where they go). If it has none, add them: otherwise the whole video fast-forwards and its outcomes flash by. `bash test/run_test.sh` on it shows them as `[WATCH]` lines and their total.
+
+Then write the recording's notes, and record with them on stdin (`--notes -`), as a heredoc:
 ```bash
 bash test/record_test.sh --notes - test/tests/<relevant_test>.lua <<'EOF'
 ticket: <T> <the ticket's title>
@@ -219,7 +222,7 @@ EOF
 The notes are for the owner, who watches the video on their phone, so write them in plain words:
 - **What's tested:** the scenarios the test plays, in more detail than the test's name.
 - **The problem:** what was wrong or missing before the change.
-- **What you should see:** the moments to watch for, in order, and roughly when in a long video ("about 40 s in, the BAG closes and the same four patches still shake").
+- **What you should see:** the test's moments, in order, with roughly when each comes ("about 40 s in, the BAG closes and the same four patches still shake").
 
 Leave `pr:` out: the PR doesn't exist yet, so step 11 adds its number. `record_test.sh` checks the notes before it starts (`--check` only checks). Its last two lines are the `mv` that keeps the video and its notes file in `~/recordings/`, and the recording's own page. Run that `mv`, and keep the page's link for the PR.
 

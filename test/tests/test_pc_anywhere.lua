@@ -16,6 +16,13 @@
 --   /tmp/pokefirered-pc-anywhere.ss and later runs reuse it: delete it after
 --   a ROM rebuild that shifts EWRAM symbol addresses.
 --
+-- MOMENTS (what a recording plays at normal speed; see MOMENTS in
+-- test/lib/framework.lua): BILL'S PC's menu open from Quick Select, the
+-- field after SEE YA!, and the "sent to the PC!" message after MOVE TO PC.
+-- The first two hold what's on screen (fw.show); the message types out and
+-- fades away by itself in about 1.3 seconds, so it plays through the
+-- frames the test already waits there (fw.show_next).
+--
 -- PARTY POKEMON INJECTION:
 --   A fresh game has no party Pokemon. Two Bulbasaurs are injected directly
 --   into gPlayerParty via memory writes. PID=0, OTID=0 gives XOR key=0
@@ -133,6 +140,7 @@ fw.run(function()
     -- Select BILL'S PC (last entry)
     fw.press("A")
     fw.wait_frames(120)  -- wait for PC storage main menu to load and fade in
+    fw.show("Part A: BILL'S PC's menu, opened from Quick Select")
 
     -- Navigate to SEE YA! (index 4, 4 presses DOWN from WITHDRAW at index 0)
     for _ = 1, 4 do
@@ -148,6 +156,7 @@ fw.run(function()
     fw.assert_true(count_after_pc == party_count, string.format(
         "Part A: party count unchanged after Quick Select PC visit (%d -> %d)",
         party_count, count_after_pc))
+    fw.show("Part A: back in the field after SEE YA!, with no menu left")
 
     -- ------------------------------------------------------------------ --
     -- Part B: Party menu -> MOVE TO PC
@@ -191,9 +200,16 @@ fw.run(function()
         fw.wait_frames(20)
     end
 
-    -- Confirm MOVE TO PC
+    -- Confirm MOVE TO PC. Counting frames from when fw.press returns: the
+    -- message box opens about 20 frames later and "<name> was sent to the
+    -- PC!" types out from about frame 48; it is complete at about frame 116
+    -- (the injected Bulbasaurs have blank names), and by frame 130 the
+    -- screen has faded to black on the way back to the field, whatever the
+    -- speed. The moment plays frames 71 to 130.
     fw.press("A")
-    fw.wait_frames(300)
+    fw.wait_frames(70)
+    fw.show_next("Part B: \"... was sent to the PC!\" after MOVE TO PC")
+    fw.wait_frames(230)
 
     local party_count_after = fw.read8(ADDR.gPlayerPartyCount)
     fw.log(string.format("Party count after MOVE TO PC: %d", party_count_after))

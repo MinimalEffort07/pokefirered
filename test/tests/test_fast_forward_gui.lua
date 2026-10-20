@@ -1,64 +1,93 @@
 -------------------------------------------------------------------------------
--- test_fast_forward_gui.lua
+-- test_fast_forward_gui.lua: moments really play at normal speed in the
+-- mGBA window (issue #119, #124)
 -------------------------------------------------------------------------------
--- Verifies that calling emu:setFastForward() from a script actually changes
--- the emulator's speed, and prompts the user to visually confirm that the
--- "Emulation > Fast forward" menu item reflects the same state.
+-- In the mGBA window a test fast-forwards, except at its moments, which play
+-- at normal speed (MOMENTS in test/lib/framework.lua). The headless test
+-- test/tests/test_recording_moments.lua checks what fw.speed() says frame by
+-- frame; only the window has a real speed to measure, so this test times
+-- frames there, by the clock:
 --
--- Lua scripts in mGBA can't read Qt widget state directly, so we can't
--- automate the menu-checkbox assertion. Instead:
---   1. We programmatically confirm emulation speed changed using wall-clock
---      time — under FF a batch of emulated frames completes far faster in
---      real time than at normal speed.
---   2. We pause long enough (in wall-clock seconds) for the user to glance
---      at the Emulation menu and verify the checkbox matches the log line.
+--   G0  The 1,500 frames before any moment take under 5 s: the framework
+--       turned fast-forward on at the start. (At normal speed they'd take
+--       25 s; fast-forward does them in about 1 s.)
+--   G1  A 60-frame fw.show lasts 0.8 to 2.5 s (measured: 1.2 s, a second at
+--       normal speed plus the emulator settling after fast-forward).
+--   G2  The 1,500 frames after it take under 5 s: fast-forward came back by
+--       itself.
+--   G3  A fw.show made right after the test started a process (io.popen) in
+--       the same frame also lasts 0.8 to 2.5 s. mGBA ignores a speed change
+--       the test makes itself after an io.popen in the same frame; the
+--       framework makes it from its frame callback instead, and G3 checks
+--       that this still holds.
+--   G4  fw.show_next(label, 60): those 60 frames take 0.8 to 2.5 s while the
+--       test waits frame by frame, and the 1,500 frames after them take
+--       under 5 s.
 --
--- This test is designed for GUI mode. In headless mode the menu doesn't
--- exist; the test still runs the programmatic assertions but the visual
--- step is a no-op.
+-- THE CLOCK: `date +%s.%N` (seconds since 1970, to the nanosecond), run
+-- through io.popen. Not os.clock(): that counts the CPU time this process
+-- has used, not the time that passes, so a frame spent waiting at normal
+-- speed barely moves it. (Timing by os.clock() is why this test failed in
+-- the window before #124.) Each reading starts a process, which is exactly
+-- what G3 needs anyway.
 --
--- HOW TO RUN:
---   GUI:       mgba-qt pokefirered.gba, then Tools > Scripting > Load script
---              and select this file. Watch the Emulation menu.
---   Headless:  bash test/run_test.sh test/tests/test_fast_forward_gui.lua
---              (automated assertions only, no menu verification)
+-- HOW TO RUN: only in the window, which test/record_test.sh is the way to
+-- reach:
+--   bash test/record_test.sh test/tests/test_fast_forward_gui.lua
+-- Headless (bash test/run_test.sh ...) it has no window to time, so it
+-- skips itself and passes with no assertions; test/suite_exclude.txt
+-- leaves it out of the suite.
 -------------------------------------------------------------------------------
 
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
 local project_dir = script_dir .. "../../"
 local fw = dofile(project_dir .. "test/lib/framework.lua")
 
--- Wall-clock pause. fw.wait_frames runs on emulator time — under fast-forward
--- 60 emulated frames might elapse in 20ms of real time, far too short for a
--- human to glance at a menu. os.clock() gives CPU seconds; polling it keeps
--- the coroutine yielding frames while we wait out a real-world interval.
-local function wait_wallclock(seconds)
-    local start = os.clock()
-    while os.clock() - start < seconds do
-        coroutine.yield()
-    end
-end
-
--- Measure how long N emulated frames take in wall-clock seconds. Returns
--- the elapsed real time. Short result ⇒ fast-forward is active; long
--- result ⇒ normal speed.
-local function frames_wallclock(n)
-    local t0 = os.clock()
-    fw.wait_frames(n)
-    return os.clock() - t0
-end
-
 local is_gui = (canvas ~= nil)
 
+-- The pass marks (see G0 to G4 above). The margins allow for a busy machine.
+local FAST_FRAMES = 1500     -- 25 s at normal speed
+local FAST_MAX_SECONDS = 5
+local MOMENT_MIN_SECONDS = 0.8
+local MOMENT_MAX_SECONDS = 2.5
+
+-- The time on the clock, in seconds.
+local function now()
+    local pipe = io.popen("date +%s.%N")
+    local t = tonumber(pipe:read("l"))
+    pipe:close()
+    return t
+end
+
+-- Seconds fn() takes on the clock.
+local function timed(fn)
+    local start = now()
+    fn()
+    return now() - start
+end
+
+-- Check that `seconds` is a moment's length (G1, G3, G4).
+local function check_moment_length(name, seconds)
+    fw.assert_true(seconds >= MOMENT_MIN_SECONDS and seconds <= MOMENT_MAX_SECONDS,
+        string.format("%s lasts %.1f to %.1f s (took %.2f s)",
+            name, MOMENT_MIN_SECONDS, MOMENT_MAX_SECONDS, seconds))
+end
+
+-- Check that `seconds` is FAST_FRAMES frames at fast-forward (G0, G2, G4).
+local function check_fast_forward(name, seconds)
+    fw.assert_true(seconds < FAST_MAX_SECONDS,
+        string.format("%s: %d frames take under %d s (took %.2f s; 25 s at normal speed)",
+            name, FAST_FRAMES, FAST_MAX_SECONDS, seconds))
+end
+
 fw.run(function()
-    fw.log("=== Test: Fast-Forward GUI State ===")
+    fw.log("=== Moments in the mGBA window (#124) ===")
 
     if not is_gui then
-        -- Headless mode has no display rate-limiter and no menu to inspect,
-        -- so both the timing measurements and the visual verification this
-        -- test performs are meaningless there. Skip cleanly instead of
-        -- reporting a spurious failure: with no assertions, which only this
-        -- skip declares allowed (in the GUI the test must still assert).
+        -- Headless there is no window and no real speed to time. Skip
+        -- cleanly instead of reporting a spurious failure: with no
+        -- assertions, which only this skip declares allowed (in the window
+        -- the test must still assert).
         fw.log("Skipped: this test only makes sense in GUI mode (mgba-qt)")
         fw.allow_no_assertions("GUI-only test: skipped under mgba-headless")
         -- Brief wait so stdout flushes before clean_shutdown SIGTERMs us;
@@ -72,94 +101,36 @@ fw.run(function()
     -- Get past the title animation so the emulator is fully running.
     fw.wait_frames(180)
 
-    -- Ensure we start at normal speed. The framework's fw.run already
-    -- enables fast-forward on entry, so flip it back first so the baseline
-    -- measurement reflects normal emulation.
-    if emu.setFastForward then
-        emu:setFastForward(1)
-    end
-    fw.wait_frames(30)
+    check_fast_forward("G0 before any moment",
+        timed(function() fw.wait_frames(FAST_FRAMES) end))
 
-    ---------------------------------------------------------------------------
-    -- STEP 1: Baseline — measure normal speed.
-    ---------------------------------------------------------------------------
-    fw.log("Measuring normal speed over 60 frames...")
-    local t_normal = frames_wallclock(60)
-    fw.log(string.format("Normal: 60 frames took %.3fs wall-clock", t_normal))
+    -- G1: one frame first, so no process ran in the frame the moment is
+    -- marked in (that is G3).
+    local start = now()
+    fw.yield()
+    fw.show("G1 a 60-frame moment (fw.show)")
+    check_moment_length("G1 a 60-frame fw.show", now() - start)
 
-    -- At 60 Hz native rate, 60 frames should take ~1.0s. Accept 0.5–3.0s
-    -- to absorb vsync quirks on different displays.
-    fw.assert_true(t_normal > 0.3,
-        "normal-speed 60 frames take > 0.3s wall-clock (got "
-        .. string.format("%.3fs", t_normal) .. ")")
+    check_fast_forward("G2 after the moment",
+        timed(function() fw.wait_frames(FAST_FRAMES) end))
 
-    if is_gui then
-        fw.log(">>> LOOK AT THE MENU NOW <<<")
-        fw.log(">>> Emulation > Fast forward should be UNCHECKED")
-        wait_wallclock(4)
-    end
+    -- G3: a process started in the very frame the moment is marked in.
+    start = now()
+    local pipe = io.popen("true")
+    pipe:close()
+    fw.show("G3 a 60-frame moment right after io.popen")
+    check_moment_length("G3 a 60-frame fw.show right after io.popen", now() - start)
+    fw.wait_frames(120)  -- back to fast-forward before G4
 
-    ---------------------------------------------------------------------------
-    -- STEP 2: Enable fast-forward via script. Expect speed-up AND menu check.
-    ---------------------------------------------------------------------------
-    fw.log("Calling emu:setFastForward(0) (unbounded)...")
-    fw.assert_true(emu.setFastForward ~= nil, "emu.setFastForward binding exists")
-    emu:setFastForward(0)
-    fw.wait_frames(5)
-
-    fw.log("Measuring fast-forward speed over 60 frames...")
-    local t_ff = frames_wallclock(60)
-    fw.log(string.format("Fast-forward: 60 frames took %.3fs wall-clock", t_ff))
-
-    -- FF should be at least ~3x faster than normal. On most hardware it's
-    -- 10-50x faster, but 3x is a conservative lower bound.
-    fw.assert_true(t_ff < t_normal / 3,
-        string.format("FF 60 frames (%.3fs) complete at least 3x faster than normal (%.3fs)",
-            t_ff, t_normal))
-
-    if is_gui then
-        fw.log(">>> LOOK AT THE MENU NOW <<<")
-        fw.log(">>> Emulation > Fast forward should be CHECKED")
-        fw.log(">>> If it is NOT checked, the script-to-GUI sync is broken")
-        wait_wallclock(5)
-    end
-
-    ---------------------------------------------------------------------------
-    -- STEP 3: Disable fast-forward. Expect speed back to normal AND menu
-    -- unchecked.
-    ---------------------------------------------------------------------------
-    fw.log("Calling emu:setFastForward(1) (normal)...")
-    emu:setFastForward(1)
-    fw.wait_frames(30)
-
-    fw.log("Measuring speed after disabling FF over 60 frames...")
-    local t_restored = frames_wallclock(60)
-    fw.log(string.format("Restored: 60 frames took %.3fs wall-clock", t_restored))
-
-    -- After disabling FF, frames should take roughly normal-speed time
-    -- again (within 2x of the baseline).
-    fw.assert_true(t_restored > t_normal / 2,
-        string.format("after setFastForward(1), 60 frames (%.3fs) back near baseline (%.3fs)",
-            t_restored, t_normal))
-
-    if is_gui then
-        fw.log(">>> LOOK AT THE MENU NOW <<<")
-        fw.log(">>> Emulation > Fast forward should be UNCHECKED again")
-        wait_wallclock(4)
-    end
-
-    ---------------------------------------------------------------------------
-    -- STEP 4: Summary for manual visual verification.
-    ---------------------------------------------------------------------------
-    if is_gui then
-        fw.log("---")
-        fw.log("Visual verification summary:")
-        fw.log("  * Before setFastForward(0): menu should have been UNCHECKED")
-        fw.log("  * After  setFastForward(0): menu should have been CHECKED")
-        fw.log("  * After  setFastForward(1): menu should be UNCHECKED again")
-        fw.log("If any of those were wrong, the Qt FF tracker is not in sync")
-        fw.log("with the scripting binding.")
-    end
+    -- G4: the moment plays while the test waits frame by frame.
+    check_moment_length("G4 the 60 frames of fw.show_next", timed(function()
+        fw.show_next("G4 the next 60 frames (fw.show_next)", 60)
+        for _ = 1, 60 do
+            fw.yield()
+        end
+    end))
+    check_fast_forward("G4 after the moment",
+        timed(function() fw.wait_frames(FAST_FRAMES) end))
 
     fw.finish()
 end)
