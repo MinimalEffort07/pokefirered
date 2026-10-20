@@ -126,6 +126,13 @@ local STEP_FRAMES = {
     ["walking on rock stairs"] = 23, ["running on rock stairs"] = 11,
     ["cycling uphill"] = 16, ["cycling downhill"] = 4,
 }
+-- How the player moves in each of those, as gPlayerAvatar.flags tells it
+-- (follower.lua records its running and bicycle bits with each swap).
+local AVATAR = {
+    walking = "walk", running = "run", cycling = "ride",
+    ["walking on rock stairs"] = "walk", ["running on rock stairs"] = "run",
+    ["cycling uphill"] = "ride", ["cycling downhill"] = "ride",
+}
 
 -- gPlayerAvatar.flags bit 1 (PLAYER_AVATAR_FLAG_MACH_BIKE): riding the
 -- bicycle. FireRed's only bicycle uses the Mach Bike flag.
@@ -184,21 +191,12 @@ local function check_start(name, px, py, facing, fx, fy)
             tostring(x), tostring(y), tostring(dirs[f]), tostring(ax), tostring(ay)))
 end
 
--- The swap in which the player stepped from (px, py) onto (fx, fy) and the
--- follower the other way, from `watch.swaps`, or nil.
-local function find_swap(watch, px, py, fx, fy)
-    for _, s in ipairs(watch.swaps) do
-        if s.player_x == fx and s.player_y == fy and s.x == px and s.y == py then return s end
-    end
-    return nil
-end
-
 -- Assert a swap (see the header): the player from (px, py) onto (fx, fy),
 -- the follower from (fx, fy) onto (px, py), with the follower standing
 -- still the frame before, both steps ending on the same frame and lasting
 -- STEP_FRAMES[how].
 local function check_swap(name, watch, how, px, py, fx, fy)
-    local s = find_swap(watch, px, py, fx, fy)
+    local s = follower.find_swap(watch, px, py, fx, fy)
     fw.assert_true(s ~= nil, string.format(
         "%s: the player (%d,%d) -> (%d,%d) and Pikachu (%d,%d) -> (%d,%d) swap on one frame%s",
         name, px, py, fx, fy, fx, fy, px, py,
@@ -208,6 +206,11 @@ local function check_swap(name, watch, how, px, py, fx, fy)
                 tostring(watch.player_tiles[watch.frame_no].y))))
     if not s then return nil end
     fw.assert_true(s.follower_was_still, name .. ": Pikachu stood still on the frame before the swap")
+    local moving = (s.riding and "ride") or (s.running and "run") or "walk"
+    fw.assert_true(moving == AVATAR[how], string.format(
+        "%s: gPlayerAvatar.flags says the player is %s (running %s, riding %s)",
+        name, ({ walk = "walking", run = "running", ride = "riding the bicycle" })[AVATAR[how]],
+        tostring(s.running), tostring(s.riding)))
     local fl, pl = follower.swap_lengths(s)
     fw.assert_true(s.follower_end ~= nil and s.follower_end == s.player_end, string.format(
         "%s: both steps of the swap end on the same frame (Pikachu's on %s, the player's on %s)",
@@ -463,18 +466,6 @@ end
 -- bicycle (PlayerOnBikeCollide).
 local BUMP_FIRST, BUMP_LAST = 0x21, 0x28
 
--- The held movement the player is playing this frame, or nil. struct
--- ObjectEvent (36 bytes): flags at 0x00 (bit 6 heldMovementActive, bit 7
--- heldMovementFinished), movementActionId at 0x1C.
-local function player_action()
-    local o = follower.player_object()
-    if o == nil then return nil end
-    local a = sym.addr("gObjectEvents") + o.index * 0x24
-    local flags = emu:read32(a)
-    if (flags & 0x40) == 0 or (flags & 0x80) ~= 0 then return nil end
-    return emu:read8(a + 0x1C)
-end
-
 -- One run, `how` "running" or "cycling"; returns true if the player bumped
 -- into Pikachu while it was in the middle of a step.
 local W8_SETUP = {
@@ -503,7 +494,7 @@ local function w8(how, seed)
     local bumped = false
     for _, k in ipairs(setup.keys) do key_down(k) end
     local reached = watch.run(120, function(n)
-        local a = player_action()
+        local a = follower.player_action()
         if a and a >= BUMP_FIRST and a <= BUMP_LAST and not watch.still[n] then bumped = true end
         local t = watch.player_tiles[n]
         return t.x == 8 and t.y == 6

@@ -267,6 +267,21 @@ u8 GetFollowerObjEventId(void)
 }
 
 /**
+ * The follower's ObjectEvent, or NULL when it has no sprite on this map.
+ */
+static struct ObjectEvent *GetFollowerObjectEvent(void)
+{
+    struct ObjectEvent *followerObj;
+
+    if (!sFollower.active || !sFollower.spriteSpawned || sFollower.objEventId >= OBJECT_EVENTS_COUNT)
+        return NULL;
+    followerObj = &gObjectEvents[sFollower.objEventId];
+    if (!followerObj->active)
+        return NULL;
+    return followerObj;
+}
+
+/**
  * Return the party slot index of the active follower.
  *
  * Kept as public API; party_menu.c now uses IsFollowerPokemon() for the
@@ -952,14 +967,8 @@ void UpdateFollowerPokemon(void)
         return;
     }
 
-    if (!sFollower.spriteSpawned)
-        return;
-
-    if (sFollower.objEventId >= OBJECT_EVENTS_COUNT)
-        return;
-
-    followerObj = &gObjectEvents[sFollower.objEventId];
-    if (!followerObj->active)
+    followerObj = GetFollowerObjectEvent();
+    if (followerObj == NULL)
         return;
 
     /* Wait for current movement to finish before issuing a new one */
@@ -1075,21 +1084,6 @@ static const struct {
     { MOVEMENT_ACTION_RIDE_WATER_CURRENT_DOWN, GetRideWaterCurrentMovementAction },
     { MOVEMENT_ACTION_WALK_FASTER_DOWN,        GetWalkFasterMovementAction },
 };
-
-/**
- * The follower's ObjectEvent, or NULL when it has no sprite on this map.
- */
-static struct ObjectEvent *GetFollowerObjectEvent(void)
-{
-    struct ObjectEvent *followerObj;
-
-    if (!sFollower.active || !sFollower.spriteSpawned || sFollower.objEventId >= OBJECT_EVENTS_COUNT)
-        return NULL;
-    followerObj = &gObjectEvents[sFollower.objEventId];
-    if (!followerObj->active)
-        return NULL;
-    return followerObj;
-}
 
 /**
  * The engine's collision check for `mover` stepping onto (x, y) in

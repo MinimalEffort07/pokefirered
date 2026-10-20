@@ -361,7 +361,7 @@ static void BikeTransition_MoveDirection(u8 direction)
         }
         else
         {
-            /* No blocking collision */
+            /* No blocking collision, or the walking Pokemon to swap with */
             if (collision == COLLISION_COUNT)
                 PlayerWalkFast(direction);  /* Cracked ice: move at fast speed */
             else if (PlayerIsMovingOnRockStairs(direction))

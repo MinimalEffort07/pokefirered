@@ -72,14 +72,6 @@ local function on_map(map)
     return g == map[1] and n == map[2]
 end
 
--- The swap in which the player stepped from (px, py) onto (fx, fy), or nil.
-local function find_swap(watch, px, py, fx, fy)
-    for _, s in ipairs(watch.swaps) do
-        if s.x == px and s.y == py and s.player_x == fx and s.player_y == fy then return s end
-    end
-    return nil
-end
-
 -- Assert that swap `s` happened and both steps lasted `frames` frames,
 -- ending together.
 local function check_swap(what, s, frames)
@@ -154,7 +146,7 @@ fw.run(function()
     local entered = watch.run_until(180, function() return on_map(DIGLETT_N) end)
     emu:clearKey(fw.KEY.UP)
     watch.finish()
-    check_swap("beat 2", find_swap(watch, 17, 12, 17, 11), 16)
+    check_swap("beat 2", follower.find_swap(watch, 17, 12, 17, 11), 16)
     if not fw.assert_true(entered ~= nil, "beat 2: back in Diglett's Cave within 180 frames") then
         return stop()
     end
@@ -188,7 +180,7 @@ fw.run(function()
     emu:clearKey(fw.KEY.B)
     watch.run(60)
     watch.finish()
-    check_swap("beat 3", find_swap(watch, 8, 14, 8, 13), 8)
+    check_swap("beat 3", follower.find_swap(watch, 8, 14, 8, 13), 8)
     fw.assert_true(reached ~= nil, string.format(
         "beat 3: the player reaches (8,9) within 90 frames of B+UP%s",
         reached and (" (" .. (reached - start) .. " frames)") or ""))

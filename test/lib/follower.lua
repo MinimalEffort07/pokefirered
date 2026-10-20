@@ -116,6 +116,13 @@ local FOLLOWER_ACTIVE_OFF = 0
 local FOLLOWER_OBJ_EVENT_ID_OFF = 7
 local OBJECT_EVENTS_COUNT = 16
 
+-- gPlayerAvatar.flags (u8 at offset 0 of struct PlayerAvatar,
+-- include/global.fieldmap.h), one bit per avatar state: bit 1 riding the
+-- bicycle (PLAYER_AVATAR_FLAG_MACH_BIKE, FireRed's only bicycle), bit 7
+-- running (PLAYER_AVATAR_FLAG_DASH, set while a step with B held plays).
+local PLAYER_AVATAR_FLAG_MACH_BIKE = 0x02
+local PLAYER_AVATAR_FLAG_DASH      = 0x80
+
 -- Directions as the game numbers them (include/constants/global.h).
 follower.DIR_SOUTH, follower.DIR_NORTH, follower.DIR_WEST, follower.DIR_EAST = 1, 2, 3, 4
 local DIR_DELTA = {
@@ -205,6 +212,18 @@ function follower.player()
     local o = follower.player_object()
     if o == nil then return nil end
     return o.x, o.y, o.facing
+end
+
+-- The held movement the player's object is playing this frame (its
+-- movementActionId, MOVEMENT_ACTION_* in include/constants/
+-- event_object_movement.h), or nil when none is.
+function follower.player_action()
+    local o = follower.player_object()
+    if o == nil then return nil end
+    local a = object_addr(o.index)
+    local flags = emu:read32(a + OE_FLAGS)
+    if (flags & FLAG_HELD_ACTIVE) == 0 or (flags & FLAG_HELD_FINISHED) ~= 0 then return nil end
+    return emu:read8(a + OE_ACTION)
 end
 
 -- Every live object except the follower, as mm.live_objects lists them
@@ -343,6 +362,8 @@ end)
 --   watch.tiles         the follower's tile on every frame (1-based; [0]
 --                       start)
 --   watch.player_tiles  the player's tile on every frame, the same way
+--   watch.still         whether the follower stood still on every frame (no
+--                       step of its own playing, previous tile = current)
 --   watch.changes       list of { frame, from_x, from_y, x, y, teleport,
 --                       jump, swap, player_x, player_y (the player's tile
 --                       that frame) }
@@ -352,9 +373,10 @@ end)
 --                       player_x, player_y (the player's new tile, the
 --                       follower's old one), follower_end, player_end (the
 --                       frame each step ended, nil until then),
---                       follower_was_still (it stood still on the frame
---                       before: no step of its own playing, and its previous
---                       tile equal to its current one) }
+--                       follower_was_still (watch.still on the frame
+--                       before), running, riding (the player's running and
+--                       bicycle flags in gPlayerAvatar.flags on the swap
+--                       frame) }
 --   watch.failed        true once the per-frame rule has failed (reported
 --                       once)
 function follower.new_watch(name, snap)
@@ -455,9 +477,13 @@ function follower.new_watch(name, snap)
             watch.changes[#watch.changes + 1] = change
             if far then watch.teleports[#watch.teleports + 1] = change end
             if swap then
-                watch.swaps[#watch.swaps + 1] = { frame = n, x = x, y = y,
-                                                  player_x = px, player_y = py,
-                                                  follower_was_still = watch.still[n - 1] }
+                local avatar = emu:read8(sym.addr("gPlayerAvatar"))
+                watch.swaps[#watch.swaps + 1] = {
+                    frame = n, x = x, y = y, player_x = px, player_y = py,
+                    follower_was_still = watch.still[n - 1],
+                    running = (avatar & PLAYER_AVATAR_FLAG_DASH) ~= 0,
+                    riding = (avatar & PLAYER_AVATAR_FLAG_MACH_BIKE) ~= 0,
+                }
                 watch.swap_tile = { x = x, y = y }
             else
                 watch.swap_tile = nil
@@ -555,6 +581,15 @@ function follower.new_watch(name, snap)
     end
 
     return watch
+end
+
+-- The swap in `watch.swaps` in which the player stepped from (px, py) onto
+-- (fx, fy) and the follower the other way, or nil.
+function follower.find_swap(watch, px, py, fx, fy)
+    for _, s in ipairs(watch.swaps) do
+        if s.x == px and s.y == py and s.player_x == fx and s.player_y == fy then return s end
+    end
+    return nil
 end
 
 -- How many frames each step of swap `s` (one of watch.swaps) lasted, from
@@ -741,8 +776,7 @@ end
 -- while they stand still, only turns them (the game's "turn in place"); a
 -- step needs the key held on after the turn.
 function follower.turn(key_name)
-    fw.press(key_name)
-    fw.wait_frames(30)
+    fw.press_and_wait(key_name, 30)
 end
 
 return follower
