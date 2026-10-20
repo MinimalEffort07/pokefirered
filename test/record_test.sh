@@ -51,6 +51,24 @@
 #   python3 test/tools/recording_notes.py set-pr <name> <PR>
 # A person running this script (no AUTODEV_ROLE) may leave notes out.
 #
+# ONLY GAME CHANGES ARE FILMED: a recording is made only for a change that
+# makes something on the GBA screen look or behave differently (CLAUDE.md,
+# step 8). A change to tests, tooling, autodev, docs, the recordings page or
+# this script gets none, and nor does a new test of behaviour the game
+# already had; its PR says "No recording: no in-game behaviour changes."
+# As a backstop, with AUTODEV_ROLE set this script (--check included)
+# refuses to record when the branch changes no file the game is built from
+# (GAME_DIRS and GAME_FILES below). What the branch changes is every file
+# that differs from where it left master (git merge-base HEAD origin/master):
+# commits, staged and unstaged edits, untracked new files, deletions and
+# renames. With no origin/master, no commit shared with it, or no git
+# checkout at all, it can't tell, so it refuses too. The check runs after
+# the notes' and, like theirs, before the recording lock, so a refusal
+# costs a second. It judges paths, not what the ROM shows: a src/ change
+# nobody can see, such as a refactor, gets past it, and the written rule
+# covers that. A person running this script (no AUTODEV_ROLE) may record
+# anything.
+#
 # THE NOTES FILE: every recording, with notes or without, gets <name>.json
 # beside <name>.mp4, written by test/tools/recording_notes.py. It holds the
 # notes and what this script knows itself: when it was recorded, the test,
@@ -108,6 +126,14 @@ KEPT_DIR="~/recordings/"
 PAGE_URL="http://100.76.129.86:8080/r"
 MGBA_QT_INI="$HOME/.config/mgba/qt.ini"
 TIMEOUT=300
+
+# The game: the files `make firered` builds the ROM from, as paths from the
+# repo root (see ONLY GAME CHANGES ARE FILMED). This is the one list: the
+# check and its message both read it. GAME_DIRS count with everything under
+# them. GAME_FILES match only at the top level, so docs/x.mk isn't the game;
+# their * stands for any characters but a /.
+GAME_DIRS=(src include asm data graphics sound constants tools)
+GAME_FILES=(Makefile config.mk '*.mk' 'ld_script*.ld' 'sym_*.txt' charmap.txt)
 
 # --help prints the USAGE part of the comment at the top of this file.
 usage() {
@@ -168,6 +194,79 @@ if [ -n "$NOTES" ]; then
     trap 'rm -f "$NOTES_COPY"' EXIT
     python3 "$NOTES_TOOL" check --save "$NOTES_COPY" "$NOTES" || exit 1
     TICKET="$(python3 "$NOTES_TOOL" ticket "$NOTES_COPY")" || exit 1
+fi
+
+# What counts as the game, and what to do when a branch changes none of it,
+# for the refusals below. ${GAME_DIRS[*]/%//} is GAME_DIRS with a / after
+# each folder: "src/ include/ ...".
+explain_game() {
+    echo "The game is everything under ${GAME_DIRS[*]/%//}"
+    echo "and, at the top level only, ${GAME_FILES[*]}: the files make firered builds the ROM from."
+    echo "A recording is made only for a change you can see in the game (CLAUDE.md, step 8)."
+    echo "For a change you can't see in the game:"
+    echo "  - leave the recording out;"
+    echo "  - write \"No recording: no in-game behaviour changes.\" in the PR;"
+    echo "  - name there any acceptance criterion that asked for a recording."
+    echo "That isn't a failure: the rule is newer than any ticket written before it."
+}
+
+# Refuse because the branch's changes can't be listed, saying why ($1).
+cant_tell() {
+    echo "ERROR: can't tell what the branch changes: $1,"
+    echo "so autodev doesn't record it."
+    explain_game
+}
+
+# Succeeds when this checkout's branch changes the game since it left
+# origin/master (see ONLY GAME CHANGES ARE FILMED); otherwise says why not
+# and fails.
+#   - git diff against the merge base, without --cached, compares the files
+#     as they are now, so it covers commits and staged and unstaged edits.
+#     --no-renames lists a rename as its old path and its new one, so moving
+#     a file out of the game counts.
+#   - ls-files --others lists untracked files, leaving out ignored ones
+#     (build output, the tools/agbcc link).
+#   - Both list only the game's files, which git picks out itself through
+#     pathspecs: ":(top)src/" is everything under src/ in the repo root, and
+#     ":(top,glob)*.mk" is a .mk file there (glob: a * never crosses a /, so
+#     docs/x.mk doesn't match). Matching in git, rather than on the names it
+#     prints, also covers names it would print quoted, such as src/a"b.c.
+# So the branch changes the game when either prints anything.
+require_game_change() {
+    local base base_name changed dir pattern
+    local specs=()
+    for dir in "${GAME_DIRS[@]}"; do specs+=(":(top)$dir/"); done
+    for pattern in "${GAME_FILES[@]}"; do specs+=(":(top,glob)$pattern"); done
+    if ! git -C "$PROJECT_DIR" rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+        cant_tell "$PROJECT_DIR isn't a git checkout"
+        return 1
+    fi
+    if ! git -C "$PROJECT_DIR" rev-parse -q --verify refs/remotes/origin/master > /dev/null; then
+        cant_tell "there's no origin/master to compare it with (git fetch origin makes one)"
+        return 1
+    fi
+    if ! base="$(git -C "$PROJECT_DIR" merge-base HEAD refs/remotes/origin/master 2>/dev/null)"; then
+        cant_tell "it shares no commit with origin/master"
+        return 1
+    fi
+    base_name="$(git -C "$PROJECT_DIR" rev-parse --short "$base")"
+    if ! changed="$(git -C "$PROJECT_DIR" diff --name-only --no-renames "$base" -- "${specs[@]}" \
+            && git -C "$PROJECT_DIR" ls-files --others --exclude-standard -- "${specs[@]}")"; then
+        cant_tell "git couldn't list the files that differ from $base_name"
+        return 1
+    fi
+    [ -n "$changed" ] && return 0
+    echo "ERROR: this branch changes nothing the game is built from, so autodev doesn't record it."
+    echo "Compared with $base_name, where the branch left origin/master:"
+    echo "no file changed since (committed, staged, unstaged or untracked) is part of the game."
+    explain_game
+    return 1
+}
+
+# Only game changes are filmed (see ONLY GAME CHANGES ARE FILMED): an
+# autodev session's branch must change the game.
+if [ -n "${AUTODEV_ROLE:-}" ]; then
+    require_game_change || exit 1
 fi
 
 # The video's name: the ticket when the notes name one, the test's name,
