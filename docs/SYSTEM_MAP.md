@@ -247,4 +247,4 @@ systemctl --user stop autodev.timer            # no new ticks until you start it
 systemctl --user start autodev.timer           # ticks again (disable --now / enable --now: for good)
 ```
 
-Recordings: http://100.116.114.81:8080 (`python3 test/serve_recordings.py`, run by `autodev-recordings.service`).
+Recordings: http://100.76.129.86:8080 (`python3 test/serve_recordings.py`, run by `autodev-recordings.service`).

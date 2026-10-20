@@ -226,16 +226,16 @@ gh pr create --title "Fix #<T>: <short description>" --body "..."
 ```
 PR body must reference the ticket and parent issue numbers, summarise what changed, and list what was tested. It also has a `## What changes for you` section: two or three plain sentences telling the owner what is different for them, such as a new command, a new board behaviour, a new rule for tests or a feature to try. When nothing is, it says `Nothing: internal only.`
 
-With a recording, the PR body links each recording's own page: one `Recording: http://100.116.114.81:8080/r/<name>` line per recording, with `<name>` as `record_test.sh` printed it. Once the PR exists and you know its number, put it into each recording's notes, so its card links the PR:
+With a recording, the PR body links each recording's own page: one `Recording: http://100.76.129.86:8080/r/<name>` line per recording, with `<name>` as `record_test.sh` printed it. Once the PR exists and you know its number, put it into each recording's notes, so its card links the PR:
 ```bash
 python3 test/tools/recording_notes.py set-pr <name> <PR>
 ```
 
 Once the frontier's PRs are created, post the following in your response to the user, with one `Recording` line per recording (the same lines as in the PR bodies) and one `Branch README` line per branch:
 ```
-Recordings available at: http://100.116.114.81:8080
+Recordings available at: http://100.76.129.86:8080
 (run: python3 test/serve_recordings.py)
-Recording: http://100.116.114.81:8080/r/<name>
+Recording: http://100.76.129.86:8080/r/<name>
 
 Branch README: https://github.com/MinimalEffort07/pokefirered/blob/<branch-name>/README.md
 ```
@@ -306,7 +306,7 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - Report your result once, at the very end, after every step has finished. Never report while a command is still running.
 - `record_test.sh` waits for any other recording on the machine to finish (it takes a machine-wide lock itself), so a recording may start late.
 - Every recording you make has notes (step 8). In an autodev session, `record_test.sh` refuses to record without them, and refuses notes whose `ticket:` isn't your ticket or that have no `parent:` (your ticket's `## Parent`). Your settings deny any command naming the session variables, heredocs included, so if your notes must name them, write the notes to a file with the Write tool and pass `--notes FILE`.
-- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the tests run with the suite result, the "Recordings available at…" and "Branch README" lines with a `Recording: http://100.116.114.81:8080/r/<name>` line under them for each recording (or "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
+- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the tests run with the suite result, the "Recordings available at…" and "Branch README" lines with a `Recording: http://100.76.129.86:8080/r/<name>` line under them for each recording (or "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
 - `open-pr` prints the PR's number (`#97 <its URL>`). Then run `python3 test/tools/recording_notes.py set-pr <name> <PR>` for each recording (step 11).
 - Push only your own branch: `git push -u origin issue-<T>-<slug>`. Never push to master, force-push or merge.
 - If you can't finish, push the unfinished branch before reporting `failed`.

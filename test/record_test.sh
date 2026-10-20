@@ -60,7 +60,7 @@
 # recording's card. The last two lines printed are the command that keeps
 # both files, and the recording's own page:
 #   mv /tmp/mgba-recordings/<name>.mp4 /tmp/mgba-recordings/<name>.json ~/recordings/
-#   http://100.116.114.81:8080/r/<name>
+#   http://100.76.129.86:8080/r/<name>
 #
 # PER-RUN OUTPUT: like test/run_test.sh, every run gets a private directory
 # (mktemp -d, passed to Lua as MGBA_TEST_DIR) for the test's results,
@@ -105,7 +105,7 @@ RECORDINGS_DIR="/tmp/mgba-recordings"
 # the last lines this script prints. The ~ is printed as it is, for the
 # shell of whoever pastes the line to expand.
 KEPT_DIR="~/recordings/"
-PAGE_URL="http://100.116.114.81:8080/r"
+PAGE_URL="http://100.76.129.86:8080/r"
 MGBA_QT_INI="$HOME/.config/mgba/qt.ini"
 TIMEOUT=300
 
