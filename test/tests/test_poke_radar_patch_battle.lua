@@ -65,7 +65,7 @@
 -- test/lib/framework.lua). Everything else fast-forwards. Each label starts
 -- with its scenario:
 --   P1 the four patches shaking after USE (fw.show); the step into a patch
---      and the battle's transition (fw.show_next, 90 frames); "Wild ...
+--      and the battle's transition (pr.walk_into_patch's moment); "Wild ...
 --      appeared!" (fw.show).
 --   P2 the wild Pokemon's faint after FIGHT (pr.play_battle's moment).
 --   P3 "Wild ... appeared!", the chain's species (fw.show).
@@ -113,12 +113,6 @@ local function patches_active_bit()
     return pr.patches_active() and 1 or 0
 end
 
--- A moment's label (see MOMENTS above): the scenario, e.g. "P1" from
--- "P1 step into a patch" or "P8" from "P8 follower, P1", then `what`.
-local function moment(name, what)
-    return name:match("^%S+") .. ": " .. what
-end
-
 -- Start a scenario that carries on where the last one left off (no warp,
 -- no reset): log its name, as pr.start_in_grass does.
 local function carry_on(name)
@@ -140,9 +134,8 @@ end
 -- Walk into a patch and check the battle it starts (P1's checks, which P3,
 -- P4 and P8 repeat): all of them within 300 frames of the step. `opts`
 -- (optional): opts.gif captions the demo; opts.step (a label) makes the
--- step into the patch and the battle's transition a moment (fw.show_next,
--- 90 frames: the step's 16, then the transition's flashes and wipe until
--- the screen goes black); opts.wild (a label, %s for the Pokemon's name)
+-- step into the patch and the battle's transition a moment
+-- (pr.walk_into_patch); opts.wild (a label, %s for the Pokemon's name)
 -- holds on "Wild ... appeared!" as one (fw.show). Returns the battle's
 -- species, or nil if no battle started.
 local function patch_battle(name, opts)
@@ -152,7 +145,7 @@ local function patch_battle(name, opts)
     -- gBattleMons[1] keeps the last battle's Pokemon until the next battle
     -- fills it in, so clear it: a species there now is this battle's.
     pr.forget_wild_species()
-    local stepped, x, y = pr.walk_into_patch(name, opts.step, 90)
+    local stepped, x, y = pr.walk_into_patch(name, opts.step)
     if not stepped then return nil end
     if gif then capture.caption("...and a wild POKéMON jumps out!") end
 
@@ -199,9 +192,9 @@ local function patch_battle(name, opts)
     local species_name = ROUTE1_SPECIES[species] or tostring(species)
     fw.log(string.format("[%s] Wild %s appeared!", name, species_name))
     fw.assert_eq(from_patch_bit(), 1, name .. ": the from-patch flag is still 1 with the battle running")
-    if opts.wild then fw.show(moment(name, string.format(opts.wild, species_name))) end
+    if opts.wild then fw.show(pr.moment(name, string.format(opts.wild, species_name))) end
     if gif then
-        fw.wait_frames(60)   -- the message on screen, 120 frames with the moment's
+        fw.wait_frames(opts.wild and 60 or 120)   -- the message on screen, 120 frames in all
         capture.stop()
     end
     return species
@@ -224,7 +217,7 @@ local function p1(name, opts)
     end
     if not use_radar(name, bag) then return end
     if opts.gif then capture.caption("...and four patches of grass start shaking") end
-    fw.show(moment(name, "four patches shake around the player"
+    fw.show(pr.moment(name, "four patches shake around the player"
         .. (opts.follower and ", PIKACHU behind" or "")))
     if opts.gif then fw.wait_frames(90) end   -- 150 frames on them, with the moment's
     if opts.follower then
@@ -232,19 +225,19 @@ local function p1(name, opts)
     else
         patch_battle(name, {
             gif = opts.gif,
-            step = moment(name, "a step into a shaking patch starts a wild battle"),
+            step = pr.moment(name, "a step into a shaking patch starts a wild battle"),
             wild = "\"Wild %s appeared!\"",
         })
     end
 end
 
 -- Win the battle P1 started, then the checks after it: chainCount is
--- `chain`, the from-patch flag is 0, not frozen. `watch` (optional, a
+-- `chain`, the from-patch flag is 0, not frozen. `moment` (optional, a
 -- label): the wild Pokemon's faint is a moment (pr.play_battle). Returns
 -- true if the battle was won.
-local function win_patch_battle(name, chain, watch)
+local function win_patch_battle(name, chain, moment)
     if not fw.assert_true(pr.in_battle(), name .. ": the patch battle is running") then return false end
-    local outcome, after = pr.play_battle("FIGHT", watch)
+    local outcome, after = pr.play_battle("FIGHT", moment)
     if not fw.assert_eq(outcome, pr.B_OUTCOME_WON, name .. ": FIGHT won the battle (gBattleOutcome)") then
         return false
     end
@@ -257,7 +250,7 @@ end
 
 -- P2: win P1's battle.
 local function p2(name)
-    win_patch_battle(name, 1, moment(name, "FIGHT wins the patch battle, the wild Pokemon faints (chain 1)"))
+    win_patch_battle(name, 1, pr.moment(name, "FIGHT wins the patch battle, the wild Pokemon faints (chain 1)"))
 end
 
 -- Recharge the radar (as if the player had walked the 50 steps since the
@@ -288,7 +281,7 @@ end
 local function p4(name)
     if not use_again(name) then return end
     if patch_battle(name) == nil then return end
-    local outcome, after = pr.play_battle("RUN", moment(name, "RUN: \"Got away safely!\" ends the chain"))
+    local outcome, after = pr.play_battle("RUN", pr.moment(name, "RUN: \"Got away safely!\" ends the chain"))
     if not fw.assert_eq(outcome, pr.B_OUTCOME_RAN, name .. ": RUN ended the battle (gBattleOutcome)") then
         return
     end
@@ -324,7 +317,7 @@ local function p7(name)
     fw.assert_true(pr.is_wild_battle(), name .. ": a wild battle (no BATTLE_TYPE_TRAINER bit)")
     fw.assert_eq(from_patch_bit(), 0, name .. ": the from-patch flag is 0 in a random battle")
     local outcome, after = pr.play_battle("FIGHT",
-        moment(name, "FIGHT wins a random battle, the wild Pokemon faints (the chain stays 0)"))
+        pr.moment(name, "FIGHT wins a random battle, the wild Pokemon faints (the chain stays 0)"))
     fw.assert_eq(outcome, pr.B_OUTCOME_WON, name .. ": FIGHT won the battle (gBattleOutcome)")
     pr.assert_back_on_field(name, 600, after)
     fw.assert_eq(pr.get_chain_species(), pr.SPECIES_NONE, name .. ": chainSpecies is still 0")
@@ -335,7 +328,7 @@ end
 local function p5(name)
     if not pr.start_in_grass(name) then return end
     if not use_radar(name) then return end
-    fw.show_next(moment(name, "a step onto grass that isn't a patch: no battle, the patches still shake"), 90)
+    fw.show_next(pr.moment(name, "a step onto grass that isn't a patch: no battle, the patches still shake"), 90)
     if not pr.assert_step(name, { grass = true }) then return end
     local px, py = mm.player_tile()
     fw.assert_true(not pr.is_patch_tile(px, py), string.format(
@@ -354,7 +347,7 @@ end
 local function p6(name)
     carry_on(name)
     if not fw.assert_true(pr.patches_active(), name .. ": P5 left the patches live") then return end
-    if not pr.walk_off_grass(name, moment(name, "a step off the grass: the patches vanish")) then return end
+    if not pr.walk_off_grass(name, pr.moment(name, "a step off the grass: the patches vanish")) then return end
     -- The radar acts when the step ends.
     fw.assert_true(pr.wait_step_done(), name .. ": the step off the grass finished")
     fw.assert_eq(patches_active_bit(), 0, name .. ": PATCHES_ACTIVE is 0 off the grass")
@@ -369,7 +362,7 @@ local function p8(name)
     p1(name .. ", P1", { follower = true })
     if not win_patch_battle(name .. ", P2", 1) then return end
     pr.assert_follower_sprite(name, "after the patch battle")
-    fw.show(moment(name, "after the won patch battle, PIKACHU still walks behind the player"))
+    fw.show(pr.moment(name, "after the won patch battle, PIKACHU still walks behind the player"))
 end
 
 fw.run(function()

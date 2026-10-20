@@ -56,9 +56,9 @@
 -- with its scenario:
 --   N1, N3 the step onto tall grass after USE, the patches still shaking
 --      (fw.show_next, before the step).
---   N4 Prof. Oak's message held on screen (fw.show), then A closing it and
---      the player's step (fw.show_next), with no charge: the case off the
---      grass is the same check.
+--   N4 Prof. Oak's message held on screen, then A closing it and the
+--      player's step (fw.show_next), with no charge: the case off the grass
+--      is the same check.
 --   N2 the step after USE with PIKACHU following (fw.show_next).
 --   N5 "Got away safely!" and the faint (pr.play_battle's moment), and the
 --      step back on the field after RUN (fw.show_next): the step after the
@@ -79,22 +79,16 @@ local mm = dofile(project_dir .. "test/lib/mt_moon.lua")
 local follower = dofile(project_dir .. "test/lib/follower.lua")
 follower.bind(fw)
 
--- A moment's label (see MOMENTS above): the scenario, e.g. "N4" from
--- "N4 can't use, no charge", then `what`.
-local function moment(name, what)
-    return name:match("^%S+") .. ": " .. what
-end
-
 -- After the radar was used (`elapsed` frames ago): the player is not frozen
 -- and steps onto tall grass that isn't a patch, and four patches are still
 -- shaking after that step. The "not frozen" check runs in its two halves
 -- (pr.assert_not_frozen's pr.assert_back_on_field and pr.assert_step), and
--- the step is a moment, `watch` (a label). `between(when)` (optional) runs
--- extra checks after USE and after the step.
-local function check_after_use(name, elapsed, watch, between)
+-- the step is a moment, `moment` (a label). `between(when)` (optional)
+-- runs extra checks after USE and after the step.
+local function check_after_use(name, elapsed, moment, between)
     pr.assert_back_on_field(name, 120, elapsed)
     if between then between("after USE") end
-    fw.show_next(watch)
+    fw.show_next(moment)
     local ok, x, y = pr.assert_step(name, { grass = true })
     if ok then
         local px, py = mm.player_tile()
@@ -112,7 +106,7 @@ local function n1(name)
     local used, elapsed = pr.use_from_bag(name)
     if not used then return end
     check_after_use(name, elapsed,
-        moment(name, "after USE from the BAG, a step onto the grass, and the patches still shake"))
+        pr.moment(name, "after USE from the BAG, a step onto the grass, and the patches still shake"))
 end
 
 -- N3: REGISTER, then use it with SELECT.
@@ -122,30 +116,33 @@ local function n3(name)
     local used, elapsed = pr.use_with_select(name)
     if not used then return end
     check_after_use(name, elapsed,
-        moment(name, "after USE with SELECT, a step onto the grass, and the patches still shake"))
+        pr.moment(name, "after USE with SELECT, a step onto the grass, and the patches still shake"))
 end
 
 -- SELECT > POKe RADAR where it can't be used: Prof. Oak's message shows,
 -- the player is held still while it does, and A closes it and gives
 -- control back with the radar untouched (`charges` charges, no patches).
--- With `watch` (why it can't be used, e.g. "with no charge"), the message
+-- With `why` (why it can't be used, e.g. "with no charge"), the message
 -- held on screen and then A closing it and the player's step are moments.
-local function select_cant_use(name, charges, watch)
+local function select_cant_use(name, charges, why)
     if not pr.use_with_select(name) then return end
     local up = fw.wait_until(pr.oak_message_up, 120, "Oak's message")
     if not fw.assert_true(up, name .. ": Prof. Oak's \"This isn't the time to use that!\" shows") then
         return
     end
-    -- The lock is checked before and after the hold, and on every frame
-    -- while A closes the message.
-    local locked_throughout = pr.field_controls_locked()
-    if watch then
-        fw.show(moment(name, "Prof. Oak's \"This isn't the time to use that!\" " .. watch))
-        fw.show_next(moment(name, "A closes Oak's message and the player steps: not frozen"))
+    -- The lock is checked on every frame the message is up: while a moment
+    -- holds on it (as fw.show does, a second), and while A closes it.
+    local locked_throughout = true
+    if why then
+        fw.show_next(pr.moment(name, "Prof. Oak's \"This isn't the time to use that!\" " .. why))
+        for _ = 1, 60 do
+            locked_throughout = locked_throughout and pr.field_controls_locked()
+            fw.yield()
+        end
+        fw.show_next(pr.moment(name, "A closes Oak's message and the player steps: not frozen"))
     end
     -- Press A until the message closes (the first A may only finish the
-    -- printing), checking the lock on every frame it is up. `since` counts
-    -- the frames from the A that closed it.
+    -- printing). `since` counts the frames from the A that closed it.
     local since = nil
     for _ = 1, 40 do
         locked_throughout = locked_throughout and pr.field_controls_locked()
@@ -217,15 +214,15 @@ local function n2(name)
     local used, elapsed = pr.use_from_bag(name)
     if not used then return end
     check_after_use(name, elapsed,
-        moment(name, "after USE, a step onto the grass with PIKACHU following, its sprite intact"),
+        pr.moment(name, "after USE, a step onto the grass with PIKACHU following, its sprite intact"),
         function(when) pr.assert_follower_sprite(name, when) end)
 end
 
 -- N5, one battle: USE, then step onto tall grass that isn't a patch until a
--- wild battle starts, and end it by `action` ("RUN" or "FIGHT"). `watch`:
--- the battle's end is a moment (pr.play_battle); `watch_step` (optional):
--- so is the "not frozen" step after it.
-local function battle_while_patches_live(name, action, expected_outcome, watch, watch_step)
+-- wild battle starts, and end it by `action` ("RUN" or "FIGHT"). The
+-- battle's end is a moment (pr.play_battle) showing `end_shows`; with
+-- `step_shows`, so is the "not frozen" step after it.
+local function battle_while_patches_live(name, action, expected_outcome, end_shows, step_shows)
     if not pr.start_in_grass(name) then return end
     local used, elapsed = pr.use_from_bag(name)
     if not used or not pr.assert_back_on_field(name, 120, elapsed) then return end
@@ -255,13 +252,13 @@ local function battle_while_patches_live(name, action, expected_outcome, watch, 
         name .. ": a random battle, not a patch's (FROM_PATCH_ENCOUNTER is 0)")
     fw.assert_true(pr.is_wild_battle(), name .. ": a wild battle, not a trainer's (no BATTLE_TYPE_TRAINER bit)")
 
-    local outcome, after = pr.play_battle(action, moment(name, watch))
+    local outcome, after = pr.play_battle(action, pr.moment(name, end_shows))
     fw.assert_eq(outcome, expected_outcome, string.format("%s: %s ended the battle (gBattleOutcome)", name, action))
     -- Not frozen first (pr.assert_not_frozen's two halves, the step maybe a
     -- moment): it waits for the field, whose map load gives every object
     -- its sprite back.
     pr.assert_back_on_field(name, 600, after)
-    if watch_step then fw.show_next(moment(name, watch_step)) end
+    if step_shows then fw.show_next(pr.moment(name, step_shows)) end
     pr.assert_step(name)
     pr.assert_object_sprites(name)
 end

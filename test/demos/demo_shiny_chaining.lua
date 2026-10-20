@@ -1,8 +1,10 @@
 -------------------------------------------------------------------------------
 -- demo_shiny_chaining.lua
 -------------------------------------------------------------------------------
--- Visual demo for the Gen 4 PokeRadar shiny-chain feature, intended to be
--- recorded via test/record_test.sh and clipped into a README GIF.
+-- Visual demo for the Gen 4 PokeRadar shiny-chain feature, to watch in a
+-- recording made with test/record_test.sh. The README's Shiny Chaining GIF
+-- comes from test_poke_radar_patch_battle.lua's P1 instead (frame dumps,
+-- see that test's header).
 --
 -- Unlike test_shiny_chaining.lua (which is memory-level and never leaves
 -- the Pallet Town bedroom), this script actually drives the full feature
@@ -15,10 +17,6 @@
 --      select POKERADAR -> USE.
 --   5. Four shaking grass patches spawn around the player.
 --   6. Walk onto one of them to trigger the forced encounter.
---
--- The recording is expected to be cropped to the mGBA game window only
--- (0,0 -> 480x320 on the 1920x640 virtual display) when turning it into
--- a GIF, so the scripting window is not visible in the final asset.
 --
 -- MOMENTS (see MOMENTS in test/lib/framework.lua): in the mGBA window the
 -- demo fast-forwards except for one moment, the four patches shaking after

@@ -49,11 +49,12 @@
 --   * pr.on_field(), pr.field_running(), pr.in_battle(): where the game's
 --     main loop is, and pr.wait_step_done(): the end of the player's step;
 --   * pr.walk_on_grass_onto(label, what, is_target, moment, frames),
---     pr.walk_into_patch(label, moment, frames),
---     pr.walk_off_grass(label, moment, frames): walking along the grass
---     without spoiling the patches, then into one or off the grass (issue
---     #89), the last step a moment for a recording if `moment` is given,
---     and pr.live_patch_sprites(): every patch sprite left;
+--     pr.walk_into_patch(label, moment), pr.walk_off_grass(label, moment):
+--     walking along the grass without spoiling the patches, then into one
+--     or off the grass (issue #89), the last step a moment for a recording
+--     if `moment` is given, and pr.live_patch_sprites(): every patch
+--     sprite left;
+--   * pr.moment(name, what): a moment's label, starting with the scenario;
 --   * pr.is_wild_battle() (pr.BATTLE_TYPE_TRAINER), pr.wild_species(),
 --     pr.forget_wild_species(), pr.wild_message_up(): the wild battle, its
 --     Pokemon, and its "Wild PIDGEY appeared!" on screen.
@@ -320,9 +321,11 @@ end
 -------------------------------------------------------------------------------
 
 -- struct Sprite (include/sprite.h), 0x44 bytes: the template it was made
--- from (a pointer) at 0x14, s16 data[8] starts at 0x2E, and bit 0 of the
--- byte at 0x3E is inUse.
+-- from (a pointer) at 0x14, the function the game calls on it every frame
+-- (its callback, a pointer) at 0x1C, s16 data[8] starts at 0x2E, and bit 0
+-- of the byte at 0x3E is inUse.
 local SPRITE_OFF_TEMPLATE = 0x14
+local SPRITE_OFF_CALLBACK = 0x1C
 local SPRITE_OFF_DATA0 = 0x2E
 
 local function sprite_addr(id)
@@ -904,6 +907,13 @@ function pr.start_in_grass(name)
         string.format("%s: the player stands in tall grass at (%d,%d)", name, x or -1, y or -1))
 end
 
+-- A moment's label (see MOMENTS in test/lib/framework.lua): the scenario,
+-- the first word of its name (e.g. "P1" from "P1 step into a patch", "N4"
+-- from "N4 can't use, no charge"), then `what`.
+function pr.moment(name, what)
+    return name:match("^%S+") .. ": " .. what
+end
+
 -- Run scenario `fn` (called with `name`) and log its own counts.
 function pr.scenario(name, fn)
     local pass0, fail0 = fw.counts()
@@ -1047,25 +1057,28 @@ function pr.walk_on_grass_onto(label, what, is_target, moment, frames)
         best.tx, best.ty)), best.tx, best.ty
 end
 
--- Walk into the nearest live patch (pr.walk_on_grass_onto, with its
--- optional `moment` and `frames`). Returns true once the player's tile is
--- the patch's, and the patch's tile.
-function pr.walk_into_patch(label, moment, frames)
+-- Walk into the nearest live patch (pr.walk_on_grass_onto). The step
+-- starts the patch battle, so its optional `moment` lasts PATCH_STEP_FRAMES:
+-- the step's 16, then the battle's transition, its flashes and wipe, until
+-- the screen goes black. Returns true once the player's tile is the
+-- patch's, and the patch's tile.
+local PATCH_STEP_FRAMES = 90
+function pr.walk_into_patch(label, moment)
     if not fw.assert_true(pr.patches_active(), label .. ": there are patches to walk into") then
         return false
     end
     return pr.walk_on_grass_onto(label, "a shaking patch", function(x, y)
         return pr.is_patch_tile(x, y)
-    end, moment, frames)
+    end, moment, PATCH_STEP_FRAMES)
 end
 
 -- Walk to the nearest tile off the tall grass (plain ground: MB_NORMAL, not
 -- solid and not a warp) without spoiling the patches on the way, and step
 -- onto it (pr.walk_on_grass_onto). A tile another object stands on (the
 -- follower, waiting behind the player, or an NPC) doesn't count: the
--- player would only bump into it. `moment`, `frames`: see
+-- player would only bump into it. `moment` (optional): see
 -- pr.walk_on_grass_onto.
-function pr.walk_off_grass(label, moment, frames)
+function pr.walk_off_grass(label, moment)
     local taken = {}
     for _, o in ipairs(mm.live_objects()) do
         if not o.is_player then taken[mm.key(o.x, o.y)] = true end
@@ -1073,7 +1086,7 @@ function pr.walk_off_grass(label, moment, frames)
     return pr.walk_on_grass_onto(label, "plain ground off the grass", function(x, y, snap)
         return not snap.solid(x, y) and not snap.warp(x, y) and snap.behavior(x, y) == MB.MB_NORMAL
             and not taken[mm.key(x, y)]
-    end, moment, frames)
+    end, moment)
 end
 
 -------------------------------------------------------------------------------
@@ -1135,8 +1148,11 @@ end
 -- PIDGEY fainted!"), RUN's from the frame the battle is decided ("Got away
 -- safely!" follows). Those frames (FAINT_FRAMES or RUN_FRAMES) play at
 -- normal speed and nothing is pressed meanwhile, so the watcher sees the
--- faint or the message as the game plays it, not skipped by A. Every one
--- of them still counts, in the 3600 and in the frames returned.
+-- faint or the message as the game plays it, not skipped by A. The frames
+-- returned leave out those held still after the decision: they are the
+-- test's pause for the watcher, not the game's time, and a moment must not
+-- stretch a timed check (the callers' "back on the field within 600
+-- frames"). FIGHT's moment ends before the decision anyway.
 local FAINT_FRAMES = 90   -- the slide down, then the message typed and held
 local RUN_FRAMES = 60     -- the message typed and held
 function pr.play_battle(action, moment)
@@ -1147,14 +1163,14 @@ function pr.play_battle(action, moment)
     local funcs = sym.addr("gBattlerControllerFuncs")
     local cursor = sym.addr("gActionSelectionCursor")
     local outcome_addr = sym.addr("gBattleOutcome")
-    -- The wild Pokemon faints: its sprite's callback (struct Sprite's
-    -- function pointer at 0x1C) is SpriteCB_AnimFaintOpponent while it
-    -- slides down, about 18 frames (src/battle_main.c; the
-    -- SpriteCB_FaintOpponentMon that starts it lasts a single frame).
-    -- gBattlerSpriteIds[1] is its sprite (battler 1 is the opponent).
+    -- The wild Pokemon faints: its sprite's callback is
+    -- SpriteCB_AnimFaintOpponent while it slides down, about 18 frames
+    -- (src/battle_main.c; the SpriteCB_FaintOpponentMon that starts it
+    -- lasts a single frame). gBattlerSpriteIds[1] is its sprite (battler 1
+    -- is the opponent).
     local function wild_fainting()
         local id = fw.read8(sym.addr("gBattlerSpriteIds") + 1)
-        return sym.is_func(fw.read32(sprite_addr(id) + 0x1C), "SpriteCB_AnimFaintOpponent")
+        return sym.is_func(fw.read32(sprite_addr(id) + SPRITE_OFF_CALLBACK), "SpriteCB_AnimFaintOpponent")
     end
     -- gBattleOutcome still holds the last battle's outcome until
     -- BeginBattleIntro, the battle's first step on BattleMainCB2's first
@@ -1165,8 +1181,9 @@ function pr.play_battle(action, moment)
 
     -- Every frame goes through tick(), which notes the frame the battle is
     -- decided on and starts the moment (`quiet_until`: the frame it ends
-    -- on, nothing pressed until then).
-    local frames, decided_at, quiet_until = 0, nil, nil
+    -- on, nothing pressed until then; `held`: the frames press() held still
+    -- for it after the decision).
+    local frames, decided_at, quiet_until, held = 0, nil, nil, 0
     local function tick()
         fw.yield()
         frames = frames + 1
@@ -1187,6 +1204,7 @@ function pr.play_battle(action, moment)
     local function press(key, wait)
         if quiet_until ~= nil and frames < quiet_until then
             tick()
+            if decided_at ~= nil then held = held + 1 end
             return
         end
         local idx = fw.KEY[key]
@@ -1214,10 +1232,10 @@ function pr.play_battle(action, moment)
         end
     end
     if decided_at == nil then return 0, 0 end
-    while pr.in_battle() and frames - decided_at < 600 do
+    while pr.in_battle() and frames - decided_at - held < 600 do
         press("A", 8)
     end
-    return fw.read8(outcome_addr), frames - decided_at
+    return fw.read8(outcome_addr), frames - decided_at - held
 end
 
 -- gBattleTypeFlags bit set for a trainer battle: BATTLE_TYPE_TRAINER,
