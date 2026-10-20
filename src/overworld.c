@@ -75,6 +75,7 @@
 #include "new_menu_helpers.h"
 #include "overworld.h"
 #include "play_time.h"
+#include "poke_radar.h"
 #include "pokemon_follower.h"
 #include "quest_log.h"
 #include "quest_log_objects.h"
@@ -2301,6 +2302,7 @@ static void InitObjectEventsLink(void)
     gTotalCameraPixelOffsetY = 0;
     ResetObjectEvents();
     TrySpawnObjectEvents(0, 0);
+    PokeRadar_OnFieldReload();
     TryRunOnWarpIntoMapScript();
 }
 
@@ -2321,6 +2323,10 @@ static void InitObjectEventsLocal(void)
     SpawnRemotePlayerSprites();
     SpawnFollowerSprite();
     SpawnRoamingPokemonOnMap();
+    /* ResumeMap freed every sprite; with the objects' sprites made again,
+     * the POKe RADAR brings back its shaking patches if this is still
+     * their map, or forgets them (src/poke_radar.c, FIELD RELOAD). */
+    PokeRadar_OnFieldReload();
     TryRunOnWarpIntoMapScript();
 }
 
@@ -2330,6 +2336,9 @@ static void ReloadObjectsAndRunReturnToFieldMapScript(void)
     SpawnRemotePlayerSprites();
     SpawnFollowerSprite();
     SpawnRoamingPokemonOnMap();
+    /* As in InitObjectEventsLocal: the POKe RADAR's patches come back on
+     * their own map after a menu, a battle or Continue. */
+    PokeRadar_OnFieldReload();
     RunOnReturnToFieldMapScript();
 }
 
