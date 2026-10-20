@@ -64,7 +64,7 @@ Read it top to bottom; each column is one actor. The dispatcher never does the w
 **Three facts that explain most surprises:**
 
 - **CLAUDE.md is the program.** Each session's prompt in `automation/prompts/` is a few lines that say "follow CLAUDE.md, Autonomous mode". What a session actually does comes from CLAUDE.md's GitHub Issue Workflow, so editing `CLAUDE.md` changes how the AI behaves.
-- **Autodev updates itself.** Every tick starts with `git pull` on autodev's own clone, so a change merged into `automation/` or `CLAUDE.md` is live within about 2 minutes, with no restart. The recordings page is a program that keeps running, so it would keep its old code: when a merge has changed `test/serve_recordings.py` since the page started, the tick restarts it (`automation/autodev/recordings.py`). That's the only time a video you're watching gets cut off. A page you stopped stays stopped.
+- **Autodev updates itself.** Every tick starts with `git pull` on autodev's own clone, so a change merged into `automation/` or `CLAUDE.md` is live within about 2 minutes, with no restart. The recordings page is a program that keeps running, so it would keep its old code: when a merge has changed `test/serve_recordings.py` since the page started, the tick restarts it (`automation/autodev/recordings.py`). That's the only time autodev cuts off a video you're watching. A page you stopped stays stopped.
 - **Only your words get in.** Sessions see text written by you or the bot and nothing else, because the repo is public and a stranger's comment could carry instructions. Only your exact `/merge` merges.
 
 ## Board columns
@@ -176,7 +176,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/run_suite.sh` | Runs every top-level test, 4 at a time, in about 10 minutes. Must pass before a merge. |
 | `test/suite_exclude.txt` | The tests the suite skips, each with a one-line reason. The suite refuses to start on a line without one. |
 | `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. |
-| `test/serve_recordings.py` | A web page of the recordings on port 8080, run by `autodev-recordings.service`. The dispatcher restarts it when a merge changes this file, so it stays one file that imports only Python's standard library. |
+| `test/serve_recordings.py` | A web page of the recordings on port 8080, run by `autodev-recordings.service`. The dispatcher restarts it when a merge changes this file, so it must stay one file that imports only Python's standard library. |
 | `test/mgba-qt.sh` | Opens the patched mGBA window by hand. |
 | `test/lib/framework.lua` | The test framework: press buttons, wait frames, assert, write results. Every test loads it. |
 | `test/lib/addresses.lua` | Where game variables sit in memory, for the older tests that hard-code addresses. |

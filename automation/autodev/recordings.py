@@ -1,10 +1,10 @@
-"""Keeping the recordings page on the code master has (#107).
+"""Keeping the recordings page on the clone's code (#107).
 
 `autodev-recordings.service` runs `test/serve_recordings.py` from
-autodev's clone and keeps running. Every tick pulls master into the
-clone, but a running program keeps the code it started with: Python
-reads the file once, at start. So once a merge changes the server, the
-page only shows the change after the service restarts.
+autodev's clone and keeps running. Every tick pulls the clone, but a
+running program keeps the code it started with: Python reads the file
+once, at start. So once a merge changes the server, the page only shows
+the change after the service restarts.
 
 Each tick asks systemd when the service started and compares that with
 when the clone's copy of the file last changed. A file changed since the

@@ -14,7 +14,7 @@ from autodev.config import Config
 from autodev.dispatcher import tick
 from autodev.gh import GhError
 from autodev.recordings import RecordingsServer
-from tests.fakes import FakeGh
+from tests.fakes import FakeGh, FakeRegistry
 
 # When the service started, as systemd printed it on 2026-10-20.
 STARTED = 1792374861
@@ -68,7 +68,7 @@ class Restarting(ServerFile, unittest.TestCase):
         code = RecordingsServer(self.clone, run=systemctl).keep_current(log)
         return code, log.getvalue().splitlines()
 
-    def test_b1_a_file_changed_since_the_start_restarts_the_server(self):
+    def test_B1_a_file_changed_since_the_start_restarts_the_server(self):
         systemctl = FakeSystemctl()
         code, lines = self.check(systemctl, STARTED + 60)
         self.assertEqual(code, 0)
@@ -77,7 +77,7 @@ class Restarting(ServerFile, unittest.TestCase):
             "restarted the recordings server: "
             "test/serve_recordings.py changed since it started"])
 
-    def test_b2_a_file_unchanged_since_the_start_is_left_alone(self):
+    def test_B2_a_file_unchanged_since_the_start_is_left_alone(self):
         # The service's start time is in whole seconds, so a change within
         # that second can't be told from one just before it: it counts as
         # before. Today's real file: modified 22 s before the start.
@@ -89,7 +89,7 @@ class Restarting(ServerFile, unittest.TestCase):
                 self.assertEqual(systemctl.calls, [SHOW])
                 self.assertEqual(lines, [])
 
-    def test_b3_a_stopped_server_stays_stopped(self):
+    def test_B3_a_stopped_server_stays_stopped(self):
         # Stopped by the owner, failed, or never started since boot (systemd
         # then prints an empty start time, as it does for a unit it doesn't
         # know). It runs the new code whenever it next starts.
@@ -109,7 +109,7 @@ class Restarting(ServerFile, unittest.TestCase):
         self.assertTrue(lines[0].startswith("error: "), lines[0])
         self.assertIn("recordings server", lines[0])
 
-    def test_b4_systemctl_failing_is_one_error_line(self):
+    def test_B4_systemctl_failing_is_one_error_line(self):
         for systemctl in (
                 FakeSystemctl(failing="show"),
                 FakeSystemctl(raises=FileNotFoundError(
@@ -120,7 +120,7 @@ class Restarting(ServerFile, unittest.TestCase):
                 self.assert_one_error(code, lines)
                 self.assertEqual(systemctl.calls, [SHOW])
 
-    def test_b4_unreadable_output_is_one_error_line(self):
+    def test_B4_unreadable_output_is_one_error_line(self):
         for show in ("",
                      "garbage\n",
                      "ActiveState=active\n",
@@ -135,13 +135,13 @@ class Restarting(ServerFile, unittest.TestCase):
                 self.assert_one_error(code, lines)
                 self.assertEqual(systemctl.calls, [SHOW])
 
-    def test_b4_a_failed_restart_is_one_error_line(self):
+    def test_B4_a_failed_restart_is_one_error_line(self):
         systemctl = FakeSystemctl(failing="try-restart")
         code, lines = self.check(systemctl, STARTED + 60)
         self.assert_one_error(code, lines)
         self.assertEqual(systemctl.calls, [SHOW, TRY_RESTART])
 
-    def test_b4_a_missing_server_file_is_one_error_line(self):
+    def test_B4_a_missing_server_file_is_one_error_line(self):
         # Only reached while the service runs: it would fail to start again.
         os.remove(self.server)
         systemctl = FakeSystemctl()
@@ -149,31 +149,6 @@ class Restarting(ServerFile, unittest.TestCase):
         code = RecordingsServer(self.clone, run=systemctl).keep_current(log)
         self.assert_one_error(code, log.getvalue().splitlines())
         self.assertEqual(systemctl.calls, [SHOW])
-
-
-class FakeRegistry:
-    """The sessions the tick would start, with none running."""
-
-    def __init__(self):
-        self.started = []
-
-    def load(self, now=None):
-        return []
-
-    def paused_until(self):
-        return 0.0
-
-    def crashes(self):
-        return {}
-
-    def requeued(self):
-        return set()
-
-    def start(self, role, issue, prompt, pr=None, handled_through=None):
-        self.started.append((role, issue))
-
-    def prune(self):
-        return 0
 
 
 class UnreachableGh(FakeGh):
@@ -200,7 +175,7 @@ class EveryTick(ServerFile, unittest.TestCase):
                     recordings=RecordingsServer(self.clone, run=systemctl))
         return code, log.getvalue().splitlines(), registry.started
 
-    def test_b4_a_failed_check_still_does_the_boards_work(self):
+    def test_B4_a_failed_check_still_does_the_boards_work(self):
         # A parent issue in Todo: the tick starts its grill and marks it.
         gh = FakeGh.from_fixture("one_parent_no_status.json")
         code, lines, started = self.tick(gh, FakeSystemctl(failing="show"))
@@ -225,7 +200,7 @@ class EveryTick(ServerFile, unittest.TestCase):
             "#61 MinimalEffort07 Todo has_parent=no"])
         self.assertEqual(started, [("grill", 61)])
 
-    def test_b5_no_board_found_still_runs_the_check(self):
+    def test_B5_no_board_found_still_runs_the_check(self):
         systemctl = FakeSystemctl()
         code, lines, started = self.tick(FakeGh.from_fixture("no_board.json"),
                                          systemctl)
@@ -236,7 +211,7 @@ class EveryTick(ServerFile, unittest.TestCase):
             "test/serve_recordings.py changed since it started",
             'error: no board titled "pokefirered autodev" owned by MinimalEffort07'])
 
-    def test_b5_a_board_that_cant_be_read_still_runs_the_check(self):
+    def test_B5_a_board_that_cant_be_read_still_runs_the_check(self):
         # The tick gives up on GitHub's error (`python3 -m autodev tick`
         # logs it and exits 1), but only after the check.
         systemctl = FakeSystemctl()
