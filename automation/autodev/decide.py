@@ -242,7 +242,9 @@ def plan(state):
     held = {i.number for i in state.items if i.status in (PAUSED, GRILLING)
             or (i.status == TODO and ("grill", i.number) in state.requeued)}
     places = _places(state)
-    ready = []      # (priority, group) for each group that launches a session
+    # (priority, group) for each group that launches a session, or holds a
+    # slot for one
+    ready = []
     for item in sorted(state.items, key=lambda i: i.number):
         if item.number in has_session:
             continue
@@ -266,14 +268,16 @@ def plan(state):
         launch = next((a for a in new if isinstance(a, Launch)), None)
         if launch is None:
             groups.append(new)
-            if _just_unblocked(state, item) and item.parent not in held:
-                # The held slot: this tick only moves the ticket back to
-                # Todo, and the next one launches it. Meanwhile it takes
-                # the free slot it will need, with nothing in it, so a later
-                # feature's ticket or a grill can't start there first.
-                ready.append((_priority("ticket", item, places), []))
-        elif item.parent not in held:
+        if item.parent in held:
+            continue
+        if launch is not None:
             ready.append((_priority(launch.role, item, places), new))
+        elif _just_unblocked(state, item):
+            # The held slot: this tick only moves the ticket back to Todo,
+            # and the next one launches it. Meanwhile it takes the free slot
+            # it will need, with nothing in it, so a later feature's ticket
+            # or a grill can't start there first.
+            ready.append((_priority("ticket", item, places), []))
     # While a usage limit lasts nothing starts, including the moment it is
     # found; the board is still kept up to date.
     limit_ends = max([state.paused_until] + [a.until for g in groups for a in g
@@ -300,8 +304,7 @@ def _places(state):
     nobody else can move a parent up by naming it in an issue of theirs."""
     places = {}
     for i in state.items:
-        if (i.has_parent and i.parent is not None
-                and i.author in (state.owner, state.bot)):
+        if i.has_parent and i.parent is not None and _trusted(state, i):
             places[i.parent] = min(places.get(i.parent, i.number), i.number)
     return places
 
@@ -347,12 +350,17 @@ def _open_blockers(state, item):
     return [b for b in item.blocked_by if b not in state.closed]
 
 
+def _trusted(state, item):
+    # Grill sessions write tickets as the bot, so the bot's are trusted
+    # too. Anyone else's "## Parent" heading doesn't make an issue a ticket.
+    return item.author in (state.owner, state.bot)
+
+
 def _just_unblocked(state, item):
     """A trusted ticket whose card still says Blocked though nothing it
     waits on is open: its last blocker closed since the last tick, usually
     as its sibling's PR merged. This tick moves it back to Todo."""
-    return (is_waiting_ticket(item) and item.status == BLOCKED
-            and item.author in (state.owner, state.bot)
+    return (item.has_parent and item.status == BLOCKED and _trusted(state, item)
             and not _open_blockers(state, item))
 
 
@@ -366,9 +374,7 @@ def _untrusted(state, item):
 def _waiting_ticket(state, item):
     """A ticket in Todo or Blocked: launch it once nothing it waits on is
     open, and keep its card's Status in step with its blockers."""
-    # Grill sessions write tickets as the bot, so the bot's are trusted
-    # too. Anyone else's "## Parent" heading doesn't make an issue a ticket.
-    if item.author not in (state.owner, state.bot):
+    if not _trusted(state, item):
         return _untrusted(state, item)
     blocked = bool(_open_blockers(state, item))
     if item.status == BLOCKED:
@@ -494,7 +500,7 @@ def _parked_ticket(state, item):
     ticket stays parked for its author (D2)."""
     since = state.parked_at.get(item.number)
     pr = state.prs.get(item.number)
-    if since is None or pr is None or item.author not in (state.owner, state.bot):
+    if since is None or pr is None or not _trusted(state, item):
         return []
     newest = _newest_unhandled(state, pr)
     if newest is not None and newest.at > since:
