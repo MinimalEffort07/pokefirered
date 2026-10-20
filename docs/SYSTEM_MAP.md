@@ -64,7 +64,7 @@ Read it top to bottom; each column is one actor. The dispatcher never does the w
 **Three facts that explain most surprises:**
 
 - **CLAUDE.md is the program.** Each session's prompt in `automation/prompts/` is a few lines that say "follow CLAUDE.md, Autonomous mode". What a session actually does comes from CLAUDE.md's GitHub Issue Workflow, so editing `CLAUDE.md` changes how the AI behaves.
-- **Autodev updates itself.** Every tick starts with `git pull` on autodev's own clone, so a change merged into `automation/` or `CLAUDE.md` is live within about 2 minutes, with no restart.
+- **Autodev updates itself.** Every tick starts with `git pull` on autodev's own clone, so a change merged into `automation/` or `CLAUDE.md` is live within about 2 minutes, with no restart. The recordings page is a program that keeps running, so it would keep its old code: when a merge has changed `test/serve_recordings.py` since the page started, the tick restarts it (`automation/autodev/recordings.py`). That's the only time a video you're watching gets cut off. A page you stopped stays stopped.
 - **Only your words get in.** Sessions see text written by you or the bot and nothing else, because the repo is public and a stranger's comment could carry instructions. Only your exact `/merge` merges.
 
 ## Board columns
@@ -152,7 +152,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `automation/wizard.sh` | Walks you through what only a person can do: the bot account and token, `gh`'s project scope, the Windows logon task that keeps WSL awake. |
 | `automation/config.json` | Names and paths: owner, bot, board title, the 2-session cap, model, clone, log and state folders. |
 | `automation/autodev/__main__.py` | The entry point the timer runs: `python3 -m autodev tick`. |
-| `automation/autodev/dispatcher.py` | **One tick.** Gathers the board and what finished sessions left on GitHub, asks `automation/autodev/decide.py` what to do, carries it out, logs it to the journal. |
+| `automation/autodev/dispatcher.py` | **One tick.** Restarts the recordings page if a merge changed it (`automation/autodev/recordings.py`), then gathers the board and what finished sessions left on GitHub, asks `automation/autodev/decide.py` what to do, carries it out, logs it to the journal. |
 | `automation/autodev/decide.py` | **The rules,** as one pure function: state in, list of actions out. Priority, blocking, `/merge`, crashes and usage limits all live here. |
 | `automation/autodev/board.py` | Reads the Projects board through GitHub's GraphQL API. |
 | `automation/autodev/github.py` | Carries out actions on GitHub and checks whether a finished session really left its design, tickets, PR or reply. |
@@ -160,6 +160,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `automation/autodev/sessions.py` | Starts each `claude -p` run in its own systemd unit with the role's time limit and effort, then reads back its result and any usage-limit message. |
 | `automation/autodev/registry.py` | The dispatcher's memory between ticks: which sessions it started, crash counts, the usage-limit pause. |
 | `automation/autodev/worktrees.py` | Makes and removes each ticket's worktree and branch, with `tools/agbcc` linked. |
+| `automation/autodev/recordings.py` | Restarts the recordings page on a tick when its code changed since it started, so a merged change to the page shows within about 2 minutes. |
 | `automation/autodev/config.py` | Loads `automation/config.json`. |
 | `automation/bin/issue.py` | The sessions' only way to reach GitHub. |
 | `automation/autodev/issue_tool.py` | The trust and per-role rules `automation/bin/issue.py` enforces. |
@@ -175,7 +176,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/run_suite.sh` | Runs every top-level test, 4 at a time, in about 10 minutes. Must pass before a merge. |
 | `test/suite_exclude.txt` | The tests the suite skips, each with a one-line reason. The suite refuses to start on a line without one. |
 | `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. |
-| `test/serve_recordings.py` | A web page of the recordings on port 8080, run by `autodev-recordings.service`. |
+| `test/serve_recordings.py` | A web page of the recordings on port 8080, run by `autodev-recordings.service`. The dispatcher restarts it when a merge changes this file, so it stays one file that imports only Python's standard library. |
 | `test/mgba-qt.sh` | Opens the patched mGBA window by hand. |
 | `test/lib/framework.lua` | The test framework: press buttons, wait frames, assert, write results. Every test loads it. |
 | `test/lib/addresses.lua` | Where game variables sit in memory, for the older tests that hard-code addresses. |
