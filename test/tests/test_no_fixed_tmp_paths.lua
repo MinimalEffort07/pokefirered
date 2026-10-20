@@ -36,8 +36,9 @@
 --   recordings from any worktree know about each other and take turns.
 --   Three more /tmp names are allowed because no file in them is used under
 --   the same name by two runs: mktemp templates, record_test.sh's video
---   folder (each video gets a timestamped name; the recordings page and
---   recording_notes.py's set-pr find videos there), and fw.out_path's fallback
+--   folder (each video gets a timestamped name; the recordings page reads
+--   it, and recording_notes.py's set-pr finds notes files there), and
+--   fw.out_path's fallback
 --   for scripts loaded by hand, which run_test.sh never uses.
 --
 -- Run:

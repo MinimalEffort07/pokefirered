@@ -177,18 +177,17 @@ def parse_pr(value, number):
 
 
 def session_from(env):
-    """The autodev session environment `env` belongs to, as {"role",
-    "issue", "pr"}, or None outside one (no role). The issue and the PR are
-    numbers, or None when missing or not a number."""
-    role = env.get("AUTODEV_ROLE", "")
-    if not role:
+    """The autodev session environment `env` belongs to, as {"issue",
+    "pr"}, or None outside one (no role). The issue and the PR are numbers,
+    or None when missing or not a number."""
+    if not env.get("AUTODEV_ROLE", ""):
         return None
 
     def number(name):
         value = env.get(name, "")
         return int(value) if value.isdigit() and int(value) > 0 else None
 
-    return {"role": role, "issue": number("AUTODEV_ISSUE"), "pr": number("AUTODEV_PR")}
+    return {"issue": number("AUTODEV_ISSUE"), "pr": number("AUTODEV_PR")}
 
 
 def session_problems(headers, malformed, session):
@@ -198,16 +197,15 @@ def session_problems(headers, malformed, session):
     problems = []
     issue = session["issue"]
     ticket = headers.get("ticket")
-    own = f'this autodev session is for #{issue}, so its notes say "ticket: {issue} <the ticket\'s title>"'
+    own_ticket_hint = (f'this autodev session is for #{issue}, so its notes say '
+                       f'"ticket: {issue} <the ticket\'s title>"')
     if issue is None:
         problems.append("this autodev session's issue number isn't set, so it can't "
                         "check which ticket the notes are for")
-    elif "ticket" in malformed:
-        pass
-    elif ticket is None:
-        problems.append(f'missing "ticket:": {own}')
-    elif ticket["number"] != issue:
-        problems.append(f'ticket: {ticket["number"]} isn\'t this session\'s ticket: {own}')
+    elif ticket is None and "ticket" not in malformed:
+        problems.append(f'missing "ticket:": {own_ticket_hint}')
+    elif ticket is not None and ticket["number"] != issue:
+        problems.append(f'ticket: {ticket["number"]} isn\'t this session\'s ticket: {own_ticket_hint}')
     if headers.get("parent") is None and "parent" not in malformed:
         problems.append('missing "parent:": an autodev session\'s notes name the feature '
                         'its ticket belongs to (the issue under the ticket\'s "## Parent"), '
@@ -465,16 +463,25 @@ def cmd_write(args):
     return save(record, notes_file_path(args.video))
 
 
-def cmd_set_result(args):
-    """set-result: the run's result into an existing notes file."""
+def load(path):
+    """The record in notes file `path`, or None, saying why, when it can't
+    be read or isn't a notes file."""
     try:
-        with open(args.notes_file, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             record = json.load(f)
     except (OSError, ValueError) as e:
-        print(f"can't read notes file {args.notes_file}: {e}", file=sys.stderr)
-        return 1
+        print(f"can't read notes file {path}: {e}", file=sys.stderr)
+        return None
     if not isinstance(record, dict):
-        print(f"not a notes file: {args.notes_file}", file=sys.stderr)
+        print(f"not a notes file: {path}", file=sys.stderr)
+        return None
+    return record
+
+
+def cmd_set_result(args):
+    """set-result: the run's result into an existing notes file."""
+    record = load(args.notes_file)
+    if record is None:
         return 1
     record["result"] = read_result(args.results)
     return save(record, args.notes_file)
@@ -505,14 +512,8 @@ def cmd_set_pr(args):
     else:
         print(f"no notes file {name}.json in {' or '.join(folders)}", file=sys.stderr)
         return 1
-    try:
-        with open(path, encoding="utf-8") as f:
-            record = json.load(f)
-    except (OSError, ValueError) as e:
-        print(f"can't read notes file {path}: {e}", file=sys.stderr)
-        return 1
-    if not isinstance(record, dict):
-        print(f"not a notes file: {path}", file=sys.stderr)
+    record = load(path)
+    if record is None:
         return 1
     record["pr"] = int(m.group(1))
     if save(record, path) != 0:

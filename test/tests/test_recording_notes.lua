@@ -58,7 +58,7 @@
 --   D4  The same session, with complete notes for #90: accepted.
 --   D5  A fix-up session for #90 with PR 97, notes without pr:: --check says
 --       PR #97, and the notes file the helper writes has "pr": 97. With
---       pr: 97 in the notes, it's kept.
+--       pr: 97 in the notes, it's kept, and so is a pr: 98.
 --   D6  No session variables, no notes: accepted, as in C1.
 --   D7  set-pr sets "pr" in an existing notes file in either folder (kept
 --       first, as on the page), leaving the rest as it was. It refuses a
@@ -599,7 +599,9 @@ local function check_sessions()
     ok = fw.assert_eq(code, 0, "D5: a fix-up session for #90 accepts notes without pr: (exit 0)")
     ok = fw.assert_true(has(output, "PR #97"), "D5: ... and --check says PR #97") and ok
     if not ok then dump("D5 --check", output) end
-    for _, case in ipairs({ { "without pr:", no_pr }, { "with pr: 97", COMPLETE } }) do
+    -- (pr: 98 shows the notes' own PR is kept, not overwritten by 97.)
+    for _, case in ipairs({ { "without pr:", no_pr, "97" }, { "with pr: 97", COMPLETE, "97" },
+                            { "with pr: 98", (COMPLETE:gsub("pr: 97", "pr: 98")), "98" } }) do
         local video = WORK .. "/d5_" .. case[1]:gsub("%W", "_") .. ".mp4"
         write_file(video, "\0\0\0\0")
         code, output = run_as(FIXUP_SESSION, "python3 " .. sh_quote(NOTES_TOOL) .. " write " .. sh_quote(video)
@@ -607,7 +609,8 @@ local function check_sessions()
             .. " --repo " .. sh_quote(REPO) .. " --notes " .. sh_quote(notes_file("d5.txt", case[2])))
         local f = read_json(video:gsub("%.mp4$", ".json"))
         ok = fw.assert_eq(code, 0, "D5: a fix-up's notes " .. case[1] .. ": the helper writes the notes file")
-        ok = fw.assert_eq(f.pr, "97", "D5: a fix-up's notes " .. case[1] .. ": the notes file has \"pr\": 97") and ok
+        ok = fw.assert_eq(f.pr, case[3], "D5: a fix-up's notes " .. case[1] .. ": the notes file has \"pr\": "
+            .. case[3]) and ok
         if not ok then dump("D5 write " .. case[1], output) end
     end
 
