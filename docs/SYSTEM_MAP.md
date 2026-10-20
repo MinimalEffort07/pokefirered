@@ -99,6 +99,7 @@ A parent you write is grilled into tickets. Each ticket waits for its blockers, 
 - **Usage limit.** When a session hits the Claude usage limit, no session of any kind starts until 5 minutes after the reset, and the interrupted work is queued again.
 - **Crashes.** The first crash re-queues the work. A second crash in a row for the same role and issue parks it in `Needs human`.
 - **Closing a ticket yourself** counts as done: its worktree is removed and the tickets it blocked move on.
+- **Closed cards leave the board.** The board's "Auto-archive items" workflow archives a card within seconds of its issue closing, and autodev doesn't need the card. It counts a parent's tickets from the parent's sub-issues on GitHub, so the parent still closes once they all have. A closed ticket still loses its worktree, and autodev never tries to set the Status of a card that's gone.
 
 ## Session roles
 
@@ -155,10 +156,10 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `automation/wizard.sh` | Walks you through what only a person can do: the bot account and token, `gh`'s project scope, the Windows logon task that keeps WSL awake. |
 | `automation/config.json` | Names and paths: owner, bot, board title, the 2-session cap, model, clone, log and state folders. |
 | `automation/autodev/__main__.py` | The entry point the timer runs: `python3 -m autodev tick`. |
-| `automation/autodev/dispatcher.py` | **One tick.** Restarts the recordings page if a merge changed it (`automation/autodev/recordings.py`), then gathers the board and what finished sessions left on GitHub, asks `automation/autodev/decide.py` what to do, carries it out, logs it to the journal. |
+| `automation/autodev/dispatcher.py` | **One tick.** Restarts the recordings page if a merge changed it (`automation/autodev/recordings.py`), then gathers the board, each open parent's tickets among its sub-issues, and what finished sessions left on GitHub, asks `automation/autodev/decide.py` what to do, carries it out, logs it to the journal. |
 | `automation/autodev/decide.py` | **The rules,** as one pure function: state in, list of actions out. Priority, blocking, `/merge`, crashes and usage limits all live here. |
 | `automation/autodev/board.py` | Reads the Projects board through GitHub's GraphQL API. |
-| `automation/autodev/github.py` | Carries out actions on GitHub and checks whether a finished session really left its design, tickets, PR or reply. |
+| `automation/autodev/github.py` | Carries out actions on GitHub, lists which of a parent's sub-issues are its tickets, and checks whether a finished session really left its design, tickets, PR or reply. |
 | `automation/autodev/gh.py` | The GitHub adapter: runs `gh api` as a subprocess, with the bot's token. |
 | `automation/autodev/sessions.py` | Starts each `claude -p` run in its own systemd unit with the role's time limit and effort, then reads back its result and any usage-limit message. |
 | `automation/autodev/registry.py` | The dispatcher's memory between ticks: which sessions it started, crash counts, the usage-limit pause. |

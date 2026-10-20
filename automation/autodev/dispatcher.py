@@ -22,7 +22,7 @@ import os
 import time
 
 from autodev import board, worktrees
-from autodev.decide import (IN_REVIEW, NEEDS_HUMAN, TODO, CloseIssue,
+from autodev.decide import (IN_PROGRESS, IN_REVIEW, NEEDS_HUMAN, TODO, CloseIssue,
                             Comment, Finish, Launch, LinkSubIssue,
                             MakeWorktree, PauseLaunches,
                             PlaceOnBoard, RemoveWorktree, SetStatus, State,
@@ -94,8 +94,11 @@ def read_state(github, config, snapshot, registry, log):
     GitHub shows for the ones that ended, which of the waiting tickets'
     blockers are closed, the PRs waiting in review and what was said on
     them, when each parked ticket was parked and what was said on its PR
-    since, which tickets have a worktree, and what the registry remembers:
-    a usage-limit pause and earlier crashes. Returns (exit code, State)."""
+    since, which tickets have a worktree (and, for those whose card has
+    left the board, whether they are closed), the sub-issues of the
+    owner's parents in Todo or In progress, and what the registry
+    remembers: a usage-limit pause and earlier crashes. Returns (exit
+    code, State)."""
     code = 0
     now = time.time()
     known = registry.load(now=now)
@@ -114,19 +117,36 @@ def read_state(github, config, snapshot, registry, log):
     on_board = {item.number: item for item in snapshot.items}
     blockers = {b for item in snapshot.items if is_waiting_ticket(item)
                 for b in item.blocked_by}
-    for number in sorted(blockers):
+    # The board archives a ticket's card as it closes, and archived cards
+    # aren't read, so a worktree whose card is gone is checked on GitHub.
+    have_worktrees = frozenset(worktrees.tickets_with_worktrees(config.clone))
+    for number in sorted(blockers | (have_worktrees - on_board.keys())):
         if number in on_board:
             is_open = on_board[number].is_open
         else:
             try:
                 is_open = github.is_open(number)
             except GhError as e:
-                # Counted as open: its tickets wait for a later tick.
+                # Counted as open: its tickets wait for a later tick, and
+                # its worktree stays.
                 print("error: reading #%d's state: %s" % (number, e), file=log)
                 code = 1
                 continue
         if not is_open:
             closed.add(number)
+    sub_issues = {}
+    for item in snapshot.items:
+        # Whether a parent is done (D23), or was grilled already (D8). Its
+        # closed tickets' cards are archived, so the board can't say.
+        if (not item.has_parent and item.is_open and item.author == config.owner
+                and item.status in (TODO, IN_PROGRESS)):
+            try:
+                sub_issues[item.number] = github.sub_issues(item.number)
+            except GhError as e:
+                # Left out: the parent stays as it is until a later tick.
+                print("error: reading #%d's sub-issues: %s" % (item.number, e),
+                      file=log)
+                code = 1
     prs = {}
     parked_at = {}
     for item in snapshot.items:
@@ -153,7 +173,7 @@ def read_state(github, config, snapshot, registry, log):
         owner=config.owner, bot=config.bot, items=snapshot.items,
         sessions=known, outcomes=outcomes, max_sessions=config.max_sessions,
         closed=frozenset(closed), prs=prs, parked_at=parked_at,
-        worktrees=frozenset(worktrees.tickets_with_worktrees(config.clone)),
+        worktrees=have_worktrees, sub_issues=sub_issues,
         resume_command=config.resume_command, now=now,
         paused_until=registry.paused_until(), crashes=registry.crashes(),
         requeued=frozenset(registry.requeued()))

@@ -87,5 +87,8 @@
         }
       }
     }
+  },
+  "rest": {
+    "repos/MinimalEffort07/pokefirered/issues/61/sub_issues": []
   }
 }

@@ -13,6 +13,7 @@ import unittest
 from autodev.board import Board, Item
 from autodev.config import Config
 from autodev.decide import FixupOutcome, MergeOutcome, PrComment
+from autodev.gh import GhError
 from autodev.github import GitHub
 from autodev.registry import Registry
 from autodev.sessions import SessionConfig
@@ -70,6 +71,50 @@ class Tickets(unittest.TestCase):
             (70, False, True, "Todo", False),
             (71, True, False, None, True),     # #70 is still open
         ])
+
+
+class SubIssues(unittest.TestCase):
+    def test_a_parents_tickets_among_its_sub_issues_and_whether_each_is_open(self):
+        # A parent's tickets as GitHub links them, which outlasts their
+        # cards: the board archives a card as its issue closes. A sub-issue
+        # counts only if it's a ticket of this parent, as on the board.
+        gets = {ISSUES + "/45/sub_issues": [
+            ticket(98, 45, state="closed"), ticket(99, 45),
+            ticket(101, 48),                                # another parent's
+            # Only the first issue a "## Parent" section names counts.
+            issue(103, "MinimalEffort07-Autodev", "## Parent\n\n#48, see also #45"),
+            issue(102, "MinimalEffort07", "Linked by hand.")]}  # not a ticket
+        self.assertEqual(GitHub(FakeRest(gets), CONFIG, BOARD).sub_issues(45),
+                         {98: False, 99: True})
+
+
+class RefusingGh:
+    """GraphQL that refuses every change with `message`, as gh reports it."""
+
+    def __init__(self, message):
+        self.message = message
+
+    def graphql(self, query, **variables):
+        raise GhError(self.message)
+
+
+class SettingStatus(unittest.TestCase):
+    STATUS_BOARD = Board(3, "pokefirered autodev",
+                         [Item(45, "MinimalEffort07", "In progress", False, "PVTI_45")],
+                         0, id="PVT_3", status_field_id="PVTSSF_3",
+                         status_options={"Done": "opt-done"})
+
+    def test_a_card_the_board_archived_during_the_tick_is_left_alone(self):
+        # Closing #45 a moment earlier made the board archive its card, and
+        # GitHub won't change an archived card. It's off the board, so
+        # there's no Status to keep.
+        gh = RefusingGh("The item is archived and cannot be updated")
+        GitHub(gh, CONFIG, self.STATUS_BOARD).set_status(45, "Done")
+
+    def test_any_other_refusal_still_fails(self):
+        gh = RefusingGh("Could not resolve to a node with the global id")
+        with self.assertRaises(GhError):
+            GitHub(gh, CONFIG, self.STATUS_BOARD).set_status(45, "Done")
 
 
 PULLS = "repos/MinimalEffort07/pokefirered/pulls?state=open"
