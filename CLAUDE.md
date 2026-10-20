@@ -8,10 +8,10 @@ Pokemon FireRed decompilation (forked from pret/pokefirered) with custom feature
 
 ## System map
 
-`docs/SYSTEM_MAP.md` is the one-page overview of how the machinery fits together. It covers the autodev loop, the board columns, the session roles and guardrails, how tests and recordings work, one line on every script, and where things live on the machine. The AI writes most of this codebase, and the owner reads the map to keep track of it, so it has to stay true:
-- A change that adds, removes or renames a script, or changes what a script, test runner, workflow step or autodev does, updates the map in the same PR. Name each file by its path from the repo root, in backticks.
-- `test/tests/test_system_map.lua` (part of the suite) fails when a script at the top level, in `automation/` or in `test/` (with `test/lib/` and `test/tools/`) is missing from the map, or when the map names a file that doesn't exist. Whether each line still describes what its script does is for the code review (step 10).
-- Write it for the owner: plain words and what each piece is for. Leave the full rules to the docs it links.
+`docs/SYSTEM_MAP.md` is the one-page overview of how the machinery fits together. It covers the autodev loop, the board columns, the session roles and guardrails, how tests and recordings work, one line on every script, and where things live on the machine. The AI writes most of this codebase, and the owner keeps track of it through the map and each PR's "What changes for you":
+- **Keep the map true.** A change that adds, removes or renames a script, or changes what a script, test runner, workflow step or autodev does, updates the map in the same PR. Name each file by its path from the repo root, in backticks. Write for the owner: plain words and what each piece is for. Leave the full rules to the docs it links.
+- **What the suite checks.** `test/tests/test_system_map.lua` fails when a script is missing from the map, or when the map names a file that doesn't exist. A script is any `.sh`, `.py`, `.pl` or `.lua` file directly in the top level, `.github/calcrom/`, `automation/`, `automation/bin/`, `automation/autodev/`, `test/`, `test/lib/` or `test/tools/`. Whether each line still says what its script does is for the code review (step 10).
+- **Every PR says what changes for the owner.** Its body has a `## What changes for you` section (step 11). `issue.py open-pr` refuses an autodev PR body without one.
 
 ## Build Commands
 
@@ -172,6 +172,7 @@ Tracker settings for this repo:
 - Reference `#<N>` under the ticket's `## Parent` heading and list each blocker as `#<M>` under `## Blocked by`. These body sections are the blocking edges.
 - Leave labels off; this repo has no triage labels.
 - Each ticket's acceptance criteria carry its share of the test scenarios, demo flow, and pass/fail criteria from step 2.
+- A ticket that adds, removes or changes a script, the workflow or autodev lists updating `docs/SYSTEM_MAP.md` among its acceptance criteria.
 
 **5. Implement the frontier in parallel**
 The **frontier** is every open ticket whose `## Blocked by` issues are all closed. Launch one subagent per frontier ticket with `isolation: "worktree"`, all in a single message so they run concurrently. Give each subagent its ticket number `<T>` and steps 6–11, and have it report back its PR URL.
@@ -197,10 +198,10 @@ bash test/record_test.sh test/tests/<relevant_test>.lua
 Move the recording to `~/recordings/` as per project convention.
 
 **9. Update the README and the system map**
-Add or update the feature description and include a demo GIF if the feature has visible in-game behaviour. If the change touches a script, a test runner, the workflow or autodev, update `docs/SYSTEM_MAP.md` too (see "System map").
+Add or update the feature description and include a demo GIF if the feature has visible in-game behaviour. Update `docs/SYSTEM_MAP.md` too when the change touches anything on it (see "System map").
 
 **10. Code review**
-Invoke the `mattpocock-skills:code-review` skill against `master` and address its findings. The review also checks that `docs/SYSTEM_MAP.md` still describes everything the change touched.
+Invoke the `mattpocock-skills:code-review` skill against `master` and address its findings. Give the review this file's "System map" section as one of its standards: `docs/SYSTEM_MAP.md` must still describe everything the change touched.
 
 **11. Create a PR**
 
@@ -278,7 +279,7 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - **GitHub access:** only through autodev's own copy of `automation/bin/issue.py`, in its clone. Your prompt gives its full path. Don't run your worktree's copy: it's your branch's version. Plain `gh` is denied, and the tool shows only text by the owner or the bot.
   - `read <number>` shows an issue or PR and its comments. Read the ticket, its parent and the parent's design comment, including the owner's comments on the ticket, before starting.
   - `comment` comments on your ticket.
-  - `open-pr --title "Fix #<T>: …"` opens your PR into master from the branch checked out here, with the body on stdin. It refuses a body without Fixes #<T> and @MinimalEffort07 written as plain text: GitHub ignores both inside code, so the ticket wouldn't close and the owner wouldn't be notified.
+  - `open-pr --title "Fix #<T>: …"` opens your PR into master from the branch checked out here, with the body on stdin. It refuses a body without Fixes #<T> and @MinimalEffort07 written as plain text: GitHub ignores both inside code, so the ticket wouldn't close and the owner wouldn't be notified. It also refuses a body without a `## What changes for you` section (step 11).
 - Run `bash test/run_suite.sh` before opening the PR. It takes about 10 minutes, and longer while another session runs its own, which is more than one foreground command may run. So start it in the background with its output in a log file, and before opening the PR wait for it to finish with a loop on that log (e.g. `until grep -q "^SUITE" suite.log; do sleep 15; done`).
 - Report your result once, at the very end, after every step has finished. Never report while a command is still running.
 - `record_test.sh` waits for any other recording on the machine to finish (it takes a machine-wide lock itself), so a recording may start late.
@@ -294,7 +295,7 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - Address every unhandled comment from the owner up to and including the one your prompt names, in one pass. Leave newer ones alone: they get a follow-up session.
 - For each change: TDD, a clean build, `cd automation && python3 -m unittest` if `automation/` changed, the README and `docs/SYSTEM_MAP.md` if they describe what changed, and a fresh recording if the change is visible in-game. Then run `bash test/run_suite.sh` in the background and wait on its log, as in the ticket role.
 - A comment that only asks a question needs no change: answer it in the reply.
-- Push only your own branch (`git push origin <the PR's branch>`), then `pr-comment` what you did about each comment, @mentioning @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it). Report `done` once the reply is posted.
+- Push only your own branch (`git push origin <the PR's branch>`), then `pr-comment` what you did about each comment (and, if that changes what's different for the owner, an updated "What changes for you"), @mentioning @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it). Report `done` once the reply is posted.
 - Never merge master in (the merge session does that), merge, squash, rebase or force-push.
 - If you can't finish, push what you have before reporting `failed`.
 

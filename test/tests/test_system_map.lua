@@ -16,17 +16,18 @@
 --   This test reads files; it never looks at the game. The ROM still boots
 --   only because run_test.sh always starts the emulator.
 --
---   1. Every script is on the map. A script is any file matched by SCRIPTS
---      below: the shell and Python tools at the top of the repo, automation/
---      and test/, autodev's Python modules, and the shared Lua helpers and
---      tools under test/lib/ and test/tools/. (Tests themselves, in
---      test/tests/ and automation/tests/, are described as groups.) The map
---      must name each one by its path from the repo root, inside `backticks`.
+--   1. Every script is on the map. A script is a .sh, .py, .pl or .lua file
+--      directly in one of the SCRIPT_DIRS below (not in a folder under it):
+--      the top level, upstream's CI scripts, autodev, the test runners, and
+--      the shared Lua helpers and tools under test/lib/ and test/tools/.
+--      Tests (test/tests/, automation/tests/), prompts and settings are
+--      described as groups. The map must name each script by its path from
+--      the repo root, inside `backticks`.
 --   2. Nothing on the map is gone. Every `backticked` span on the map that is
---      shaped like a path from the repo root to a .sh, .py, .lua, .md, .json
---      or .txt file must exist. Spans holding a space, "*", "<" or "{", or
---      starting with "/" or "~", are commands, patterns or machine paths,
---      and are not checked.
+--      shaped like a path from the repo root to a file of a CHECKED_TYPES
+--      type must exist. Spans holding a space, "*", "<" or "{", or starting
+--      with "/" or "~", are commands, patterns or machine paths, and are not
+--      checked.
 --
 -- Run:
 --   bash test/run_test.sh test/tests/test_system_map.lua
@@ -39,21 +40,21 @@ local fw = dofile(project_dir .. "test/lib/framework.lua")
 
 local MAP = "docs/SYSTEM_MAP.md"
 
--- Each entry is one folder (from the repo root) and the file names in it,
--- not below it, that count as scripts. `except` leaves out files that aren't
--- worth a line (autodev/__init__.py is empty).
-local SCRIPTS = {
-    { dir = ".",                  names = { "*.sh" } },
-    { dir = "automation",         names = { "*.sh" } },
-    { dir = "automation/bin",     names = { "*.py" } },
-    { dir = "automation/autodev", names = { "*.py" }, except = { ["__init__.py"] = true } },
-    { dir = "test",               names = { "*.sh", "*.py" } },
-    { dir = "test/lib",           names = { "*.lua" } },
-    { dir = "test/tools",         names = { "*.lua", "*.py" } },
+-- The folders (from the repo root) whose scripts must be on the map, and
+-- the file-name patterns that make a file in one of them a script.
+local SCRIPT_DIRS = {
+    ".", ".github/calcrom", "automation", "automation/bin", "automation/autodev",
+    "test", "test/lib", "test/tools",
 }
+local SCRIPT_PATTERNS = { "*.sh", "*.py", "*.pl", "*.lua" }
+
+-- Scripts too empty to be worth a line.
+local NOT_SCRIPTS = { ["automation/autodev/__init__.py"] = true }
 
 -- The file types a path on the map is checked for.
-local CHECKED_TYPES = { sh = true, py = true, lua = true, md = true, json = true, txt = true }
+local CHECKED_TYPES = {
+    sh = true, py = true, pl = true, lua = true, md = true, json = true, txt = true, yml = true,
+}
 
 -------------------------------------------------------------------------------
 -- Reading the map
@@ -73,20 +74,19 @@ local function named_paths(text)
     return found
 end
 
--- The repo's scripts (SCRIPTS), as sorted paths from the repo root.
+-- The repo's scripts (see SCRIPT_DIRS), as sorted paths from the repo root.
 local function list_scripts()
+    local name_tests = {}
+    for _, pattern in ipairs(SCRIPT_PATTERNS) do
+        table.insert(name_tests, "-name '" .. pattern .. "'")
+    end
     local scripts = {}
-    for _, group in ipairs(SCRIPTS) do
-        local tests = {}
-        for _, name in ipairs(group.names) do
-            table.insert(tests, "-name '" .. name .. "'")
-        end
-        local pipe = io.popen("cd '" .. project_dir .. "' && find '" .. group.dir
-            .. "' -maxdepth 1 -type f \\( " .. table.concat(tests, " -o ") .. " \\)")
+    for _, dir in ipairs(SCRIPT_DIRS) do
+        local pipe = io.popen("cd '" .. project_dir .. "' && find '" .. dir
+            .. "' -maxdepth 1 -type f \\( " .. table.concat(name_tests, " -o ") .. " \\)")
         for line in pipe:lines() do
             local path = line:gsub("^%./", "")
-            local base = path:match("[^/]+$")
-            if not (group.except and group.except[base]) then
+            if not NOT_SCRIPTS[path] then
                 table.insert(scripts, path)
             end
         end
@@ -124,7 +124,7 @@ local READER_EXAMPLES = {
     { text = "a bare `issue.py` is a file at the repo root", want = { "issue.py" } },
     { text = "`test/tests/*.lua`, `automation/prompts/<role>.md`", want = {} },
     { text = "`cd automation && python3 -m unittest`", want = {} },
-    { text = "`~/autodev/logs/` and `/tmp/autodev-record.lock`", want = {} },
+    { text = "`~/autodev/logs/notes.txt` and `/srv/notes.txt`", want = {} },
     { text = "`pokefirered.gba` and `make firered`", want = {} },
 }
 
@@ -161,15 +161,16 @@ fw.run(function()
         .. (#missing > 0 and (": " .. table.concat(missing, "; ")) or ""))
 
     -- 2. Nothing on the map is gone.
+    local named = {}
+    for path in pairs(on_map) do
+        table.insert(named, path)
+    end
+    table.sort(named)
     local gone = {}
-    local seen = {}
-    for _, path in ipairs(named_paths(map)) do
-        if not seen[path] then
-            seen[path] = true
-            if not exists(path) then
-                fw.log_error("on the map but not in the repo: " .. path)
-                table.insert(gone, path)
-            end
+    for _, path in ipairs(named) do
+        if not exists(path) then
+            fw.log_error("on the map but not in the repo: " .. path)
+            table.insert(gone, path)
         end
     end
     fw.assert_eq(#gone, 0, "files the map names that don't exist"

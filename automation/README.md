@@ -27,8 +27,8 @@ An issue whose body has a `## Parent` heading is a **ticket**. Grill sessions wr
 3. **The ticket session** follows CLAUDE.md's "Autonomous mode" for the ticket role, steps 7–11:
    - TDD, a clean build and `bash test/run_suite.sh`
    - a recording if anything changes in the game (recordings take turns: see "How it runs")
-   - the README, then a code review against master
-   - finally `issue.py open-pr`, which only opens a PR from the ticket's own `issue-<T>-*` branch, and only when the body has Fixes #<T> and an @mention of you written outside code (GitHub ignores both inside code)
+   - the README and `docs/SYSTEM_MAP.md`, then a code review against master
+   - finally `issue.py open-pr`, which only opens a PR from the ticket's own `issue-<T>-*` branch, and only when the body has Fixes #<T>, an @mention of you and a "What changes for you" section, all written outside code (GitHub ignores the first two inside code)
 
    It has 3 hours.
 4. **On the first tick after it ends**, the dispatcher looks on GitHub for the ticket's open PR: one from an `issue-<T>-*` branch of this repo, opened by the bot or by you (you may finish a parked ticket yourself). A PR from a fork, or opened by anyone else, doesn't count.
@@ -199,7 +199,7 @@ What they cover:
   - untrusted authors' text is withheld, and comments get the marker
   - reading a PR shows its reviews and inline comments and marks your unhandled ones
   - a ticket must name its parent, and it is created without labels and linked as a sub-issue
-  - a PR comes only from the ticket's own branch, into master, with Fixes #<T> and an @mention of you outside code, and closes no other issue
+  - a PR comes only from the ticket's own branch, into master, with Fixes #<T>, an @mention of you and a "What changes for you" section outside code, and closes no other issue
   - a merge is a merge commit of the tested commit, refused while master has commits the branch lacks or once you've commented since the `/merge` or deleted it; a reply on the PR @mentions you and names the comment it handled; both act only on the ticket's own PR, the bot's or yours
   - each role may use only its own commands
 - **`test_github.py`:** checks what the dispatcher accepts as a finished session's work. For a grill: only the bot's comment with the design marker, and only open issues whose `## Parent` names the parent, with their blockers checked. For a ticket: only an open PR from that ticket's branch in this repo, opened by the bot or by you, and when it was opened; and when a ticket was last parked (the bot's newest parked comment). For a merge: whether the PR merged, whether the bot replied naming that `/merge`, and whether you commented since or deleted it. For a fix-up: whether the bot replied naming the comment it was started for. It also reads a PR's comments, reviews and inline comments in time order (an inline comment with its file and line, dated by when its review was submitted), and covers deleting session files older than 30 days.
