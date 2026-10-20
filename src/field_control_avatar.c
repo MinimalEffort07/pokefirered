@@ -69,6 +69,7 @@ static void GetInFrontOfPlayerPosition(struct MapPosition * position);
 static u16 GetPlayerCurMetatileBehavior(void);
 static bool8 TryStartInteractionScript(struct MapPosition * position, u16 metatileBehavior, u8 playerDirection);
 static const u8 *GetInteractionScript(struct MapPosition * position, u8 metatileBehavior, u8 playerDirection);
+static bool8 IsTalkableObjectEvent(u8 objectEventId);
 static const u8 *GetInteractedObjectEventScript(struct MapPosition * position, u8 metatileBehavior, u8 playerDirection);
 static const u8 *GetInteractedBackgroundEventScript(struct MapPosition * position, u8 metatileBehavior, u8 playerDirection);
 static const struct BgEvent *GetBackgroundEventAtPosition(struct MapHeader *, u16, u16, u8);
@@ -442,6 +443,46 @@ static const u8 *GetInteractionScript(struct MapPosition *position, u8 metatileB
     return NULL;
 }
 
+/*
+ * Whether pressing A at object `objectEventId` (an index into gObjectEvents,
+ * the table of every character on the field, or OBJECT_EVENTS_COUNT when no
+ * object stands there) may run that object's script.
+ *
+ * An object's script is not stored in the object itself. It lives in the
+ * object's template: its entry in the map's data (the object_events list of
+ * data/maps/<Map>/map.json), found again by the object's "local id".
+ * GetObjectEventScriptPointerByObjectEventId() does that lookup, and it
+ * assumes the template exists.
+ *
+ * Objects the game creates at run time, rather than loading them from the
+ * map, have no template. Two of them are skipped here:
+ *   - the player (local id LOCALID_PLAYER);
+ *   - the walking Pokemon (local id LOCALID_FOLLOWER, created by
+ *     SpawnFollowerSprite() in src/pokemon_follower.c).
+ * (The others, roaming Pokemon and remote multiplayer players, are not
+ * handled here.) For such an object the lookup finds nothing and reads its
+ * "script pointer" from a NULL template instead, that is from address 0x10,
+ * inside the GBA's BIOS ROM. The BIOS can only be read by its own code: a
+ * read from game code gets the last instruction the BIOS itself fetched,
+ * not the BIOS contents. So the pointer is garbage, and the script engine
+ * runs whatever bytes it points at. Pressing A at the walking Pokemon used
+ * to freeze the game this way (ticket #98): the script never ended, and the
+ * player never got control back.
+ *
+ * So the A-button lookups treat both as if no object stood there: on plain
+ * ground nothing happens (no message, no sound), and the lookup goes on to
+ * what is under the object, such as a hidden item on that tile.
+ */
+static bool8 IsTalkableObjectEvent(u8 objectEventId)
+{
+    if (objectEventId == OBJECT_EVENTS_COUNT)
+        return FALSE;
+    if (gObjectEvents[objectEventId].localId == LOCALID_PLAYER
+     || gObjectEvents[objectEventId].localId == LOCALID_FOLLOWER)
+        return FALSE;
+    return TRUE;
+}
+
 const u8 *GetInteractedLinkPlayerScript(struct MapPosition *position, u8 metatileBehavior, u8 direction)
 {
     u8 objectEventId;
@@ -452,7 +493,13 @@ const u8 *GetInteractedLinkPlayerScript(struct MapPosition *position, u8 metatil
     else
         objectEventId = GetObjectEventIdByPosition(position->x + gDirectionToVectors[direction].x, position->y + gDirectionToVectors[direction].y, position->elevation);
 
-    if (objectEventId == OBJECT_EVENTS_COUNT || gObjectEvents[objectEventId].localId == LOCALID_PLAYER)
+    /*
+     * The Cable Club rooms' version of the lookup below. The walking Pokemon
+     * can be on the field here too: SpawnFollowerSprite() runs whenever the
+     * game returns to the field, link rooms included (ReturnToFieldLink in
+     * src/overworld.c).
+     */
+    if (!IsTalkableObjectEvent(objectEventId))
         return NULL;
 
     for (i = 0; i < MAX_LINK_PLAYERS; i++)
@@ -472,15 +519,16 @@ static const u8 *GetInteractedObjectEventScript(struct MapPosition *position, u8
     u8 objectEventId;
     const u8 *script;
 
+    // The walking Pokemon counts as nobody there (see IsTalkableObjectEvent).
     objectEventId = GetObjectEventIdByPosition(position->x, position->y, position->elevation);
-    if (objectEventId == OBJECT_EVENTS_COUNT || gObjectEvents[objectEventId].localId == LOCALID_PLAYER)
+    if (!IsTalkableObjectEvent(objectEventId))
     {
         if (MetatileBehavior_IsCounter(metatileBehavior) != TRUE)
             return NULL;
 
         // Look for an object event on the other side of the counter.
         objectEventId = GetObjectEventIdByPosition(position->x + gDirectionToVectors[direction].x, position->y + gDirectionToVectors[direction].y, position->elevation);
-        if (objectEventId == OBJECT_EVENTS_COUNT || gObjectEvents[objectEventId].localId == LOCALID_PLAYER)
+        if (!IsTalkableObjectEvent(objectEventId))
             return NULL;
     }
 
