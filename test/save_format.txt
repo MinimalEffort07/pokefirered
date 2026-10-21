@@ -1,0 +1,841 @@
+# The save format: how the compiler lays out everything the game saves to
+# flash. test/tools/save_format.py writes this file, and
+# test/tests/test_save_format.lua fails the suite when the tree no longer
+# matches it.
+#
+# Never edit it by hand. A change to it is a breaking change (CLAUDE.md,
+# "Breaking changes"): make one only on purpose, by running
+#     python3 test/tools/save_format.py --write
+# and committing this file, and say so in the PR. After a merge conflict in
+# it, run --write again on the merged tree.
+#
+# It describes FireRed v1.0 English built with agbcc (make firered).
+# "constants" are flash format values, from include/save.h and others.
+# Each struct or union gives its size, then one line per member: its offset
+# in bytes, its name and its type as written. For a bitfield the type ends
+# in :width, then the bits it uses in the unit at that offset, counted from
+# the lowest. A type without a name of its own is named by where it sits
+# (Parent.member). An enum lists its values; "typedefs" gives each type
+# name used, with what it stands for.
+
+constants
+  HALL_OF_FAME_MAX_TEAMS = 50 (0x32)
+  NUM_HOF_SECTORS = 2 (0x2)
+  NUM_SAVE_SLOTS = 2 (0x2)
+  NUM_SECTORS_PER_SLOT = 14 (0xE)
+  POKE_RADAR_MAGIC = 1347568722 (0x50524452)
+  SECTORS_COUNT = 32 (0x20)
+  SECTOR_DATA_SIZE = 3968 (0xF80)
+  SECTOR_FOOTER_SIZE = 128 (0x80)
+  SECTOR_ID_HOF_1 = 28 (0x1C)
+  SECTOR_ID_HOF_2 = 29 (0x1D)
+  SECTOR_ID_PKMN_STORAGE_END = 13 (0xD)
+  SECTOR_ID_PKMN_STORAGE_START = 5 (0x5)
+  SECTOR_ID_SAVEBLOCK1_END = 4 (0x4)
+  SECTOR_ID_SAVEBLOCK1_START = 1 (0x1)
+  SECTOR_ID_SAVEBLOCK2 = 0 (0x0)
+  SECTOR_ID_TRAINER_TOWER_1 = 30 (0x1E)
+  SECTOR_ID_TRAINER_TOWER_2 = 31 (0x1F)
+  SECTOR_SIGNATURE = 134291493 (0x8012025)
+  SECTOR_SIZE = 4096 (0x1000)
+  SPECIAL_SECTOR_SENTINEL = 45981 (0xB39D)
+
+struct SaveBlock1, 15760 bytes (0x3D90)
+  0x0000  pos                          struct Coords16
+  0x0004  location                     struct WarpData
+  0x000C  continueGameWarp             struct WarpData
+  0x0014  dynamicWarp                  struct WarpData
+  0x001C  lastHealLocation             struct WarpData
+  0x0024  escapeWarp                   struct WarpData
+  0x002C  savedMusic                   u16
+  0x002E  weather                      u8
+  0x002F  weatherCycleStage            u8
+  0x0030  flashLevel                   u8
+  0x0032  mapLayoutId                  u16
+  0x0034  playerPartyCount             u8
+  0x0038  playerParty                  struct Pokemon[6]
+  0x0290  money                        u32
+  0x0294  coins                        u16
+  0x0296  registeredItems              u16[20]
+  0x02C0  pcItems                      struct ItemSlot[30]
+  0x0338  bagPocket_Items              struct ItemSlot[42]
+  0x03E0  bagPocket_KeyItems           struct ItemSlot[30]
+  0x0458  bagPocket_PokeBalls          struct ItemSlot[13]
+  0x048C  bagPocket_TMHM               struct ItemSlot[58]
+  0x0574  bagPocket_Berries            struct ItemSlot[43]
+  0x0620  seen1                        u8[52]
+  0x0654  berryBlenderRecords          u16[3]
+  0x065A  unused_632                   u8[6]
+  0x0660  trainerRematchStepCounter    u16
+  0x0662  trainerRematches             u8[100]
+  0x06C8  objectEvents                 struct ObjectEvent[16]
+  0x0908  objectEventTemplates         struct ObjectEventTemplate[64]
+  0x0F08  flags                        u8[288]
+  0x1028  vars                         u16[256]
+  0x1228  gameStats                    u32[64]
+  0x1328  questLog                     struct QuestLogScene[4]
+  0x2CC8  easyChatProfile              u16[6]
+  0x2CD4  easyChatBattleStart          u16[6]
+  0x2CE0  easyChatBattleWon            u16[6]
+  0x2CEC  easyChatBattleLost           u16[6]
+  0x2CF8  mail                         struct Mail[16]
+  0x2F38  additionalPhrases            u8[5]
+  0x2F40  oldMan                       OldMan
+  0x2F80  dewfordTrends                struct DewfordTrend[5]
+  0x2FA8  daycare                      struct DayCare
+  0x30C4  giftRibbons                  u8[11]
+  0x30CF  externalEventData            struct ExternalEventData
+  0x30E3  externalEventFlags           struct ExternalEventFlags
+  0x30F8  roamer                       struct Roamer
+  0x3114  enigmaBerry                  struct EnigmaBerry
+  0x3148  mysteryGift                  struct MysteryGiftSave
+  0x34B4  unused_348C                  u8[400]
+  0x3644  ramScript                    struct RamScript
+  0x3A30  recordMixingGift             struct RecordMixingGift
+  0x3A40  seen2                        u8[52]
+  0x3A74  rivalName                    u8[8]
+  0x3A7C  fameChecker                  struct FameCheckerSaveData[16]
+  0x3ABC  unused_3A94                  u8[64]
+  0x3AFC  registeredTexts              u8[10][21]
+  0x3BD0  trainerNameRecords           struct TrainerNameRecord[20]
+  0x3CC0  route5DayCareMon             struct DaycareMon
+  0x3D4C  unused_3D24                  u8[16]
+  0x3D5C  towerChallengeId             u32
+  0x3D60  trainerTower                 struct TrainerTower[4]
+
+struct SaveBlock2, 3876 bytes (0xF24)
+  0x0000  playerName                   u8[8]
+  0x0008  playerGender                 u8
+  0x0009  specialSaveWarpFlags         u8
+  0x000A  playerTrainerId              u8[4]
+  0x000E  playTimeHours                u16
+  0x0010  playTimeMinutes              u8
+  0x0011  playTimeSeconds              u8
+  0x0012  playTimeVBlanks              u8
+  0x0013  optionsButtonMode            u8
+  0x0014  optionsTextSpeed             u16:3, bits 0-2
+  0x0014  optionsWindowFrameType       u16:5, bits 3-7
+  0x0014  optionsSound                 u16:1, bit 8
+  0x0014  optionsBattleStyle           u16:1, bit 9
+  0x0014  optionsBattleSceneOff        u16:1, bit 10
+  0x0014  regionMapZoom                u16:1, bit 11
+  0x0018  pokedex                      struct Pokedex
+  0x0090  playerAvatarGfxId            u8
+  0x0091  filler_91                    u8[7]
+  0x0098  localTimeOffset              struct Time
+  0x00A0  lastBerryTreeUpdate          struct Time
+  0x00A8  gcnLinkFlags                 u32
+  0x00AC  unkFlag1                     bool8
+  0x00AD  unkFlag2                     bool8
+  0x00B0  battleTower                  struct BattleTowerData
+  0x0898  mapView                      u16[256]
+  0x0A98  linkBattleRecords            struct LinkBattleRecords
+  0x0AF0  berryCrush                   struct BerryCrush
+  0x0B00  pokeJump                     struct PokemonJumpRecords
+  0x0B10  berryPick                    struct BerryPickingResults
+  0x0B20  filler_B20                   u8[1024]
+  0x0F20  encryptionKey                u32
+
+struct PokemonStorage, 33744 bytes (0x83D0)
+  0x0000  currentBox                   u8
+  0x0004  boxes                        struct BoxPokemon[14][30]
+  0x8344  boxNames                     u8[14][9]
+  0x83C2  boxWallpapers                u8[14]
+
+struct SaveSector, 4096 bytes (0x1000)
+  0x0000  data                         u8[3968]
+  0x0F80  unused                       u8[116]
+  0x0FF4  id                           u16
+  0x0FF6  checksum                     u16
+  0x0FF8  signature                    u32
+  0x0FFC  counter                      u32
+
+struct HallofFameTeam, 120 bytes (0x78)
+  0x0000  mon                          struct HallofFameMon[6]
+
+struct EReaderTrainerTowerSet, 7944 bytes (0x1F08)
+  0x0000  numFloors                    u8
+  0x0001  id                           u8
+  0x0002  dummy                        u16
+  0x0004  checksum                     u32
+  0x0008  floors                       struct TrainerTowerFloor[8]
+
+struct PokeRadar, 36 bytes (0x24)
+  0x0000  magic                        u32
+  0x0004  chainCount                   u16
+  0x0006  chainSpecies                 u16
+  0x0008  stepsUntilCharge             u8
+  0x0009  charges                      u8
+  0x000A  flags                        u8
+  0x000B  patchMapGroup                u8
+  0x000C  patchMapNum                  u8
+  0x000D  padding                      u8
+  0x000E  patchX                       s16[4]
+  0x0016  patchY                       s16[4]
+  0x001E  patchSpriteId                u8[4]
+  0x0022  reserved                     u8[2]
+
+struct BattleTowerData, 2024 bytes (0x7E8)
+  0x0000  playerRecord                 struct BattleTowerRecord
+  0x00A4  records                      struct BattleTowerRecord[5]
+  0x03D8  firstMonSpecies              u16
+  0x03DA  defeatedBySpecies            u16
+  0x03DC  defeatedByTrainerName        u8[8]
+  0x03E4  firstMonNickname             u8[10]
+  0x03F0  ereaderTrainer               struct BattleTowerEReaderTrainer
+  0x04AC  battleTowerLevelType         u8:1, bit 0
+  0x04AC  unk_554                      u8:1, bit 1
+  0x04AD  battleOutcome                u8
+  0x04AE  var_4AE                      u8[2]
+  0x04B0  curChallengeBattleNum        u16[2]
+  0x04B4  curStreakChallengesNum       u16[2]
+  0x04B8  recordWinStreaks             u16[2]
+  0x04BC  battleTowerTrainerId         u8
+  0x04BD  selectedPartyMons            u8[3]
+  0x04C0  prizeItem                    u16
+  0x04C2  battledTrainerIds            u8[6]
+  0x04C8  totalBattleTowerWins         u16
+  0x04CA  bestBattleTowerWinStreak     u16
+  0x04CC  currentWinStreaks            u16[2]
+  0x04D0  lastStreakLevelType          u8
+  0x04D1  filler_4D1                   u8[791]
+
+struct BattleTowerEReaderTrainer, 188 bytes (0xBC)
+  0x0000  unk0                         u8
+  0x0001  trainerClass                 u8
+  0x0002  winStreak                    u16
+  0x0004  name                         u8[8]
+  0x000C  trainerId                    u8[4]
+  0x0010  greeting                     u16[6]
+  0x001C  farewellPlayerLost           u16[6]
+  0x0028  farewellPlayerWon            u16[6]
+  0x0034  party                        struct BattleTowerPokemon[3]
+  0x00B8  checksum                     u32
+
+struct BattleTowerPokemon, 44 bytes (0x2C)
+  0x0000  species                      u16
+  0x0002  heldItem                     u16
+  0x0004  moves                        u16[4]
+  0x000C  level                        u8
+  0x000D  ppBonuses                    u8
+  0x000E  hpEV                         u8
+  0x000F  attackEV                     u8
+  0x0010  defenseEV                    u8
+  0x0011  speedEV                      u8
+  0x0012  spAttackEV                   u8
+  0x0013  spDefenseEV                  u8
+  0x0014  otId                         u32
+  0x0018  hpIV                         u32:5, bits 0-4
+  0x0018  attackIV                     u32:5, bits 5-9
+  0x0018  defenseIV                    u32:5, bits 10-14
+  0x0018  speedIV                      u32:5, bits 15-19
+  0x0018  spAttackIV                   u32:5, bits 20-24
+  0x0018  spDefenseIV                  u32:5, bits 25-29
+  0x0018  gap                          u32:1, bit 30
+  0x0018  abilityNum                   u32:1, bit 31
+  0x001C  personality                  u32
+  0x0020  nickname                     u8[11]
+  0x002B  friendship                   u8
+
+struct BattleTowerRecord, 164 bytes (0xA4)
+  0x0000  battleTowerLevelType         u8
+  0x0001  trainerClass                 u8
+  0x0002  winStreak                    u16
+  0x0004  name                         u8[8]
+  0x000C  trainerId                    u8[4]
+  0x0010  greeting                     u16[6]
+  0x001C  party                        struct BattleTowerPokemon[3]
+  0x00A0  checksum                     u32
+
+struct Berry2, 28 bytes (0x1C)
+  0x0000  name                         u8[7]
+  0x0007  firmness                     u8
+  0x0008  size                         u16
+  0x000A  maxYield                     u8
+  0x000B  minYield                     u8
+  0x000C  description1                 u8 *
+  0x0010  description2                 u8 *
+  0x0014  stageDuration                u8
+  0x0015  spicy                        u8
+  0x0016  dry                          u8
+  0x0017  sweet                        u8
+  0x0018  bitter                       u8
+  0x0019  sour                         u8
+  0x001A  smoothness                   u8
+
+struct BerryCrush, 16 bytes (0x10)
+  0x0000  pressingSpeeds               u16[4]
+  0x0008  berryPowderAmount            u32
+  0x000C  unk                          u32
+
+struct BerryPickingResults, 16 bytes (0x10)
+  0x0000  bestScore                    u32
+  0x0004  berriesPicked                u16
+  0x0006  berriesPickedInRow           u16
+  0x0008  field_8                      u8
+  0x0009  field_9                      u8
+  0x000A  field_A                      u8
+  0x000B  field_B                      u8
+  0x000C  field_C                      u8
+  0x000D  field_D                      u8
+  0x000E  field_E                      u8
+  0x000F  field_F                      u8
+
+struct BoxPokemon, 80 bytes (0x50)
+  0x0000  personality                  u32
+  0x0004  otId                         u32
+  0x0008  nickname                     u8[10]
+  0x0012  language                     u8
+  0x0013  isBadEgg                     u8:1, bit 0
+  0x0013  hasSpecies                   u8:1, bit 1
+  0x0013  isEgg                        u8:1, bit 2
+  0x0013  blockBoxRS                   u8:1, bit 3
+  0x0013  unused                       u8:4, bits 4-7
+  0x0014  otName                       u8[7]
+  0x001B  markings                     u8
+  0x001C  checksum                     u16
+  0x001E  unknown                      u16
+  0x0020  secure                       union BoxPokemon.secure
+
+union BoxPokemon.secure, 48 bytes (0x30)
+  0x0000  raw                          u32[12]
+  0x0000  substructs                   union PokemonSubstruct[4]
+
+struct Coords16, 4 bytes (0x4)
+  0x0000  x                            s16
+  0x0002  y                            s16
+
+struct DayCare, 284 bytes (0x11C)
+  0x0000  mons                         struct DaycareMon[2]
+  0x0118  offspringPersonality         u16
+  0x011A  stepCounter                  u8
+
+struct DayCareMail, 56 bytes (0x38)
+  0x0000  message                      struct Mail
+  0x0024  OT_name                      u8[8]
+  0x002C  monName                      u8[11]
+  0x0037  gameLanguage                 u8:4, bits 0-3
+  0x0037  monLanguage                  u8:4, bits 4-7
+
+struct DaycareMon, 140 bytes (0x8C)
+  0x0000  mon                          struct BoxPokemon
+  0x0050  mail                         struct DayCareMail
+  0x0088  steps                        u32
+
+struct DewfordTrend, 8 bytes (0x8)
+  0x0000  trendiness                   u16:7, bits 0-6
+  0x0000  maxTrendiness                u16:7, bits 7-13
+  0x0000  gainingTrendiness            u16:1, bit 14
+  0x0002  rand                         u16
+  0x0004  words                        u16[2]
+
+struct EnigmaBerry, 52 bytes (0x34)
+  0x0000  berry                        struct Berry2
+  0x001C  itemEffect                   u8[18]
+  0x002E  holdEffect                   u8
+  0x002F  holdEffectParam              u8
+  0x0030  checksum                     u32
+
+struct ExternalEventData, 20 bytes (0x14)
+  0x0000  unknownExternalDataFields1   u8[7]
+  0x0004  unknownExternalDataFields2   u32:8, bits 24-31
+  0x0008  currentPokeCoupons           u32:24, bits 0-23
+  0x0008  gotGoldPokeCouponTitleReward u32:1, bit 24
+  0x0008  gotSilverPokeCouponTitleReward u32:1, bit 25
+  0x0008  gotBronzePokeCouponTitleReward u32:1, bit 26
+  0x0008  receivedAgetoCelebi          u32:1, bit 27
+  0x0008  unknownExternalDataFields3   u32:4, bits 28-31
+  0x000C  totalEarnedPokeCoupons       u32:24, bits 0-23
+  0x000F  unknownExternalDataFields4   u8[5]
+
+struct ExternalEventFlags, 21 bytes (0x15)
+  0x0000  usedBoxRS                    u8:1, bit 0
+  0x0000  boxRSEggsUnlocked            u8:2, bits 1-2
+  0x0000  padding                      u8:5, bits 3-7
+  0x0001  unknownFlag1                 u8
+  0x0002  receivedGCNJirachi           u8
+  0x0003  unknownFlag3                 u8
+  0x0004  unknownFlag4                 u8
+  0x0005  unknownFlag5                 u8
+  0x0006  unknownFlag6                 u8
+  0x0007  unknownFlag7                 u8
+  0x0008  unknownFlag8                 u8
+  0x0009  unknownFlag9                 u8
+  0x000A  unknownFlag10                u8
+  0x000B  unknownFlag11                u8
+  0x000C  unknownFlag12                u8
+  0x000D  unknownFlag13                u8
+  0x000E  unknownFlag14                u8
+  0x000F  unknownFlag15                u8
+  0x0010  unknownFlag16                u8
+  0x0011  unknownFlag17                u8
+  0x0012  unknownFlag18                u8
+  0x0013  unknownFlag19                u8
+  0x0014  unknownFlag20                u8
+
+struct FameCheckerSaveData, 4 bytes (0x4)
+  0x0000  pickState                    u16:2, bits 0-1
+  0x0000  flavorTextFlags              u16:12, bits 2-13
+  0x0000  unk_0_E                      u16:2, bits 14-15
+
+struct HallofFameMon, 20 bytes (0x14)
+  0x0000  tid                          u32
+  0x0004  personality                  u32
+  0x0008  species                      u16:9, bits 0-8
+  0x0008  lvl                          u16:7, bits 9-15
+  0x000A  nick                         u8[10]
+
+struct ItemSlot, 4 bytes (0x4)
+  0x0000  itemId                       u16
+  0x0002  quantity                     u16
+
+struct LinkBattleRecord, 16 bytes (0x10)
+  0x0000  name                         u8[8]
+  0x0008  trainerId                    u16
+  0x000A  wins                         u16
+  0x000C  losses                       u16
+  0x000E  draws                        u16
+
+struct LinkBattleRecords, 88 bytes (0x58)
+  0x0000  entries                      struct LinkBattleRecord[5]
+  0x0050  languages                    u8[5]
+
+struct Mail, 36 bytes (0x24)
+  0x0000  words                        u16[9]
+  0x0012  playerName                   u8[8]
+  0x001A  trainerId                    u8[4]
+  0x001E  species                      u16
+  0x0020  itemId                       u16
+
+struct MauvilleManBard, 44 bytes (0x2C)
+  0x0000  id                           u8
+  0x0002  songLyrics                   u16[6]
+  0x000E  temporaryLyrics              u16[6]
+  0x001A  playerName                   u8[8]
+  0x0022  filler_2DB6                  u8[3]
+  0x0025  playerTrainerId              u8[4]
+  0x0029  hasChangedSong               bool8
+  0x002A  language                     u8
+
+struct MauvilleManCommon, 4 bytes (0x4)
+  0x0000  id                           u8
+
+struct MauvilleManGiddy, 36 bytes (0x24)
+  0x0000  id                           u8
+  0x0001  taleCounter                  u8
+  0x0002  questionNum                  u8
+  0x0004  randomWords                  u16[10]
+  0x0018  questionList                 u8[8]
+  0x0020  language                     u8
+
+struct MauvilleManHipster, 4 bytes (0x4)
+  0x0000  id                           u8
+  0x0001  alreadySpoken                bool8
+  0x0002  language                     u8
+
+struct MauvilleManStoryteller, 56 bytes (0x38)
+  0x0000  id                           u8
+  0x0001  alreadyRecorded              bool8
+  0x0002  filler2                      u8[2]
+  0x0004  gameStatIDs                  u8[4]
+  0x0008  trainerNames                 u8[4][7]
+  0x0024  statValues                   u8[4][4]
+  0x0034  language                     u8[4]
+
+struct MauvilleOldManTrader, 56 bytes (0x38)
+  0x0000  id                           u8
+  0x0001  decorIds                     u8[4]
+  0x0005  playerNames                  u8[4][11]
+  0x0031  alreadyTraded                u8
+  0x0032  language                     u8[4]
+
+struct MysteryGiftSave, 876 bytes (0x36C)
+  0x0000  newsCrc                      u32
+  0x0004  news                         struct WonderNews
+  0x01C0  cardCrc                      u32
+  0x01C4  card                         struct WonderCard
+  0x0310  cardMetadataCrc              u32
+  0x0314  cardMetadata                 struct WonderCardMetadata
+  0x0338  questionnaireWords           u16[4]
+  0x0340  newsMetadata                 struct WonderNewsMetadata
+  0x0344  trainerIds                   u32[2][5]
+
+struct ObjectEvent, 36 bytes (0x24)
+  0x0000  active                       u32:1, bit 0
+  0x0000  singleMovementActive         u32:1, bit 1
+  0x0000  triggerGroundEffectsOnMove   u32:1, bit 2
+  0x0000  triggerGroundEffectsOnStop   u32:1, bit 3
+  0x0000  disableCoveringGroundEffects u32:1, bit 4
+  0x0000  landingJump                  u32:1, bit 5
+  0x0000  heldMovementActive           u32:1, bit 6
+  0x0000  heldMovementFinished         u32:1, bit 7
+  0x0000  frozen                       u32:1, bit 8
+  0x0000  facingDirectionLocked        u32:1, bit 9
+  0x0000  disableAnim                  u32:1, bit 10
+  0x0000  enableAnim                   u32:1, bit 11
+  0x0000  inanimate                    u32:1, bit 12
+  0x0000  invisible                    u32:1, bit 13
+  0x0000  offScreen                    u32:1, bit 14
+  0x0000  trackedByCamera              u32:1, bit 15
+  0x0000  isPlayer                     u32:1, bit 16
+  0x0000  hasReflection                u32:1, bit 17
+  0x0000  inShortGrass                 u32:1, bit 18
+  0x0000  inShallowFlowingWater        u32:1, bit 19
+  0x0000  inSandPile                   u32:1, bit 20
+  0x0000  inHotSprings                 u32:1, bit 21
+  0x0000  hasShadow                    u32:1, bit 22
+  0x0000  spriteAnimPausedBackup       u32:1, bit 23
+  0x0000  spriteAffineAnimPausedBackup u32:1, bit 24
+  0x0000  disableJumpLandingGroundEffect u32:1, bit 25
+  0x0000  fixedPriority                u32:1, bit 26
+  0x0000  hideReflection               u32:1, bit 27
+  0x0004  spriteId                     u8
+  0x0005  graphicsId                   u8
+  0x0006  movementType                 u8
+  0x0007  trainerType                  u8
+  0x0008  localId                      u8
+  0x0009  mapNum                       u8
+  0x000A  mapGroup                     u8
+  0x000B  currentElevation             u8:4, bits 0-3
+  0x000B  previousElevation            u8:4, bits 4-7
+  0x000C  initialCoords                struct Coords16
+  0x0010  currentCoords                struct Coords16
+  0x0014  previousCoords               struct Coords16
+  0x0018  facingDirection              u8:4, bits 0-3
+  0x0018  movementDirection            u8:4, bits 4-7
+  0x0018  rangeX                       u16:4, bits 8-11
+  0x0018  rangeY                       u16:4, bits 12-15
+  0x001A  fieldEffectSpriteId          u8
+  0x001B  warpArrowSpriteId            u8
+  0x001C  movementActionId             u8
+  0x001D  trainerRange_berryTreeId     u8
+  0x001E  currentMetatileBehavior      u8
+  0x001F  previousMetatileBehavior     u8
+  0x0020  previousMovementDirection    u8
+  0x0021  directionSequenceIndex       u8
+  0x0022  playerCopyableMovement       u8
+
+struct ObjectEventTemplate, 24 bytes (0x18)
+  0x0000  localId                      u8
+  0x0001  graphicsId                   u8
+  0x0002  kind                         u8
+  0x0004  x                            s16
+  0x0006  y                            s16
+  0x0008  objUnion                     union ObjectEventTemplate.objUnion
+  0x0010  script                       const u8 *
+  0x0014  flagId                       u16
+
+union ObjectEventTemplate.objUnion, 8 bytes (0x8)
+  0x0000  normal                       struct ObjectEventTemplate.objUnion.normal
+  0x0000  clone                        struct ObjectEventTemplate.objUnion.clone
+
+struct ObjectEventTemplate.objUnion.clone, 8 bytes (0x8)
+  0x0000  targetLocalId                u8
+  0x0001  padding                      u8[3]
+  0x0004  targetMapNum                 u16
+  0x0006  targetMapGroup               u16
+
+struct ObjectEventTemplate.objUnion.normal, 8 bytes (0x8)
+  0x0000  elevation                    u8
+  0x0001  movementType                 u8
+  0x0002  movementRangeX               u16:4, bits 0-3
+  0x0002  movementRangeY               u16:4, bits 4-7
+  0x0004  trainerType                  u16
+  0x0006  trainerRange_berryTreeId     u16
+
+union OldMan, 64 bytes (0x40)
+  0x0000  common                       struct MauvilleManCommon
+  0x0000  bard                         struct MauvilleManBard
+  0x0000  giddy                        struct MauvilleManGiddy
+  0x0000  hipster                      struct MauvilleManHipster
+  0x0000  trader                       struct MauvilleOldManTrader
+  0x0000  storyteller                  struct MauvilleManStoryteller
+  0x0000  filler                       u8[64]
+
+struct Pokedex, 120 bytes (0x78)
+  0x0000  order                        u8
+  0x0001  mode                         u8
+  0x0002  unused                       u8
+  0x0003  nationalMagic                u8
+  0x0004  unownPersonality             u32
+  0x0008  spindaPersonality            u32
+  0x000C  unknown3                     u32
+  0x0010  owned                        u8[52]
+  0x0044  seen                         u8[52]
+
+struct Pokemon, 100 bytes (0x64)
+  0x0000  box                          struct BoxPokemon
+  0x0050  status                       u32
+  0x0054  level                        u8
+  0x0055  mail                         u8
+  0x0056  hp                           u16
+  0x0058  maxHP                        u16
+  0x005A  attack                       u16
+  0x005C  defense                      u16
+  0x005E  speed                        u16
+  0x0060  spAttack                     u16
+  0x0062  spDefense                    u16
+
+struct PokemonJumpRecords, 16 bytes (0x10)
+  0x0000  jumpsInRow                   u16
+  0x0002  unused1                      u16
+  0x0004  excellentsInRow              u16
+  0x0006  gamesWithMaxPlayers          u16
+  0x0008  unused2                      u32
+  0x000C  bestJumpScore                u32
+
+union PokemonSubstruct, 12 bytes (0xC)
+  0x0000  type0                        struct PokemonSubstruct0
+  0x0000  type1                        struct PokemonSubstruct1
+  0x0000  type2                        struct PokemonSubstruct2
+  0x0000  type3                        struct PokemonSubstruct3
+  0x0000  raw                          u16[6]
+
+struct PokemonSubstruct0, 12 bytes (0xC)
+  0x0000  species                      u16
+  0x0002  heldItem                     u16
+  0x0004  experience                   u32
+  0x0008  ppBonuses                    u8
+  0x0009  friendship                   u8
+  0x000A  filler                       u16
+
+struct PokemonSubstruct1, 12 bytes (0xC)
+  0x0000  moves                        u16[4]
+  0x0008  pp                           u8[4]
+
+struct PokemonSubstruct2, 12 bytes (0xC)
+  0x0000  hpEV                         u8
+  0x0001  attackEV                     u8
+  0x0002  defenseEV                    u8
+  0x0003  speedEV                      u8
+  0x0004  spAttackEV                   u8
+  0x0005  spDefenseEV                  u8
+  0x0006  cool                         u8
+  0x0007  beauty                       u8
+  0x0008  cute                         u8
+  0x0009  smart                        u8
+  0x000A  tough                        u8
+  0x000B  sheen                        u8
+
+struct PokemonSubstruct3, 12 bytes (0xC)
+  0x0000  pokerus                      u8
+  0x0001  metLocation                  u8
+  0x0002  metLevel                     u16:7, bits 0-6
+  0x0002  metGame                      u16:4, bits 7-10
+  0x0002  pokeball                     u16:4, bits 11-14
+  0x0002  otGender                     u16:1, bit 15
+  0x0004  hpIV                         u32:5, bits 0-4
+  0x0004  attackIV                     u32:5, bits 5-9
+  0x0004  defenseIV                    u32:5, bits 10-14
+  0x0004  speedIV                      u32:5, bits 15-19
+  0x0004  spAttackIV                   u32:5, bits 20-24
+  0x0004  spDefenseIV                  u32:5, bits 25-29
+  0x0004  isEgg                        u32:1, bit 30
+  0x0004  abilityNum                   u32:1, bit 31
+  0x0008  coolRibbon                   u32:3, bits 0-2
+  0x0008  beautyRibbon                 u32:3, bits 3-5
+  0x0008  cuteRibbon                   u32:3, bits 6-8
+  0x0008  smartRibbon                  u32:3, bits 9-11
+  0x0008  toughRibbon                  u32:3, bits 12-14
+  0x0008  championRibbon               u32:1, bit 15
+  0x0008  winningRibbon                u32:1, bit 16
+  0x0008  victoryRibbon                u32:1, bit 17
+  0x0008  artistRibbon                 u32:1, bit 18
+  0x0008  effortRibbon                 u32:1, bit 19
+  0x0008  marineRibbon                 u32:1, bit 20
+  0x0008  landRibbon                   u32:1, bit 21
+  0x0008  skyRibbon                    u32:1, bit 22
+  0x0008  countryRibbon                u32:1, bit 23
+  0x0008  nationalRibbon               u32:1, bit 24
+  0x0008  earthRibbon                  u32:1, bit 25
+  0x0008  worldRibbon                  u32:1, bit 26
+  0x0008  unusedRibbons                u32:4, bits 27-30
+  0x0008  modernFatefulEncounter       u32:1, bit 31
+
+struct QuestLogObjectEvent, 20 bytes (0x14)
+  0x0000  active                       u8:1, bit 0
+  0x0000  triggerGroundEffectsOnStop   u8:1, bit 1
+  0x0000  disableCoveringGroundEffects u8:1, bit 2
+  0x0000  landingJump                  u8:1, bit 3
+  0x0000  frozen                       u8:1, bit 4
+  0x0000  facingDirectionLocked        u8:1, bit 5
+  0x0000  disableAnim                  u8:1, bit 6
+  0x0000  enableAnim                   u8:1, bit 7
+  0x0001  inanimate                    u8:1, bit 0
+  0x0001  invisible                    u8:1, bit 1
+  0x0001  offScreen                    u8:1, bit 2
+  0x0001  trackedByCamera              u8:1, bit 3
+  0x0001  isPlayer                     u8:1, bit 4
+  0x0001  spriteAnimPausedBackup       u8:1, bit 5
+  0x0001  spriteAffineAnimPausedBackup u8:1, bit 6
+  0x0001  disableJumpLandingGroundEffect u8:1, bit 7
+  0x0002  fixedPriority                u8:1, bit 0
+  0x0002  facingDirection              u8:4, bits 1-4
+  0x0002  unused                       u8:3, bits 5-7
+  0x0003  currentElevation             u8:4, bits 0-3
+  0x0003  previousElevation            u8:4, bits 4-7
+  0x0004  graphicsId                   u8
+  0x0005  movementType                 u8
+  0x0006  trainerType                  u8
+  0x0007  localId                      u8
+  0x0008  mapNum                       u8
+  0x0009  mapGroup                     u8
+  0x000A  x                            s16
+  0x000C  y                            s16
+  0x000E  trainerRange_berryTreeId     u8
+  0x000F  previousMetatileBehavior     u8
+  0x0010  directionSequenceIndex       u8
+  0x0011  animId                       u8
+
+struct QuestLogObjectEventTemplate, 4 bytes (0x4)
+  0x0000  x                            u32:8, bits 0-7
+  0x0000  negx                         u32:1, bit 8
+  0x0000  y                            u32:8, bits 9-16
+  0x0000  negy                         u32:1, bit 17
+  0x0000  elevation                    u32:6, bits 18-23
+  0x0000  movementType                 u32:8, bits 24-31
+
+struct QuestLogScene, 1640 bytes (0x668)
+  0x0000  startType                    u8
+  0x0001  mapGroup                     u8
+  0x0002  mapNum                       u8
+  0x0003  warpId                       u8
+  0x0004  x                            s16
+  0x0006  y                            s16
+  0x0008  objectEvents                 struct QuestLogObjectEvent[16]
+  0x0148  flags                        u8[288]
+  0x0268  vars                         u16[256]
+  0x0468  objectEventTemplates         struct QuestLogObjectEventTemplate[64]
+  0x0568  script                       u16[128]
+  0x0668  end                          u16[0]
+
+struct RamScript, 1004 bytes (0x3EC)
+  0x0000  checksum                     u32
+  0x0004  data                         struct RamScriptData
+
+struct RamScriptData, 1000 bytes (0x3E8)
+  0x0000  magic                        u8
+  0x0001  mapGroup                     u8
+  0x0002  mapNum                       u8
+  0x0003  objectId                     u8
+  0x0004  script                       u8[995]
+
+struct RecordMixingGift, 16 bytes (0x10)
+  0x0000  checksum                     int
+  0x0004  data                         struct RecordMixingGiftData
+
+struct RecordMixingGiftData, 12 bytes (0xC)
+  0x0000  unk0                         u8
+  0x0001  quantity                     u8
+  0x0002  itemId                       u16
+  0x0004  filler4                      u8[8]
+
+struct Roamer, 28 bytes (0x1C)
+  0x0000  ivs                          u32
+  0x0004  personality                  u32
+  0x0008  species                      u16
+  0x000A  hp                           u16
+  0x000C  level                        u8
+  0x000D  status                       u8
+  0x000E  cool                         u8
+  0x000F  beauty                       u8
+  0x0010  cute                         u8
+  0x0011  smart                        u8
+  0x0012  tough                        u8
+  0x0013  active                       bool8
+  0x0014  filler                       u8[8]
+
+struct Time, 8 bytes (0x8)
+  0x0000  days                         s16
+  0x0002  hours                        s8
+  0x0003  minutes                      s8
+  0x0004  seconds                      s8
+
+struct TrainerNameRecord, 12 bytes (0xC)
+  0x0000  trainerId                    u32
+  0x0004  trainerName                  u8[8]
+
+struct TrainerTower, 12 bytes (0xC)
+  0x0000  timer                        u32
+  0x0004  bestTime                     u32
+  0x0008  floorsCleared                u8
+  0x0009  unk9                         u8
+  0x000A  receivedPrize                bool8:1, bit 0
+  0x000A  checkedFinalTime             bool8:1, bit 1
+  0x000A  spokeToOwner                 bool8:1, bit 2
+  0x000A  hasLost                      bool8:1, bit 3
+  0x000A  unkA_4                       bool8:1, bit 4
+  0x000A  validated                    bool8:1, bit 5
+
+struct TrainerTowerFloor, 992 bytes (0x3E0)
+  0x0000  id                           u8
+  0x0001  floorIdx                     u8
+  0x0002  challengeType                u8
+  0x0003  prize                        u8
+  0x0004  trainers                     struct TrainerTowerTrainer[3]
+  0x03DC  checksum                     u32
+
+struct TrainerTowerTrainer, 328 bytes (0x148)
+  0x0000  name                         u8[11]
+  0x000B  facilityClass                u8
+  0x000C  textColor                    u8
+  0x000E  speechBefore                 u16[6]
+  0x001A  speechWin                    u16[6]
+  0x0026  speechLose                   u16[6]
+  0x0032  speechAfter                  u16[6]
+  0x0040  mons                         struct BattleTowerPokemon[6]
+
+struct WarpData, 8 bytes (0x8)
+  0x0000  mapGroup                     s8
+  0x0001  mapNum                       s8
+  0x0002  warpId                       s8
+  0x0004  x                            s16
+  0x0006  y                            s16
+
+struct WonderCard, 332 bytes (0x14C)
+  0x0000  flagId                       u16
+  0x0002  iconSpecies                  u16
+  0x0004  idNumber                     u32
+  0x0008  type                         u8:2, bits 0-1
+  0x0008  bgType                       u8:4, bits 2-5
+  0x0008  sendType                     u8:2, bits 6-7
+  0x0009  maxStamps                    u8
+  0x000A  titleText                    u8[40]
+  0x0032  subtitleText                 u8[40]
+  0x005A  bodyText                     u8[4][40]
+  0x00FA  footerLine1Text              u8[40]
+  0x0122  footerLine2Text              u8[40]
+
+struct WonderCardMetadata, 36 bytes (0x24)
+  0x0000  battlesWon                   u16
+  0x0002  battlesLost                  u16
+  0x0004  numTrades                    u16
+  0x0006  iconSpecies                  u16
+  0x0008  stampData                    u16[2][7]
+
+struct WonderNews, 444 bytes (0x1BC)
+  0x0000  id                           u16
+  0x0002  sendType                     u8
+  0x0003  bgType                       u8
+  0x0004  titleText                    u8[40]
+  0x002C  bodyText                     u8[10][40]
+
+struct WonderNewsMetadata, 4 bytes (0x4)
+  0x0000  newsType                     u8:2, bits 0-1
+  0x0000  sentRewardCounter            u8:3, bits 2-4
+  0x0000  rewardCounter                u8:3, bits 5-7
+  0x0001  berry                        u8
+
+typedefs
+  OldMan = union OldMan, 64 bytes (0x40)
+  bool8 = u8, 1 byte (0x1)
+  int16_t = short int, 2 bytes (0x2)
+  int8_t = signed char, 1 byte (0x1)
+  s16 = int16_t, 2 bytes (0x2)
+  s8 = int8_t, 1 byte (0x1)
+  u16 = uint16_t, 2 bytes (0x2)
+  u32 = uint32_t, 4 bytes (0x4)
+  u8 = uint8_t, 1 byte (0x1)
+  uint16_t = short unsigned int, 2 bytes (0x2)
+  uint32_t = unsigned int, 4 bytes (0x4)
+  uint8_t = unsigned char, 1 byte (0x1)
