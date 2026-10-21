@@ -13,6 +13,10 @@
 -- just exercises the EnsureInitialized() codepath and verifies the static
 -- state layout matches what addresses.lua expects.
 --
+-- MOMENT (what a recording plays at normal speed; see MOMENTS in
+-- test/lib/framework.lua): the player standing in their bedroom once the
+-- boot is done. The rest is memory checks, which fast-forward.
+--
 -- HOW TO RUN:
 --   bash test/run_test.sh test/tests/test_roaming_init.lua
 -------------------------------------------------------------------------------
@@ -74,12 +78,10 @@ fw.run(function()
     fw.assert_true(cs.is_player_active(),
         "player ObjectEvent active (reached the overworld)")
 
-    -- Drop to real-time so a GUI tester can see the player standing in
-    -- the bedroom. Most of this test is memory inspection, but the
-    -- visual confirmation that the system didn't break the overworld
-    -- is the most important thing for a human to actually see.
-    fw.slow_down("player should be visible in their bedroom")
-    fw.wait_frames(120)  -- 2 seconds at real-time
+    -- Most of this test is memory inspection, but seeing the player
+    -- standing in the bedroom, the overworld drawn as usual, is what
+    -- shows a watcher that the roamer system didn't break it.
+    fw.show("the player standing in their bedroom")
 
     -- Log the current map so we know what to plan navigation around.
     local mapGroup, mapNum = read_current_map()
