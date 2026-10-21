@@ -28,7 +28,6 @@ local ROUTE1_MAP_NUM   = 19
 
 fw.run(function()
     fw.log("=== Warp to Route 1 (programmatic) ===")
-    fw.slow_down("watch the boot + warp happen")
 
     fw.log("Booting through Oak's speech...")
     local sel = cs.find_selection_press()
