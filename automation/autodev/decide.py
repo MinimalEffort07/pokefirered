@@ -64,6 +64,9 @@ class GrillOutcome:
     """What GitHub shows on a parent after its grill session ended."""
     design_comment: bool    # the bot posted the design comment
     tickets: list           # Ticket for each ticket the session reported
+    # The design comment marks the design a breaking change (#143), so its
+    # parent waits in Paused for the owner's approval.
+    breaking: bool = False
 
 
 @dataclass(frozen=True)
@@ -737,8 +740,25 @@ def _grill_done(state, session, outcome):
     if not outcome.tickets:
         return ("the grill session said it was done, but GitHub shows no "
                 "tickets"), []
-    return None, (_place_tickets(session.issue, outcome.tickets)
-                  + [SetStatus(session.issue, IN_PROGRESS)])
+    parent = session.issue
+    placed = _place_tickets(parent, outcome.tickets)
+    if outcome.breaking:
+        # A breaking design waits for the owner before any ticket starts
+        # (#143): a paused parent holds its tickets, and moving it to Todo
+        # is the usual resume (D8). Status first, so a retry of this group
+        # never posts the comment twice.
+        return None, placed + [SetStatus(parent, PAUSED),
+                               Comment(parent, _breaking_hold(state, parent))]
+    return None, placed + [SetStatus(parent, IN_PROGRESS)]
+
+
+def _breaking_hold(state, parent):
+    """The comment on a parent whose design is a breaking change."""
+    return _bot_comment(
+        "@%s the design for #%d is a breaking change (see its Breaking change "
+        "section), so its tickets wait. Move the card to `Todo` to approve it "
+        "and start them. To change the plan, edit or close its tickets first."
+        % (state.owner, parent))
 
 
 def _ticket_done(state, session, outcome):

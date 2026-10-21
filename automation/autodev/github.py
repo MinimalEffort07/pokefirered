@@ -19,6 +19,9 @@ from autodev.worktrees import branch_prefix
 # The grill session marks its design comment with this hidden tag
 # (CLAUDE.md, "Autonomous mode"), which is how the dispatcher finds it.
 DESIGN_MARKER = "<!-- autodev:design -->"
+# A design that is a breaking change carries this beside the design marker
+# (CLAUDE.md, step 3), so its parent waits in Paused for the owner (#143).
+BREAKING_MARKER = "<!-- autodev:breaking -->"
 
 SET_STATUS = """
 mutation SetStatus($board: ID!, $item: ID!, $field: ID!, $option: String!) {
@@ -116,8 +119,12 @@ class GitHub:
         the parent's sub-issues are checked too, in case it missed one."""
         repo = self.config.repo
         comments = self.gh.rest_list("repos/%s/issues/%d/comments" % (repo, parent))
-        design = any(c["user"]["login"] == self.config.bot
-                     and DESIGN_MARKER in (c["body"] or "") for c in comments)
+        designs = [c["body"] for c in comments if c["user"]["login"] == self.config.bot
+                   and DESIGN_MARKER in (c["body"] or "")]
+        # Only the design comment can mark the design breaking, and only
+        # outside code: written in code, the marker is text describing it.
+        # A re-queued grill may have posted two; either one holds the parent.
+        breaking = any(BREAKING_MARKER in prose(body) for body in designs)
         subs = self.gh.rest_list("repos/%s/issues/%d/sub_issues" % (repo, parent))
         linked = {s["number"] for s in subs}
         tickets = []
@@ -138,7 +145,8 @@ class GitHub:
                 open_blockers=any(self._issue(b)["state"] == "open"
                                   for b in blockers),
             ))
-        return GrillOutcome(design_comment=design, tickets=tickets)
+        return GrillOutcome(design_comment=bool(designs), tickets=tickets,
+                            breaking=breaking)
 
     # ── a ticket's PR ─────────────────────────────────────────────────────
 
