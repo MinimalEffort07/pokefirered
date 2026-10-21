@@ -110,6 +110,15 @@
 -- moved away (follower.clear_roamers). Every scenario seeds the game's
 -- random state at its start.
 --
+-- MOMENTS (issue #119, see test/lib/framework.lua). In the mGBA window
+-- (bash test/record_test.sh) the test fast-forwards, warps and setup
+-- included, except at each scenario's crux. A swap is a motion, so its
+-- moment is an fw.show_next marked just before the key press that causes
+-- it, long enough to see both steps and where each ends up. fw.show_next
+-- adds no frames, so the frame counts the scenarios assert stay the same.
+-- The 8 runs each of W6 and W8 get one representative: W6's first seed, and
+-- W8's first run (of each kind) that bumps into a moving Pikachu.
+--
 -- HOW TO RUN:
 --   bash test/run_test.sh test/tests/test_follower_swap.lua
 -------------------------------------------------------------------------------
@@ -190,22 +199,12 @@ end
 -- tile is free.
 local function arrive(name, map, x, y)
     fw.log(string.format("--- %s: warp to %d.%d (%d,%d) ---", name, map[1], map[2], x, y))
-    fw.speed_up()   -- the setup runs fast in the mGBA window; see watch_from_here
     if not fw.assert_true(follower.warp(map[1], map[2], x, y),
             string.format("%s: warped the player to (%d,%d)", name, x, y)) then
         return false
     end
     return fw.assert_true(follower.wait_still(300),
         name .. ": player and follower standing still before the start")
-end
-
--- Start watching the follower (follower.new_watch) for scenario `name`. In
--- the mGBA window (bash test/record_test.sh) the scenario plays in real time
--- from here, so a recording shows each swap at its own speed; arrive()
--- fast-forwards again. Headless runs are unaffected.
-local function watch_from_here(name)
-    fw.slow_down(name)
-    return follower.new_watch(name)
 end
 
 -- Assert where the player and the follower stand before a scenario starts.
@@ -275,7 +274,6 @@ local function w1()
     -- Walk down onto the exit (4,6). DOWN is let go as soon as the warp
     -- starts (SaveBlock1's location changes), so on Route 2 only the game's
     -- own step out of the cave moves the player.
-    fw.slow_down(name)
     local left = fw.hold_until("DOWN", function() return on_map(ROUTE2) end, 120, 1)
     if not fw.assert_true(left, "W1: walked onto Diglett's Cave's exit; the map becomes Route 2") then
         return
@@ -291,7 +289,8 @@ local function w1()
     if not fw.assert_true(spawned, "W1: Pikachu spawns on the player's tile, the cave mouth (17,11)") then
         return
     end
-    local watch = watch_from_here(name)
+    fw.show_next("W1: Pikachu appears on the cave mouth as the player steps out of the cave")
+    local watch = follower.new_watch(name)
     watch.attach()
     -- The game's own step out of the cave, south onto (17,12), then
     -- control comes back.
@@ -312,7 +311,11 @@ local function w1()
     end
     fw.assert_true(watch.snap.warp(17, 11), "W1: the cave mouth (17,11) is a warp")
 
-    -- Walk back in: hold UP into Pikachu.
+    -- Walk back in: hold UP into Pikachu. The moment lasts until the
+    -- screen has faded out on the cave mouth (the map changes about 90
+    -- frames after UP); the cave itself takes 230 more frames to fade in,
+    -- fast-forwarded.
+    fw.show_next("W1: Pikachu and the player swap, and the player walks back into the cave", 100)
     key_down("UP")
     local entered = watch.run_until(180, function() return on_map(DIGLETT_N) end)
     key_up("UP")
@@ -335,8 +338,12 @@ local function w2()
     end
     if not check_start(name, 6, 9, follower.DIR_NORTH, 6, 8) then return end
     follower.set_rng(SEED)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
 
+    -- The moment lasts until the house has faded in and the player has
+    -- control there (about 135 frames after UP), and the wait below keeps
+    -- the next scenario's warp out of it.
+    fw.show_next("W2: Pikachu and the player swap at the door, and the player's house loads", 140)
     key_down("UP")
     local entered = watch.run_until(180, function() return on_map(HOUSE_1F) end)
     key_up("UP")
@@ -345,6 +352,9 @@ local function w2()
     fw.assert_true(entered ~= nil, string.format(
         "W2: the map becomes the player's house 1F within 180 frames of holding UP%s",
         entered and (" (" .. entered .. " frames)") or ""))
+    if entered then
+        fw.wait_until(walk.ready, 120, "W2: in the house with control")
+    end
 end
 
 -------------------------------------------------------------------------------
@@ -370,8 +380,9 @@ local function w3()
     if not arrive(name, VIRIDIAN, 8, 14) then return end
     if not check_start(name, 8, 14, follower.DIR_SOUTH, 8, 13) then return end
     follower.set_rng(SEED)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
 
+    fw.show_next("W3: Pikachu and the player swap places at a run, and the player runs on up the path")
     local took = up_the_path(watch, { "B", "UP" }, 90)
     watch.finish()
     check_swap(name, watch, "running", 8, 14, 8, 13)
@@ -393,8 +404,9 @@ local function w4()
     if not fw.assert_true(riding, "W4: the player arrives on the bicycle") then return end
     if not check_start(name, 8, 14, follower.DIR_SOUTH, 8, 13) then return end
     follower.set_rng(SEED)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
 
+    fw.show_next("W4: Pikachu and the player swap places on the bicycle, and the player rides on")
     local took = up_the_path(watch, { "UP" }, 90)
     watch.finish()
     check_swap(name, watch, "cycling", 8, 14, 8, 13)
@@ -424,10 +436,12 @@ local function w5()
     if not fw.assert_true(ready, "W5: the player stands in the house with control") then return end
     if not check_start(name, 4, 8, follower.DIR_NORTH, 3, 8) then return end
     follower.set_rng(SEED)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
     fw.assert_true(watch.snap.warp(4, 8), "W5: the doormat (4,8) is a warp")
 
-    -- LEFT: the player onto (3,8), Pikachu onto the doormat.
+    -- LEFT: the player onto (3,8), Pikachu onto the doormat. The moment
+    -- runs on into the 120 frames Pikachu sits there.
+    fw.show_next("W5: Pikachu and the player swap; Pikachu sits on the doormat and no warp starts", 90)
     hold_until_swapped(watch, "LEFT", 1, 90)
     check_swap(name .. " LEFT", watch, "walking", 4, 8, 3, 8)
     watch.run(120)
@@ -437,6 +451,7 @@ local function w5()
         .. " (Pikachu on (%s,%s))", tostring(fx), tostring(fy)))
 
     -- RIGHT: swap back, the player onto the doormat.
+    fw.show_next("W5: Pikachu and the player swap back, the player onto the doormat")
     hold_until_swapped(watch, "RIGHT", 2, 90)
     check_swap(name .. " RIGHT", watch, "walking", 3, 8, 4, 8)
 
@@ -453,7 +468,9 @@ end
 -------------------------------------------------------------------------------
 -- W6: head-on in the one-tile path
 -------------------------------------------------------------------------------
-local function w6(seed)
+-- `show`: this run is the representative that gets a moment (see the
+-- header's MOMENTS).
+local function w6(seed, show)
     local name = string.format("W6 (seed 0x%08x)", seed)
     if not arrive(name, VIRIDIAN, 8, 14) then return end
     follower.turn("UP")   -- face north, up the path
@@ -464,8 +481,13 @@ local function w6(seed)
     -- Pikachu 6 tiles up the path, and UP held from this same frame.
     follower.place(8, 8)
     follower.set_rng(seed)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
 
+    if show then
+        -- From Pikachu hurrying down the path until the player reaches (8,6)
+        -- with Pikachu behind them (113 frames).
+        fw.show_next(name .. ": head-on, Pikachu and the player swap and Pikachu ends up south of the player", 120)
+    end
     key_down("UP")
     local reached = watch.run(240, function()
         local t = watch.player_tiles[watch.frame_no]
@@ -496,12 +518,13 @@ end
 local BUMP_FIRST, BUMP_LAST = 0x21, 0x28
 
 -- One run, `how` "running" or "cycling"; returns true if the player bumped
--- into Pikachu while it was in the middle of a step.
+-- into Pikachu while it was in the middle of a step. With `show`, a bump
+-- marks a moment: the bump, then the swap (see the header's MOMENTS).
 local W8_SETUP = {
     running = { pikachu_y = 11, keys = { "B", "UP" } },
     cycling = { pikachu_y = 10, keys = { "UP" } },
 }
-local function w8(how, seed)
+local function w8(how, seed, show)
     local name = string.format("W8 %s (seed 0x%08x)", how, seed)
     local setup = W8_SETUP[how]
     mm.set_flag(FLAG_SYS_B_DASH)
@@ -518,13 +541,18 @@ local function w8(how, seed)
     -- Pikachu up the path, and the keys held from this same frame.
     follower.place(8, setup.pikachu_y)
     follower.set_rng(seed)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
 
     local bumped = false
     for _, k in ipairs(setup.keys) do key_down(k) end
     local reached = watch.run(120, function(n)
         local a = follower.player_action()
-        if a and a >= BUMP_FIRST and a <= BUMP_LAST and not watch.still[n] then bumped = true end
+        if a and a >= BUMP_FIRST and a <= BUMP_LAST and not watch.still[n] and not bumped then
+            bumped = true
+            if show then
+                fw.show_next(name .. ": the player bumps into Pikachu in the middle of its step, then they swap")
+            end
+        end
         local t = watch.player_tiles[n]
         return t.x == 8 and t.y == 6
     end)
@@ -560,7 +588,8 @@ local function w9(how, keys)
     if not arrive(name, INDIGO, 11, 16) then return end
     if not check_start(name, 11, 16, follower.DIR_SOUTH, 11, 15) then return end
     follower.set_rng(SEED)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
+    fw.show_next(name .. ": Pikachu and the player swap places on rock stairs")
     hold_until_swapped(watch, keys, 1, 90)
     watch.finish()
     check_swap(name, watch, how, 11, 16, 11, 15)
@@ -583,13 +612,15 @@ local function w10()
         return
     end
     follower.set_rng(SEED)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
 
     -- Uphill: UP (with B) into Pikachu, north of the player.
+    fw.show_next("W10: Pikachu and the player swap places going uphill on the Cycling Road")
     hold_until_swapped(watch, "UP", 1, 90)
     check_swap(name .. " uphill", watch, "cycling uphill", 11, 56, 11, 55)
     -- Downhill: let go of B and the slope takes the player back down into
     -- Pikachu, now south of them.
+    fw.show_next("W10: the bicycle rolls back down the slope and they swap again")
     key_up("B")
     hold_until_swapped(watch, nil, 2, 90)
     watch.finish()
@@ -634,19 +665,21 @@ end
 
 -- L1 and L2: the player on (x,29) facing south above the ledge (x,30),
 -- Pikachu put on its landing tile (x,31). Press DOWN: the player jumps the
--- ledge, and Pikachu steps aside onto (ex,31), the player's `side`.
-local function make_way_ledge(name, x, side, ex)
+-- ledge, and Pikachu steps aside onto (ex,31), the player's `side`. `label`
+-- names the jump's moment.
+local function make_way_ledge(name, x, side, ex, label)
     if not arrive(name, VIRIDIAN, x, 29) then return nil end
     -- After the warp the player faces south and Pikachu is behind them.
     if not check_start(name, x, 29, follower.DIR_SOUTH, x, 28) then return nil end
     follower.place(x, 31)
     if not check_start(name, x, 29, follower.DIR_SOUTH, x, 31) then return nil end
     follower.set_rng(SEED)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
 
     -- DOWN until the jump starts: its first frame is the one the player's
     -- tile becomes the ledge (the 2-tile jump moves it onto the ledge as it
     -- starts and onto the landing tile halfway).
+    fw.show_next(label)
     key_down("DOWN")
     local takeoff = watch.run(30, function(n)
         local t = watch.player_tiles[n]
@@ -664,12 +697,14 @@ local function make_way_ledge(name, x, side, ex)
 end
 
 local function l1()
-    make_way_ledge("L1", 28, "left", 29)
+    make_way_ledge("L1", 28, "left", 29,
+        "L1: Pikachu hops aside to the player's left as the player jumps the ledge onto its tile")
 end
 
 -- L2: the ledge (19,30), whose landing tile's left, (20,31), is a sign.
 local function l2()
-    local watch = make_way_ledge("L2", 19, "right", 18)
+    local watch = make_way_ledge("L2", 19, "right", 18,
+        "L2: Pikachu hops aside to the player's right (a sign is on the left) as the player jumps the ledge")
     if watch then
         fw.assert_true(watch.snap.solid(20, 31), "L2: the player's left, the sign (20,31), is solid")
     end
@@ -732,11 +767,12 @@ local function l3()
     if not ready then return end
     if not check_start(name, 16, 28, follower.DIR_EAST, 17, 28) then return end
     follower.set_rng(SEED)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
 
     -- Hold RIGHT until the player stands on (17,28) on foot: no longer
     -- surfing, and the hop off the water over. The hop moves the player's
     -- tile onto the shore as it starts.
+    fw.show_next("L3: Pikachu waits on the shore and steps aside as the player comes ashore onto its tile")
     key_down("RIGHT")
     local takeoff = nil
     local ashore = watch.run(60, function(n)
@@ -765,9 +801,10 @@ local function w7()
     end
     if not fw.assert_true(man ~= nil, "W7: the man stands at (21,28)") then return end
     follower.set_rng(SEED)
-    local watch = watch_from_here(name)
+    local watch = follower.new_watch(name)
 
     local moved = nil
+    fw.show_next("W7: the player walks into the man; neither of them moves, no swap")
     key_down("LEFT")
     watch.run(60, function(n)
         local t = watch.player_tiles[n]
@@ -798,11 +835,12 @@ fw.run(function()
     w5()
     w1()
     w3()
-    for _, seed in ipairs(SPREAD_SEEDS) do w6(seed) end
+    for i, seed in ipairs(SPREAD_SEEDS) do w6(seed, i == 1) end
     for _, how in ipairs({ "running", "cycling" }) do
         local bumps = 0
         for _, seed in ipairs(SPREAD_SEEDS) do
-            if w8(how, seed) then bumps = bumps + 1 end
+            -- The first run that bumps is the representative.
+            if w8(how, seed, bumps == 0) then bumps = bumps + 1 end
         end
         fw.assert_true(bumps >= 1, string.format(
             "W8 %s: in at least one of the %d runs the player meets Pikachu in the middle"

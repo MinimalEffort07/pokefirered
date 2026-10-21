@@ -45,6 +45,12 @@
 --       bash test/run_test.sh test/tests/demo_follower_collision.lua
 --   python3 -I test/tools/captioned_gif.py /tmp/follower_demo gifs/WalkWithPokemon.gif
 -- captions.tsv in the frame directory says which caption each frame has.
+--
+-- MOMENTS (issue #119, see test/lib/framework.lua). In the mGBA window
+-- (bash test/record_test.sh) the demo fast-forwards except at one moment
+-- per beat, which plays at normal speed. Moments change only the window's
+-- speed, never the frames, so the GIF's frame dumps are the same either
+-- way.
 -------------------------------------------------------------------------------
 
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
@@ -97,7 +103,6 @@ fw.run(function()
 
     local watch = follower.new_watch("demo")
     watch.attach()
-    fw.slow_down("Walk With Pokemon demo")
     capture.start()
     local start_frame = watch.frame_no
     local fx0, fy0 = follower_tile(watch)
@@ -109,6 +114,9 @@ fw.run(function()
     fw.wait_frames(40)
     walk_to(22, 31)
     walk_to(22, 29)
+    -- As the player sets off east, Pikachu steps up out of the gap onto row
+    -- 29 (about 20 frames from here) and follows along it.
+    fw.show_next("Beat 1: Pikachu steps up onto row 29 and follows along it, never onto the ledges", 90)
     walk_to(27, 29)
     fw.wait_frames(40)
     local _, fy1 = follower_tile(watch)
@@ -118,6 +126,9 @@ fw.run(function()
     -- 2. Ledge jump: step onto (28,29), hop down over (28,30), on to (28,33).
     capture.caption("…but hops down after you")
     walk_to(28, 29)
+    -- The player's jump, then Pikachu's (it takes off about 70 frames after
+    -- DOWN and lands about 30 later).
+    fw.show_next("Beat 2: the player jumps the ledge, and Pikachu jumps it after them", 100)
     fw.hold_until("DOWN", function()
         local _, y = follower.player()
         return y == 31
@@ -150,6 +161,8 @@ fw.run(function()
         "beat 3: follower within 2 tiles of the player on the shore before SURF")
     follower.face("LEFT")   -- the water is west; holding LEFT just turns and bumps
     fw.assert_true(follower.use_surf(16, 28), "beat 3: player surfs onto (16,28)")
+    -- Across the pond to the landing (about 60 frames).
+    fw.show_next("Beat 3: the player surfs west across the pond; Pikachu stops on the shore", 70)
     local landed = follower.surf_to("LEFT", 10, 28, watch)
     local tp = watch.teleport_while_player_on_water()
     fw.assert_true(tp == nil, "beat 3: no teleport while the player is on water")
@@ -163,6 +176,10 @@ fw.run(function()
     -- 4. Landing: the follower appears beside the player.
     capture.caption("…and catches up when you land")
     local rejoined = follower.wait_rejoin(watch, 180)
+    if rejoined then
+        -- On the frame it appears, so the 90 frames below start with it.
+        fw.show_next("Beat 4: Pikachu appears beside the player, who has landed west of the pond")
+    end
     fw.assert_true(rejoined, string.format(
         "beat 4: follower within 2 tiles of the player within 180 frames of landing%s",
         rejoined and (" (" .. (rejoined - landed) .. " frames)") or ""))
