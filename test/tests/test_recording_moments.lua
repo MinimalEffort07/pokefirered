@@ -1,5 +1,5 @@
 -------------------------------------------------------------------------------
--- test_recording_moments.lua: a test's marked moments (issue #119, #124)
+-- test_recording_moments.lua: a test's marked moments (issue #119, #124, #129)
 -------------------------------------------------------------------------------
 -- In the mGBA window a test fast-forwards, except at its moments: outcomes a
 -- watcher must see, which play at normal speed for about a second (see
@@ -28,14 +28,37 @@
 --       speed".
 --   M7  A fixture that marks no moments passes, and its output says
 --       "[WATCH] no moments: ...".
---   M9  fw.slow_down makes fw.speed() "normal" until fw.speed_up (both are
---       removed again by #119's last ticket, and M9 with them).
+--   M8  Nothing but the framework sets the speed: no .lua file under test/,
+--       at any depth, other than test/lib/framework.lua calls
+--       setFastForward, slow_down or speed_up (see M8 BELOW). The check
+--       proves itself first, on planted lines in a scratch file in this
+--       run's own folder, and on the framework's own call. And the
+--       framework has no fw.slow_down or fw.speed_up any more.
 --   M10 A test library loading its own copy of the framework mid-test
 --       doesn't end a moment that is playing (the M6 fixture checks that it
 --       doesn't lose the count either).
 --
--- (M8 belongs to #119's last ticket: a check that nothing under test/ but
--- the framework sets the speed.)
+-- (There is no M9 any more: it checked fw.slow_down and fw.speed_up, the
+-- older open-ended way to slow down, which #129 removed.)
+--
+-- M8 BELOW. A test that set the speed itself would bring back the bug
+-- moments fixed (mGBA ignores a speed change made inside the test after an
+-- io.popen in the same frame; see WHY A TEST NEVER SETS THE SPEED ITSELF in
+-- the framework), and a test that slowed down for a whole scenario would
+-- make its video long again. So M8 reads every .lua file under test/ and
+-- fails if any of them but the framework names one of the three: mGBA's own
+-- emu:setFastForward, or the framework's removed fw.slow_down and
+-- fw.speed_up. It matches whole names only (so "slow_downhill" doesn't
+-- count), and anywhere in the code, so it also catches a call stored in a
+-- variable first. Comments are skipped, the way
+-- test/tests/test_no_fixed_tmp_paths.lua skips them: a name there is only
+-- talk about the call. Strings are skipped too: a name in a log message, or
+-- in the lines M8 plants below, isn't a call. (So a call written through a
+-- string, emu["setFastForward"](emu, 1), would get past it: M8 guards
+-- against the plain calls a test would write, not against hiding one.)
+-- Like that test, the scan goes line by line and doesn't understand Lua's
+-- multi-line [[...]] strings or --[[...]] comments, which no file here
+-- uses. A file it can't read counts as a failure, so it can't hide one.
 --
 -- The fixtures are in test/tests/framework_fixtures/ (two_moments.lua and
 -- no_moments.lua). As in test/tests/test_framework_rules.lua, io.popen
@@ -132,6 +155,98 @@ local function expect(c)
     end
 end
 
+-- M8: the one file that may set the window's speed, and the names no other
+-- file may use (see M8 BELOW).
+local SPEED_OWNER = "test/lib/framework.lua"
+local SPEED_CALLS = { "setFastForward", "slow_down", "speed_up" }
+
+-- The code part of one Lua line: the line without its comment and without
+-- the insides of its '...' and "..." strings. A "--" inside a string does
+-- not start a comment.
+local function code_only(line)
+    local code = {}
+    local quote = nil
+    local i = 1
+    while i <= #line do
+        local c = line:sub(i, i)
+        if quote then
+            if c == "\\" then
+                i = i + 1  -- the next character is escaped; skip it
+            elseif c == quote then
+                quote = nil
+                code[#code + 1] = c
+            end
+        elseif c == '"' or c == "'" then
+            quote = c
+            code[#code + 1] = c
+        elseif line:sub(i, i + 1) == "--" then
+            break
+        else
+            code[#code + 1] = c
+        end
+        i = i + 1
+    end
+    return table.concat(code)
+end
+
+-- Every use of a SPEED_CALLS name in the code of the Lua file at `path`, as
+-- { line = n, name = name } entries, or nil if the file can't be read.
+local function speed_calls_in(path)
+    local f = io.open(path, "r")
+    if not f then return nil end
+    local found = {}
+    local n = 0
+    for line in f:lines() do
+        n = n + 1
+        local code = code_only(line)
+        for _, name in ipairs(SPEED_CALLS) do
+            -- %f[%w_] and %f[^%w_] are Lua's frontier patterns: the name
+            -- must start and end at the edge of a word.
+            if code:find("%f[%w_]" .. name .. "%f[^%w_]") then
+                found[#found + 1] = { line = n, name = name }
+            end
+        end
+    end
+    f:close()
+    return found
+end
+
+-- M8 on the tree: speed_calls_in on every .lua file under test/, at any
+-- depth, except SPEED_OWNER. Returns how many files it read and a
+-- "file:line name" string for every use it found (or "file: can't be read").
+local function speed_calls_in_tree()
+    -- List the files from the project root, so paths read "test/...".
+    local pipe = io.popen("cd '" .. project_dir .. "' && find test -type f -name '*.lua' | sort")
+    local scanned = 0
+    local uses = {}
+    for file in pipe:lines() do
+        if file ~= SPEED_OWNER then
+            local found = speed_calls_in(project_dir .. file)
+            if found then
+                scanned = scanned + 1
+                for _, use in ipairs(found) do
+                    uses[#uses + 1] = string.format("%s:%d %s", file, use.line, use.name)
+                end
+            else
+                uses[#uses + 1] = file .. ": can't be read"
+            end
+        end
+    end
+    pipe:close()
+    return scanned, uses
+end
+
+-- Lines M8 plants in a scratch file, with the name each one must be flagged
+-- for (nil: not flagged).
+local PLANTED = {
+    { text = 'fw.slow_down("x")',                       flag = "slow_down" },
+    { text = '-- fw.slow_down("x")',                    flag = nil },
+    { text = 'emu:setFastForward(1)',                   flag = "setFastForward" },
+    { text = 'local up = fw.speed_up  -- called later', flag = "speed_up" },
+    { text = 'fw.log("no fw.slow_down here")',          flag = nil },
+    { text = 'local slow_downhill = 1',                 flag = nil },
+}
+
 -- M1 and M2: fw.show(label, frames) holds for `frames` frames at normal speed.
 local function check_show(name, frames)
     local label = name .. " a held moment"
@@ -206,14 +321,36 @@ fw.run(function()
         end
     end
 
-    -- M9: the older calls, kept until #119's last ticket removes them.
-    fw.slow_down("M9")
-    fw.assert_eq(fw.speed(), "normal", "M9: fw.slow_down makes the speed normal")
-    fw.assert_eq(count(next_speeds(200), "normal"), 200,
-        "M9: it stays normal past a moment's 180 frames")
-    fw.speed_up()
-    fw.assert_eq(fw.speed(), "fast", "M9: fw.speed_up makes it fast again")
-    fw.assert_eq(count(next_speeds(10), "fast"), 10, "M9: and it stays fast")
+    -- M8: nothing under test/ but the framework sets the speed. First the
+    -- check proves itself, on lines planted in a scratch file in this run's
+    -- own folder (nothing is written under test/)...
+    local scratch = fw.out_path("m8_planted.lua")
+    local f = io.open(scratch, "w")
+    for _, p in ipairs(PLANTED) do f:write(p.text, "\n") end
+    f:close()
+    local flagged = {}
+    for _, use in ipairs(speed_calls_in(scratch) or {}) do
+        flagged[use.line] = use.name
+    end
+    for i, p in ipairs(PLANTED) do
+        fw.assert_eq(flagged[i], p.flag, "M8: the planted line " .. p.text .. " is "
+            .. (p.flag and ("flagged for " .. p.flag) or "not flagged"))
+    end
+    -- ...and on the framework, which does set the speed.
+    local owner_uses = speed_calls_in(project_dir .. SPEED_OWNER) or {}
+    fw.assert_true(#owner_uses > 0, "M8: the check finds the framework's own "
+        .. "emu:setFastForward in " .. SPEED_OWNER)
+    -- The framework's older open-ended calls are gone.
+    for _, name in ipairs({ "slow_down", "speed_up" }) do
+        fw.assert_eq(fw[name], nil, "M8: the framework has no fw." .. name)
+    end
+    -- Then the tree. The count guards against a scan that read nothing
+    -- (wrong folder, find missing): test/ holds over a hundred .lua files.
+    -- One assertion for the whole scan; on failure it lists every use.
+    local scanned, uses = speed_calls_in_tree()
+    fw.assert_true(scanned >= 80, "M8: scanned " .. scanned .. " .lua files under test/")
+    fw.assert_eq(#uses, 0, "M8: no .lua file under test/ but " .. SPEED_OWNER
+        .. " sets the speed" .. (#uses > 0 and (": " .. table.concat(uses, "; ")) or ""))
 
     -- M10: a test library that loads its own copy of the framework while a
     -- moment plays (test_mt_moon_properties.lua's checks load theirs
