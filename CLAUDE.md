@@ -32,7 +32,7 @@ A **breaking change** is any change to the save format, even one old saves survi
 
 **Not breaking:** adding something new; a change that still reads the old form, or converts it; mGBA savestates and other test fixtures (each is good only for the build that made it); the addresses tests hard-code; memory that isn't saved; the ROM's own layout; a refactor that behaves the same; Mt. Moon building a different cave from the same seed (Continue rebuilds the cave from the saved seed, and the safety net, S9, moves the player onto floor).
 
-**Prefer the compatible way**: reserved bytes, a free flag or var, a new ID at the end of its list, code that reads both the old and the new form. Only when there's none is it a breaking change. Then the design, the ticket and the PR all say so (step 11), and **it merges only with the owner's explicit approval**.
+**Prefer the compatible way**: reserved bytes, a free flag or var, a new ID at the end of its list, code that reads both the old and the new form. Only when there's none is it a breaking change. Then the design, the ticket and the PR all say so (steps 3, 4 and 11), and **it merges only with the owner's explicit approval**.
 
 **Autodev's rule: a breaking PR merges only on the owner's exact `/merge breaking`.**
 - **Which PRs count**, compared with master on GitHub: one that changes `test/save_format.txt` in any way, one whose files GitHub can't all list, and one whose body or one of the bot's replies on it has a `## Breaking change` heading outside code. Only a breaking PR carries that heading; any other PR may say "Breaking change: none." as plain text.
@@ -182,6 +182,7 @@ Read every referenced file, related code, and relevant test patterns, then invok
 - Whether the change shows in the game: does something on the GBA screen look or behave differently? When it doesn't, there is no recording and no demo GIF (step 8).
 - For a change that shows, the exact visual flow the demo GIF and the recording must show (which menus, which transitions, what on-screen text confirms success)
 - The pass/fail criteria for each check (what value is read, from which address, expected vs. actual)
+- Whether the change is a breaking change (see "Breaking changes"), and if it is, exactly what stops working
 
 Under-specified tests are the single biggest source of rework on this project.
 
@@ -190,6 +191,8 @@ Post the agreed design as a comment on the issue so its history captures what wa
 ```bash
 gh issue comment <N> --body "..."
 ```
+A breaking design's comment has a `## Breaking change` section: what stops working, what happens to a save made before, and why there's no compatible way. Any other design says "Breaking change: none." as plain text.
+
 Also edit the issue description to include a summary of scope if the original description was sparse:
 ```bash
 gh issue edit <N> --body "..."
@@ -206,6 +209,7 @@ Tracker settings for this repo:
 - Leave labels off; this repo has no triage labels.
 - Each ticket's acceptance criteria carry its share of the test scenarios, demo flow, and pass/fail criteria from step 2.
 - Each ticket's acceptance criteria say whether it records: "Recording: <test>, showing …" only for a change you can see in the game (step 8), otherwise "No recording: no in-game behaviour changes."
+- Each ticket's acceptance criteria say whether it is a breaking change, the same way: "Breaking change: <what stops working>" or "Breaking change: none."
 - A ticket that adds, removes or changes a script, the workflow or autodev lists updating `docs/SYSTEM_MAP.md` among its acceptance criteria.
 
 **5. Implement the frontier in parallel**
@@ -334,13 +338,14 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
   1. the agreed design;
   2. a **"Least-confident defaults"** list: the questions where the recommended answer was a close call;
   3. every round's questions and answers, inside a collapsed `<details>` block;
-  4. the hidden marker `<!-- autodev:design -->`, which is how the dispatcher finds it.
+  4. the hidden marker `<!-- autodev:design -->`, which is how the dispatcher finds it;
+  5. for a breaking design only, its `## Breaking change` section (step 3) and the hidden marker `<!-- autodev:breaking -->` beside the design marker, outside code. The dispatcher then holds the parent in `Paused`, so none of its tickets starts until the owner approves the design by moving the card to `Todo`.
 
   Then replace the parent's body with a scope summary (`issue.py set-body`).
 - **Step 4:** follow `to-tickets` but skip its quiz step: your breakdown is final. Create at least one ticket with `issue.py create-ticket`.
   - Each ticket body has `## Parent` (naming `#<N>`), `## What to build`, `## Acceptance criteria` and `## Blocked by`.
   - The tool links each ticket as a sub-issue of `#<N>` and adds no labels.
-  - Don't touch the board: the dispatcher places each ticket there, as `Blocked` or `Todo`.
+  - Don't touch the board: the dispatcher places each ticket there, as `Blocked` or `Todo`, and moves the parent to `In progress`, or to `Paused` for a breaking design.
   - Don't close or implement anything.
   - Report the ticket numbers in `links`.
 

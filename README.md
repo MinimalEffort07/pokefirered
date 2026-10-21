@@ -189,7 +189,7 @@ Autodev takes an issue from the board to a PR that is ready to merge, with nobod
 
 **What it does.** Add one of your issues to the **pokefirered autodev** board. Every 2 minutes a systemd user timer runs one *tick* of the dispatcher, which looks at the board and moves each card on:
 
-1. A grill session designs the issue by itself, taking every recommended answer, posts the design on the issue, and breaks it into tickets.
+1. A grill session designs the issue by itself, taking every recommended answer, posts the design on the issue, and breaks it into tickets. A design that is a breaking change waits in `Paused` until you approve it.
 2. Each ticket whose blockers are all closed gets its own worktree (a separate checkout of the repo on the ticket's own branch) and a ticket session: TDD, a clean build, `run_suite.sh`, a recording with notes if the game changes, the README and the system map, a code review, then a PR that @mentions you, says what changes for you and links each recording's page.
 3. Your feedback on the PR starts a fix-up session. Your `/merge` starts a merge session, which merges master in, tests that exact tree again, and merges with a merge commit. If merging master in conflicts, it resolves the conflict, explains how on the PR, and waits for a fresh `/merge` from you instead of merging. A breaking change merges only on `/merge breaking`.
 4. Once every ticket of the issue is closed, the issue is closed too.
@@ -213,13 +213,14 @@ bash automation/setup.sh    # the rest: the board, the bot's access, the master 
 | `In progress` | A parent's tickets are in flight, or a session is running for a ticket. |
 | `In review` | A ticket's PR is waiting for your `/merge` or your feedback. |
 | `Needs human` | Parked, after a failure or because someone else wrote the issue. The bot's latest comment says why. A parked ticket of yours comes back on its own once its PR is opened or you comment on it (see below). |
-| `Paused` | Your stop switch for that card. |
+| `Paused` | Your stop switch for that card. Autodev also leaves a parent here when its design is a breaking change, until you approve it. |
 | `Done` | Closed. |
 
 **What you do:**
 
 - **Approve a merge:** comment exactly `/merge` on the PR. It counts only while it is the last thing you've said there. After a merge session resolves a conflict, check its explanation and comment `/merge` again.
 - **Approve a breaking change:** a PR that changes the save format record (`test/save_format.txt`), whose files GitHub can't all list, or whose body or one of the bot's replies has a `## Breaking change` section, merges only on your exact `/merge breaking` (CLAUDE.md, "Breaking changes"). Read that section first: it says what stops working, what happens to a save made before, and what you should do. A plain `/merge` on one starts nothing; the bot replies saying why. `/merge breaking` also merges a PR that breaks nothing.
+- **Approve a breaking design:** a grill whose design is a breaking change gives its design comment a `## Breaking change` section, leaves the parent in `Paused` with its tickets on the board, and @mentions you. Read the section, then move the card to `Todo` to approve it and start the tickets. To change the plan, edit or close its tickets first. Its PRs still merge only on `/merge breaking`.
 - **Give feedback:** leave any other comment, review or inline comment on the PR. A fix-up session deals with everything you've said, pushes, and replies; then the PR waits for you again. Feedback after a `/merge` cancels it.
 - **Pause one item:** set its card, or its parent's, to `Paused`. Nothing new starts for it, and a session already running finishes its run. Move the card back to `Todo` to carry on. To end a running session early, pause its card first, then `systemctl --user stop autodev-<role>-<issue>` (e.g. `autodev-ticket-68`); a stop on its own counts as a crash, so the work would run once more.
 - **Stop everything:** `systemctl --user stop autodev.timer` stops the ticks until the next restart; `systemctl --user disable --now autodev.timer` stops them for good, and `enable --now` starts them again. Sessions already running carry on: `systemctl --user list-units 'autodev-*'` lists them.
