@@ -3,8 +3,9 @@
 A tick reads the board, works out what to do (decide.py), and does it:
 it starts grill sessions for new parent issues, ticket sessions for
 tickets with nothing left blocking them, merge sessions for PRs the owner
-has approved with /merge, and fix-up sessions for PRs the owner has left
-feedback on. It keeps tickets' Blocked/Todo status in
+has approved with /merge (a breaking change only with /merge breaking; a
+plain /merge on one gets a reply instead), and fix-up sessions for PRs the
+owner has left feedback on. It keeps tickets' Blocked/Todo status in
 step with their blockers, checks finished sessions' work on GitHub, and
 tidies up after closed tickets and finished parents.
 
@@ -92,13 +93,13 @@ def tick(gh, config, log, registry=None, recordings=None):
 def read_state(github, config, snapshot, registry, log):
     """Everything decide() needs beyond the board: the sessions, what
     GitHub shows for the ones that ended, which of the waiting tickets'
-    blockers are closed, the PRs waiting in review and what was said on
-    them, when each parked ticket was parked and what was said on its PR
-    since, which tickets have a worktree (and, for those whose card has
-    left the board, whether they are closed), the sub-issues of the
-    owner's parents in Todo or In progress, and what the registry
-    remembers: a usage-limit pause and earlier crashes. Returns (exit
-    code, State)."""
+    blockers are closed, the PRs waiting in review, what was said on them
+    and whether each is a breaking change, when each parked ticket was
+    parked and the same about its PR, which tickets have a worktree (and,
+    for those whose card has left the board, whether they are closed), the
+    sub-issues of the owner's parents in Todo or In progress, and what the
+    registry remembers: a usage-limit pause and earlier crashes. Returns
+    (exit code, State)."""
     code = 0
     now = time.time()
     known = registry.load(now=now)

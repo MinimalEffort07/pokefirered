@@ -154,17 +154,56 @@ class Writing(unittest.TestCase):
 WHAT_CHANGES = "## What changes for you\n\nNothing: internal only.\n\n"
 PR_BODY = ("Fixes #68\nPart of #67\n\nSummary.\n\n" + WHAT_CHANGES
            + "Suite: 41 passed.\n\n@MinimalEffort07")
+BREAKING = ("## Breaking change\n\nA save made before loses its PC items: the "
+            "bag grew in the middle of SaveBlock1, and nothing was free at its "
+            "end. Start a new game. Comment `/merge breaking` to approve it.\n\n")
+
+# What GitHub's compare says a branch changes since it left master.
+REPO = "repos/MinimalEffort07/pokefirered"
+NOTE_CHANGES = REPO + "/compare/master...issue-68-note"
+COMMIT_CHANGES = REPO + "/compare/master...abc123"
+
+
+def changes(*names):
+    return {"files": [{"filename": n, "status": "modified"} for n in names]}
 
 
 class OpeningPRs(unittest.TestCase):
     def test_a_ticket_session_opens_its_pr_against_master(self):
-        gh = FakeRest({})
+        gh = FakeRest({NOTE_CHANGES: changes("automation/README.md")})
         created = issue_tool.open_pr(gh, CONFIG, 68, "Fix #68: note it",
                                      "issue-68-note", PR_BODY)
         self.assertEqual(created["number"], 95)
         self.assertEqual(gh.writes, [
             ("POST", PULLS, {"title": "Fix #68: note it", "head": "issue-68-note",
                              "base": "master", "body": PR_BODY})])
+
+    def test_B10_a_branch_that_changes_the_save_format_needs_the_section(self):
+        # The owner reads it before their /merge breaking (CLAUDE.md,
+        # "Breaking changes"), so it must be a heading with text under it.
+        record = {NOTE_CHANGES: changes("include/global.h", "test/save_format.txt")}
+        for body in (PR_BODY,
+                     PR_BODY.replace(WHAT_CHANGES, WHAT_CHANGES + "```\n" + BREAKING + "```\n\n"),
+                     PR_BODY.replace(WHAT_CHANGES, "## Breaking change\n\n" + WHAT_CHANGES)):
+            with self.subTest(body=body):
+                gh = FakeRest(record)
+                with self.assertRaises(issue_tool.Refused) as refused:
+                    issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note", body)
+                self.assertIn("test/save_format.txt", str(refused.exception))
+                self.assertIn("\"## Breaking change\" section", str(refused.exception))
+                self.assertIn("/merge breaking", str(refused.exception))
+                self.assertEqual(gh.writes, [])
+        gh = FakeRest(record)
+        body = PR_BODY.replace(WHAT_CHANGES, WHAT_CHANGES + BREAKING)
+        self.assertEqual(issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note",
+                                            body)["number"], 95)
+
+    def test_B10_a_section_the_record_doesnt_flag_is_fine(self):
+        # Some breaks only a session can see: a var's meaning, the link.
+        gh = FakeRest({NOTE_CHANGES: changes("src/multiplayer.c")})
+        body = PR_BODY.replace(WHAT_CHANGES, WHAT_CHANGES + BREAKING)
+        self.assertEqual(issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note",
+                                            body)["number"], 95)
 
     def test_only_from_this_tickets_own_branch(self):
         for head in ("master", "issue-680-note", "issue-70-other", "issue-68"):
@@ -223,12 +262,15 @@ COMPARE = "repos/MinimalEffort07/pokefirered/compare/abc123...master"
 
 
 def pull(number=73, ref="issue-68-note", author="MinimalEffort07-Autodev",
-         repo="MinimalEffort07/pokefirered", state="open"):
+         repo="MinimalEffort07/pokefirered", state="open", body=PR_BODY):
     return {"number": number, "state": state, "user": {"login": author},
-            "head": {"ref": ref, "repo": {"full_name": repo}}}
+            "body": body, "head": {"ref": ref, "repo": {"full_name": repo}}}
 
 
 MERGE = said(501, "MinimalEffort07", "/merge", 10)
+MERGE_BREAKING = said(501, "MinimalEffort07", "/merge breaking", 10)
+# Commit abc123 changes nothing a record covers.
+NOTHING_BREAKS = {COMMIT_CHANGES: changes("automation/README.md")}
 
 
 class MergingPRs(unittest.TestCase):
@@ -236,10 +278,40 @@ class MergingPRs(unittest.TestCase):
         # Its branch already holds all of master, so the merged tree is the
         # tree it built and tested.
         gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0},
-                       **timeline([MERGE])})
+                       **NOTHING_BREAKS, **timeline([MERGE])})
         issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
         self.assertEqual(gh.writes, [
             ("PUT", PULLS + "/73/merge", {"merge_method": "merge", "sha": "abc123"})])
+
+    def test_B11_a_breaking_pr_merges_only_on_merge_breaking(self):
+        # Checked on the commit it merges: it changes the save format record,
+        # or its body says it's a breaking change.
+        for pr, files in [(pull(), changes("test/save_format.txt")),
+                          (pull(body=PR_BODY + "\n\n" + BREAKING),
+                           changes("src/multiplayer.c"))]:
+            with self.subTest(files=files):
+                gh = FakeRest({PULLS + "/73": pr, COMPARE: {"ahead_by": 0},
+                               COMMIT_CHANGES: files, **timeline([MERGE])})
+                with self.assertRaises(issue_tool.Refused) as refused:
+                    issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
+                self.assertRegex(str(refused.exception), (
+                    r"^this PR is a breaking change \(.+\), and the /merge it "
+                    r"answers is a plain /merge: only @MinimalEffort07's /merge "
+                    r"breaking merges it\. Don't merge and don't reply; report "
+                    r"failed, and autodev sends it back to review and explains\.$"))
+                self.assertEqual(gh.writes, [])
+                gh = FakeRest({PULLS + "/73": pr, COMPARE: {"ahead_by": 0},
+                               COMMIT_CHANGES: files, **timeline([MERGE_BREAKING])})
+                issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
+                self.assertEqual(len(gh.writes), 1)
+
+    def test_B11_a_pr_that_breaks_nothing_merges_on_either(self):
+        for merge in (MERGE, MERGE_BREAKING):
+            with self.subTest(merge=merge["body"]):
+                gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0},
+                               **NOTHING_BREAKS, **timeline([merge])})
+                issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
+                self.assertEqual(len(gh.writes), 1)
 
     def test_it_refuses_when_master_has_moved_on_since_it_was_merged_in(self):
         gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 2},
@@ -256,7 +328,7 @@ class MergingPRs(unittest.TestCase):
         later = [said(9, "stranger", "Stop!", 20), said(10, "MinimalEffort07", "/merge", 21),
                  said(11, "MinimalEffort07-Autodev", "Merging.", 22)]
         gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0},
-                       **timeline([MERGE] + later)})
+                       **NOTHING_BREAKS, **timeline([MERGE] + later)})
         issue_tool.merge_pr(gh, CONFIG, 68, 73, "abc123", 501)
         self.assertEqual(len(gh.writes), 1)
         gh = FakeRest({PULLS + "/73": pull(), COMPARE: {"ahead_by": 0},

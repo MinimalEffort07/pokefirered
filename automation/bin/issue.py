@@ -14,15 +14,20 @@
   python3 automation/bin/issue.py open-pr --title T < body.md
                                                           your ticket's PR into master,
                                                           from the branch checked out
-                                                          in the current folder
+                                                          in the current folder (one
+                                                          that changes the save format
+                                                          record needs a "## Breaking
+                                                          change" section)
   python3 automation/bin/issue.py pr-comment < body.md   reply on your PR, marked as
                                                           handling the comment you answer
   python3 automation/bin/issue.py merge-pr               merge your PR with a merge
                                                           commit of the commit checked
                                                           out here (it must be pushed
-                                                          and hold all of master, and
-                                                          the owner must have said
-                                                          nothing since the /merge)
+                                                          and hold all of master, the
+                                                          owner must have said nothing
+                                                          since the /merge, and a
+                                                          breaking change needs their
+                                                          /merge breaking)
 
 "Your issue" is AUTODEV_ISSUE, which the dispatcher sets for each session.
 Grill sessions may comment, set-body and create-ticket; ticket sessions
