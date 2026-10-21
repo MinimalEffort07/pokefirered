@@ -338,11 +338,12 @@ def handled(id, through, minute):
                 % through, minute)
 
 
-def in_review(comments, number=68, pr=73):
-    """Ticket `number` waiting in review, its PR saying `comments`."""
+def in_review(comments, number=68, pr=73, breaking=""):
+    """Ticket `number` waiting in review, its PR saying `comments`, and a
+    breaking change for the reason `breaking` if that isn't empty."""
     return state([ticket(number, "In review")], prs={number: PullRequest(
         number=pr, head="issue-%d-note" % number,
-        comments=tuple(comments))})
+        comments=tuple(comments), breaking=breaking)})
 
 
 class Merging(unittest.TestCase):
@@ -449,6 +450,82 @@ class FixUps(unittest.TestCase):
                         "prs": {**waiting.prs, **merging.prs}})
         self.assertEqual([a for a in decide(both) if isinstance(a, Launch)],
                          [Launch("merge", 68, pr=73, handled_through=501)])
+
+
+WHY = "it changes `test/save_format.txt`"
+
+
+def breaking_reply(merge_id):
+    """The dispatcher's answer to a plain /merge on a breaking PR."""
+    return ("@MinimalEffort07 this PR is a breaking change (it changes "
+            "`test/save_format.txt`), so a plain `/merge` doesn't merge it. Read "
+            "its Breaking change section, then comment exactly `/merge breaking` "
+            "to approve it and merge, or leave feedback."
+            "\n\n<!-- autodev handled-through: %d -->" % merge_id)
+
+
+class BreakingChanges(unittest.TestCase):
+    """#141: a breaking PR merges only on the owner's exact /merge breaking."""
+
+    def test_B1_a_plain_merge_on_a_breaking_pr_gets_a_reply_not_a_merge(self):
+        # The reply handles the /merge, so it isn't answered again; the card
+        # stays in review.
+        self.assertEqual(decide(in_review([said(501, OWNER, "/merge", 1)],
+                                          breaking=WHY)),
+                         [Comment(73, breaking_reply(501))])
+
+    def test_B2_once_the_reply_is_there_nothing_happens(self):
+        self.assertEqual(decide(in_review([
+            said(501, OWNER, "/merge", 1), said(502, BOT, breaking_reply(501), 2)],
+            breaking=WHY)), [])
+
+    def test_B3_merge_breaking_on_a_breaking_pr_launches_a_merge(self):
+        for comments, answered in [
+                ([said(501, OWNER, " /merge breaking\n", 1)], 501),
+                ([said(501, OWNER, "/merge", 1), said(502, BOT, breaking_reply(501), 2),
+                  said(503, OWNER, "/merge breaking", 3)], 503)]:
+            with self.subTest(comments=comments):
+                self.assertEqual(decide(in_review(comments, breaking=WHY)), [
+                    MakeWorktree(68, "issue-68-note"),
+                    Launch("merge", 68, pr=73, handled_through=answered),
+                    SetStatus(68, "In progress"),
+                ])
+
+    def test_B4_on_a_pr_that_breaks_nothing_either_approval_merges(self):
+        for approval in ("/merge", "/merge breaking"):
+            with self.subTest(approval=approval):
+                self.assertEqual(decide(in_review([said(501, OWNER, approval, 1)]))[1],
+                                 Launch("merge", 68, pr=73, handled_through=501))
+
+    def test_only_the_exact_words_approve(self):
+        # Anything else is feedback, and gets a fix-up.
+        for words in ("/merge Breaking", "/merge  breaking", "/merge breaking please",
+                      "/mergebreaking"):
+            with self.subTest(words=words):
+                self.assertEqual(decide(in_review([said(501, OWNER, words, 1)],
+                                                  breaking=WHY))[1],
+                                 Launch("fixup", 68, pr=73, handled_through=501))
+
+    def test_B5_feedback_after_the_reply_launches_a_fix_up(self):
+        self.assertEqual(decide(in_review([
+            said(501, OWNER, "/merge", 1), said(502, BOT, breaking_reply(501), 2),
+            said(9003, OWNER, "Keep the old layout instead.", 3)], breaking=WHY))[1],
+            Launch("fixup", 68, pr=73, handled_through=9003))
+
+    def test_B6_a_parked_tickets_plain_merge_gets_the_reply_and_goes_to_review(self):
+        # Its card moves first: if the reply then fails, the /merge is still
+        # unhandled, and the next tick answers it from review.
+        parked_pr = parked([said(501, OWNER, "/merge", 20)])
+        parked_pr = State(**{**parked_pr.__dict__, "prs": {68: PullRequest(
+            **{**parked_pr.prs[68].__dict__, "breaking": WHY})}})
+        self.assertEqual(decide(parked_pr), [SetStatus(68, "In review"),
+                                             Comment(73, breaking_reply(501))])
+
+    def test_B7_merge_breaking_from_anyone_but_the_owner_is_ignored(self):
+        for author in ("someone-else", BOT):
+            with self.subTest(author=author):
+                self.assertEqual(decide(in_review([
+                    said(501, author, "/merge breaking", 1)], breaking=WHY)), [])
 
 
 class ClosedTickets(unittest.TestCase):
@@ -769,7 +846,8 @@ class Crashes(unittest.TestCase):
 
 class FinishedMerges(unittest.TestCase):
     def run_finished(self, result, merged=False, replied=False, ticket_open=True,
-                     ended_by="success", superseded=False, on_board=True):
+                     ended_by="success", superseded=False, on_board=True,
+                     breaking_unapproved=False):
         return decide(State(
             owner=OWNER, bot=BOT,
             items=[ticket(68, "In progress", is_open=ticket_open)] if on_board else [],
@@ -778,7 +856,8 @@ class FinishedMerges(unittest.TestCase):
                               cwd="/clone-worktrees/issue-68", pr=73,
                               handled_through=501)],
             outcomes={68: MergeOutcome(merged=merged, replied=replied,
-                                       superseded=superseded)},
+                                       superseded=superseded,
+                                       breaking_unapproved=breaking_unapproved)},
             worktrees=frozenset([68]),
             resume_command="cd {cwd} && claude --resume {session_id}"))
 
@@ -841,6 +920,18 @@ class FinishedMerges(unittest.TestCase):
             with self.subTest(result=result):
                 self.assertEqual(
                     self.run_finished(result, ended_by=ended_by, superseded=True),
+                    [SetStatus(68, "In review"), Finish("merge", 68)])
+
+    def test_B8_a_merge_refused_for_want_of_merge_breaking_goes_back_to_review(self):
+        # merge-pr refused: the PR is a breaking change and the session
+        # answered a plain /merge. In review, that /merge is still
+        # unhandled, so the next tick's reply explains (B1).
+        for result, ended_by in (({"outcome": "failed", "reason": "refused"}, "success"),
+                                 (None, "signal")):
+            with self.subTest(result=result):
+                self.assertEqual(
+                    self.run_finished(result, ended_by=ended_by,
+                                      breaking_unapproved=True),
                     [SetStatus(68, "In review"), Finish("merge", 68)])
 
     def test_a_merged_pr_stays_merged_whatever_was_said_after(self):

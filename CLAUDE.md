@@ -34,6 +34,11 @@ A **breaking change** is any change to the save format, even one old saves survi
 
 **Prefer the compatible way**: reserved bytes, a free flag or var, a new ID at the end of its list, code that reads both the old and the new form. Only when there's none is it a breaking change. Then the design, the ticket and the PR all say so (step 11), and **it merges only with the owner's explicit approval**.
 
+**Autodev's rule: a breaking PR merges only on the owner's exact `/merge breaking`.**
+- **Which PRs count**, compared with master on GitHub: one that changes `test/save_format.txt` in any way, one whose files GitHub can't all list, and one whose body or one of the bot's replies on it has a `## Breaking change` heading outside code. Only a breaking PR carries that heading; any other PR may say "Breaking change: none." as plain text.
+- **A plain `/merge`** on one starts no session: the dispatcher replies on the PR, saying why it is breaking and to comment `/merge breaking`.
+- **`issue.py`** backs it up: `open-pr` refuses a branch that changes the record without a `## Breaking change` section, and `merge-pr` checks again on the commit it merges.
+
 **The save format record.** `test/save_format.txt` is the save format exactly as agbcc lays it out: every struct, union, enum and typedef a save holds, with each member's offset and type, and the flash format's constants. `test/tools/save_format.py` writes it, and checks the tree against it; `test/tests/test_save_format.lua` fails the suite when they differ.
 - **The record changes only through `python3 test/tools/save_format.py --write`**, never by hand, and only for a breaking change, committed in the PR that declares it.
 - **A merge conflict in the record** is resolved by running `--write` on the merged tree.
@@ -265,7 +270,7 @@ gh pr create --title "Fix #<T>: <short description>" --body "..."
 ```
 PR body must reference the ticket and parent issue numbers, summarise what changed, and list what was tested. It also has a `## What changes for you` section: two or three plain sentences telling the owner what is different for them, such as a new command, a new board behaviour, a new rule for tests or a feature to try. When nothing is, it says `Nothing: internal only.`
 
-A PR that is a breaking change (see "Breaking changes") also has a `## Breaking change` section. It says what stops working and what happens to a save made before, why there was no compatible way, and what the owner should do. Its "What changes for you" says so too.
+A PR that is a breaking change (see "Breaking changes") also has a `## Breaking change` section. It says what stops working and what happens to a save made before, why there was no compatible way, and what the owner should do, and ends "Comment `/merge breaking` to approve it." Its "What changes for you" says so too.
 
 With a recording, the PR body links each recording's own page: one `Recording: http://100.76.129.86:8080/r/<name>` line per recording, with `<name>` as `record_test.sh` printed it. Once the PR exists and you know its number, put it into each recording's notes, so its card links the PR:
 ```bash
@@ -288,6 +293,8 @@ After creating the PRs, stop. The user will review them. Only run the merge comm
 gh pr merge <PR-number>
 ```
 Do **not** squash commits (`--squash`). Preserve the full commit history from the branch.
+
+A breaking PR (see "Breaking changes") merges only when the owner approves it as one: in autodev, only on their exact `/merge breaking`.
 
 **13. After merging — close the ticket, sync master, advance the frontier**
 After a PR is merged, close its ticket and sync master:
@@ -342,13 +349,13 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - **GitHub access:** only through autodev's own copy of `automation/bin/issue.py`, in its clone. Your prompt gives its full path. Don't run your worktree's copy: it's your branch's version. Plain `gh` is denied, and the tool shows only text by the owner or the bot.
   - `read <number>` shows an issue or PR and its comments. Read the ticket, its parent and the parent's design comment, including the owner's comments on the ticket, before starting.
   - `comment` comments on your ticket.
-  - `open-pr --title "Fix #<T>: …"` opens your PR into master from the branch checked out here, with the body on stdin. It refuses a body without Fixes #<T> and @MinimalEffort07 written as plain text: GitHub ignores both inside code, so the ticket wouldn't close and the owner wouldn't be notified. It also refuses a body without a `## What changes for you` section (step 11).
+  - `open-pr --title "Fix #<T>: …"` opens your PR into master from the branch checked out here, with the body on stdin. It refuses a body without Fixes #<T> and @MinimalEffort07 written as plain text: GitHub ignores both inside code, so the ticket wouldn't close and the owner wouldn't be notified. It also refuses a body without a `## What changes for you` section (step 11), and, when your branch changes `test/save_format.txt`, one without a `## Breaking change` section with text under it (step 11).
 - Run `bash test/run_suite.sh` before opening the PR. It takes about 10 minutes, and longer while another session runs its own, which is more than one foreground command may run. So start it in the background with its output in a log file, and before opening the PR wait for it to finish with a loop on that log (e.g. `until grep -q "^SUITE" suite.log; do sleep 15; done`).
 - Report your result once, at the very end, after every step has finished. Never report while a command is still running.
 - Record only a change you can see in the game (step 8). In your session `record_test.sh` (`--check` too) refuses when your branch changes no file the ROM is built from, and its message says what to do instead. When your ticket's acceptance criteria ask for a recording that the rule or that refusal rules out, leave the recording out, say "No recording: no in-game behaviour changes." in the PR, name the criterion there, and carry on: that isn't a failure, because the rule is newer than any ticket written before it.
 - `record_test.sh` waits for any other recording on the machine to finish (it takes a machine-wide lock itself), so a recording may start late.
 - Every recording you make has notes (step 8). In an autodev session, `record_test.sh` refuses to record without them, and refuses notes whose `ticket:` isn't your ticket or that have no `parent:` (your ticket's `## Parent`). Your settings deny any command naming the session variables, heredocs included, so if your notes must name them, write the notes to a file with the Write tool and pass `--notes FILE`.
-- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the tests run with the suite result, the "Branch README" line, the "Recordings available at…" lines with a `Recording: http://100.76.129.86:8080/r/<name>` line under them for each recording only when there are any (otherwise "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
+- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the `## Breaking change` section only when the PR is a breaking change (step 11), the tests run with the suite result, the "Branch README" line, the "Recordings available at…" lines with a `Recording: http://100.76.129.86:8080/r/<name>` line under them for each recording only when there are any (otherwise "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
 - `open-pr` prints the PR's number (`#97 <its URL>`). Then run `python3 test/tools/recording_notes.py set-pr <name> <PR>` for each recording (step 11).
 - Push only your own branch: `git push -u origin issue-<T>-<slug>`. Never push to master, force-push or merge.
 - If you can't finish, push the unfinished branch before reporting `failed`.
@@ -361,24 +368,26 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - Address every unhandled comment from the owner up to and including the one your prompt names, in one pass. Leave newer ones alone: they get a follow-up session.
 - For each change: TDD, a clean build, `cd automation && python3 -m unittest` if `automation/` changed, the README and `docs/SYSTEM_MAP.md` if they describe what changed, and a fresh recording only if the change makes something on the GBA screen look or behave differently (step 8). `record_test.sh` refuses to record when the branch changes no file the ROM is built from; when the owner asks for a recording that it refuses, leave the recording out, say so in your reply, and carry on rather than fail. A fresh recording gets notes too (step 8), and its PR's number is filled in by itself, so it needs no `set-pr`; link its page in your reply with a `Recording:` line. Then run `bash test/run_suite.sh` in the background and wait on its log, as in the ticket role.
 - A comment that only asks a question needs no change: answer it in the reply.
+- A fix-up that makes the PR a breaking change (see "Breaking changes") gives its reply a `## Breaking change` section, as step 11 describes for the PR body, which you can't edit. Autodev then merges the PR only on the owner's `/merge breaking`.
 - Push only your own branch (`git push origin <the PR's branch>`), then `pr-comment` what you did about each comment (and, if that changes what's different for the owner, an updated "What changes for you"), @mentioning @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it). Report `done` once the reply is posted.
 - Never merge master in (the merge session does that), merge, squash, rebase or force-push.
 - If you can't finish, push what you have before reporting `failed`.
 
-**Merge role** (the owner commented `/merge`; added by #57):
+**Merge role** (the owner commented `/merge` or `/merge breaking`; added by #57):
 - The dispatcher runs you in the ticket's worktree, on the PR's branch.
 - **GitHub access:** only through autodev's own copy of `automation/bin/issue.py`; your prompt gives its full path. Plain `gh` is denied.
   - `read <number>` shows the ticket or the PR.
   - `pr-comment` replies on your PR, with the body on stdin. It adds the handled-through marker naming the `/merge` you answer.
-  - `merge-pr` merges your PR with a merge commit of the commit checked out here. It refuses if that commit isn't pushed, or if it doesn't hold all of master.
+  - `merge-pr` merges your PR with a merge commit of the commit checked out here. It refuses if that commit isn't pushed, if it doesn't hold all of master, or if the PR is a breaking change (see "Breaking changes") and the comment you answer is a plain `/merge`, not `/merge breaking`.
 - First bring the branch up to date: `git pull --ff-only`, then `git fetch origin` and `git merge origin/master`.
 - **No conflict:** on that exact tree, build (`make -j$(nproc) firered`), run `cd automation && python3 -m unittest`, and run `bash test/run_suite.sh` in the background, waiting on its log as in the ticket role.
   - If everything passes: `git push origin <the PR's branch>`, then `merge-pr`. If `merge-pr` says master has moved on, merge it in again and repeat. If GitHub says the PR can't be merged yet (it briefly can't right after a push), wait a minute and try once more.
   - If `merge-pr` says the `/merge` no longer stands (the owner has said more since, or deleted it), don't merge: report `failed` with that reason. The dispatcher sends the PR back to review, where a fix-up handles any feedback.
+  - If `merge-pr` says the PR is a breaking change and the `/merge` it answers is a plain one, don't merge and don't reply: report `failed` with that reason. The dispatcher sends the PR back to review and explains to the owner.
   - If anything fails: push nothing, and report `failed` with the output.
-- **A conflict:** resolve it on the branch, keeping both sides' intent and the ticket's acceptance criteria. Then build and test as above, commit, and `git push origin <the PR's branch>`.
-  - Then `pr-comment` exactly how you resolved each conflict: the file, what each side had, and what you kept. @mention @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it).
-  - Then report `done`. Don't merge: the owner's fresh `/merge` approves your resolution and starts a new merge session.
+- **A conflict:** resolve it on the branch, keeping both sides' intent and the ticket's acceptance criteria. A conflict in `test/save_format.txt` is resolved by running `python3 test/tools/save_format.py --write` on the merged tree. Then build and test as above, commit, and `git push origin <the PR's branch>`.
+  - Then `pr-comment` exactly how you resolved each conflict: the file, what each side had, and what you kept. @mention @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it). On a breaking PR, the reply says it needs a fresh `/merge breaking`.
+  - Then report `done`. Don't merge: the owner's fresh `/merge` (on a breaking PR, `/merge breaking`) approves your resolution and starts a new merge session.
 - Never squash, rebase or force-push. The PR's Fixes #<T> line closes the ticket when it merges. The dispatcher then marks the ticket `Done` and removes the worktree.
 
 ## Coding Conventions

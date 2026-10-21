@@ -12,15 +12,18 @@ trust") in code, not just in instructions:
     session its parent and the tickets it creates under it, a ticket
     session its ticket and the PR it opens for it, a merge or fix-up
     session its ticket's PR. Only a merge session merges, and only with a
-    merge commit of the commit it tested. No session can add labels, close
-    issues, or touch the board.
+    merge commit of the commit it tested; a breaking change only on the
+    owner's /merge breaking. No session can add labels, close issues, or
+    touch the board.
 """
 
 import re
 
 from autodev.board import issue_numbers, section
 from autodev.decide import MARKER, handled_marker, merge_cancelled, unhandled
-from autodev.github import is_ticket_pr, pr_timeline
+from autodev.github import (BREAKING_HEADING, changed_files, is_ticket_pr,
+                            needs_merge_breaking, pr_timeline, prose,
+                            record_change)
 from autodev.worktrees import branch_prefix
 
 
@@ -122,21 +125,21 @@ CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+"
                      r"(?:(?:[\w.-]+/[\w.-]+)?#|https://github\.com/[\w.-]+/"
                      r"[\w.-]+/issues/)(\d+)", re.IGNORECASE)
 
-# A PR body's "## What changes for you" heading with some text under it
-# (anything but another heading) before the next heading or the end.
-WHAT_CHANGES = re.compile(r"^## What changes for you[ \t]*\n(?:[ \t]*\n)*[ \t]*[^#\s]",
+# Some text under a heading line (anything but another heading), before
+# the next heading or the end.
+TEXT_UNDER = r"[ \t]*\n(?:[ \t]*\n)*[ \t]*[^#\s]"
+
+# A PR body's "## What changes for you" section, and its "## Breaking
+# change" section (the heading the dispatcher counts), each with text.
+WHAT_CHANGES = re.compile(r"^## What changes for you" + TEXT_UNDER,
                           re.IGNORECASE | re.MULTILINE)
-
-
-def _prose(body):
-    """The body without fenced blocks and `code spans`: GitHub neither
-    notifies a mention nor closes an issue written inside code."""
-    return re.sub(r"```.*?```|`[^`]*`", "", body, flags=re.DOTALL)
+BREAKING_CHANGE = re.compile(BREAKING_HEADING + TEXT_UNDER,
+                             re.IGNORECASE | re.MULTILINE)
 
 
 def _check_mention(config, body, what):
     # The @mention is how the owner hears about it (#48, "Notifications").
-    if not re.search(r"@%s(?![\w-])" % re.escape(config.owner), _prose(body)):
+    if not re.search(r"@%s(?![\w-])" % re.escape(config.owner), prose(body)):
         raise Refused("the %s must @mention @%s (not in code)" % (what, config.owner))
 
 
@@ -144,11 +147,12 @@ def _check_own_pr(gh, config, ticket, pr):
     """Refuse unless `pr` is `ticket`'s open PR (the bot's or the owner's,
     from its own branch: github.is_ticket_pr). The PR number comes from the
     session's environment, which one of its commands could override, so the
-    PR itself is checked."""
+    PR itself is checked. Returns GitHub's record of the PR."""
     data = gh.rest("GET", "repos/%s/pulls/%d" % (config.repo, pr))
     if not (data["state"] == "open" and is_ticket_pr(config, ticket, data)):
         raise Refused("PR #%d isn't #%d's open PR from its own %s* branch"
                       % (pr, ticket, branch_prefix(ticket)))
+    return data
 
 
 def open_pr(gh, config, ticket, title, head, body):
@@ -159,13 +163,13 @@ def open_pr(gh, config, ticket, title, head, body):
                       % (ticket, branch_prefix(ticket), head))
     # "Fixes #T" closes the ticket when the PR merges (#57); the @mention
     # tells the owner the PR is ready. Neither counts inside code.
-    if not re.search(r"\bFixes #%d\b" % ticket, _prose(body)):
+    if not re.search(r"\bFixes #%d\b" % ticket, prose(body)):
         raise Refused("the PR body must say \"Fixes #%d\" (not in code)" % ticket)
     _check_mention(config, body, "PR body")
     # The owner keeps up with what each PR changes for them by reading this
     # section (CLAUDE.md, "System map" and step 11), so it must be a real
     # heading with something under it.
-    if not WHAT_CHANGES.search(_prose(body)):
+    if not WHAT_CHANGES.search(prose(body)):
         raise Refused("the PR body needs a \"## What changes for you\" section "
                       "(not in code): two or three plain sentences on what is "
                       "different for @%s, or \"Nothing: internal only.\""
@@ -177,6 +181,21 @@ def open_pr(gh, config, ticket, title, head, body):
         raise Refused("the PR body may close only #%d, but a closing keyword "
                       "also names %s; reword it (e.g. \"see #N\")" % (
                           ticket, ", ".join("#%d" % n for n in others)))
+    # A branch that changes the save format record is a breaking change,
+    # which the owner approves with /merge breaking after reading this
+    # section (CLAUDE.md, "Breaking changes"). The pushed branch is what's
+    # compared, with where it left master. A section the record doesn't call
+    # for is fine: some breaks only a session can see. A branch GitHub can't
+    # list in full is checked as far as it lists; the dispatcher counts it
+    # as breaking anyway.
+    reason = record_change(changed_files(gh, config.repo, head))
+    if reason and not BREAKING_CHANGE.search(prose(body)):
+        raise Refused(
+            "this PR is a breaking change (%s; see CLAUDE.md, \"Breaking "
+            "changes\"), so the body needs a \"## Breaking change\" section (not "
+            "in code) saying what stops working and what happens to a save made "
+            "before, why there was no compatible way, what @%s should do, and "
+            "\"Comment /merge breaking to approve it.\"" % (reason, config.owner))
     return gh.rest("POST", "repos/%s/pulls" % config.repo, title=title,
                    head=head, base="master", body=body)
 
@@ -197,12 +216,13 @@ def pr_comment(gh, config, ticket, pr, handled_through, body):
 def merge_pr(gh, config, ticket, pr, head, handled_through):
     """Merge `ticket`'s PR with a merge commit (never squash or rebase),
     pinned to `head`, the commit the session built and tested, on the
-    owner's /merge `handled_through`."""
-    _check_own_pr(gh, config, ticket, pr)
+    owner's /merge `handled_through`. A breaking change merges only on
+    /merge breaking."""
+    data = _check_own_pr(gh, config, ticket, pr)
+    said = pr_timeline(gh, config.repo, pr)
     # Feedback after the /merge cancels it (D14), even feedback posted while
     # this session was already running; so does deleting the /merge.
-    cancelled = merge_cancelled(config.owner, pr_timeline(gh, config.repo, pr),
-                                handled_through)
+    cancelled = merge_cancelled(config.owner, said, handled_through)
     if cancelled:
         raise Refused("%s, which cancels it: don't merge. Report \"failed\"; "
                       "autodev sends the PR back to review" % cancelled)
@@ -214,6 +234,17 @@ def merge_pr(gh, config, ticket, pr, head, handled_through):
         raise Refused("master has %d commit%s your branch doesn't: merge master "
                       "in again, re-test, push, and try again" % (
                           behind, "" if behind == 1 else "s"))
+    # The dispatcher starts a merge on a plain /merge only for a PR it didn't
+    # see as a breaking change. This backs it up, on the very commit being
+    # merged.
+    reason = needs_merge_breaking(gh, config, head, data["body"], said,
+                                  handled_through)
+    if reason:
+        raise Refused("this PR is a breaking change (%s), and the /merge it "
+                      "answers is a plain /merge: only @%s's /merge breaking "
+                      "merges it. Don't merge and don't reply; report failed, and "
+                      "autodev sends it back to review and explains." % (
+                          reason, config.owner))
     # With `sha`, GitHub refuses if the PR's head is no longer `head`.
     return gh.rest("PUT", "repos/%s/pulls/%d/merge" % (config.repo, pr),
                    merge_method="merge", sha=head)
