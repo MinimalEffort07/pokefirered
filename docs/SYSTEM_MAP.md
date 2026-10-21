@@ -93,7 +93,7 @@ flowchart LR
   class TR owner
 ```
 
-A parent you write is grilled into tickets. Each ticket waits for its blockers, gets its own session, and ends in a PR that waits for you in `In review`. Feedback starts a fix-up; `/merge` starts a merge. Any session that fails or hits its time limit, a grill included, parks its card in `Needs human`. The rules are in `automation/autodev/decide.py`.
+A parent you write is grilled into tickets. Each ticket waits for its blockers, gets its own session, and ends in a PR that waits for you in `In review`. Feedback starts a fix-up; `/merge` starts a merge (on a breaking change, only `/merge breaking` does). Any session that fails or hits its time limit, a grill included, parks its card in `Needs human`. The rules are in `automation/autodev/decide.py`.
 
 - **`Paused` is your stop switch.** Nothing new starts for that card, or for any ticket of a paused parent. A session already running finishes its run. Move the card back to `Todo` to carry on: a parent with tickets isn't grilled again, and a ticket with an open PR goes straight to review.
 - **Usage limit.** When a session hits the Claude usage limit, no session of any kind starts until 5 minutes after the reset, and the interrupted work is queued again.

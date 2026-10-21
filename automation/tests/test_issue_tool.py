@@ -193,10 +193,22 @@ class OpeningPRs(unittest.TestCase):
                 self.assertIn("\"## Breaking change\" section", str(refused.exception))
                 self.assertIn("/merge breaking", str(refused.exception))
                 self.assertEqual(gh.writes, [])
-        gh = FakeRest(record)
-        body = PR_BODY.replace(WHAT_CHANGES, WHAT_CHANGES + BREAKING)
-        self.assertEqual(issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note",
-                                            body)["number"], 95)
+        # Every heading the dispatcher counts as the section will do.
+        for section in (BREAKING, BREAKING.replace("change", "changes", 1),
+                        "  " + BREAKING, BREAKING.replace("\n\n", ": old saves\n\n", 1)):
+            with self.subTest(section=section):
+                gh = FakeRest(record)
+                body = PR_BODY.replace(WHAT_CHANGES, WHAT_CHANGES + section)
+                self.assertEqual(issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note",
+                                                    body)["number"], 95)
+
+    def test_B10_the_record_counts_among_the_300_files_github_lists(self):
+        # GitHub lists at most 300 of a branch's files; one it lists is changed.
+        gh = FakeRest({NOTE_CHANGES: changes(*["src/file_%d.c" % n for n in range(299)]
+                                             + ["test/save_format.txt"])})
+        with self.assertRaises(issue_tool.Refused):
+            issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note", PR_BODY)
+        self.assertEqual(gh.writes, [])
 
     def test_B10_a_section_the_record_doesnt_flag_is_fine(self):
         # Some breaks only a session can see: a var's meaning, the link.

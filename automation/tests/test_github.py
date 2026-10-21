@@ -88,6 +88,19 @@ class SubIssues(unittest.TestCase):
                          {98: False, 99: True})
 
 
+class FailingRest(FakeRest):
+    """FakeRest whose GET of `failing` fails as gh reports it."""
+
+    def __init__(self, gets, failing):
+        super().__init__(gets)
+        self.failing = failing
+
+    def rest(self, method, path, **fields):
+        if method == "GET" and path == self.failing:
+            raise GhError("HTTP 500: this diff is taking too long to generate")
+        return super().rest(method, path, **fields)
+
+
 class RefusingGh:
     """GraphQL that refuses every change with `message`, as gh reports it."""
 
@@ -265,12 +278,21 @@ class BreakingPRs(unittest.TestCase):
 
     def test_a_pr_whose_files_github_cant_all_list_is_breaking(self):
         # The compare lists at most 300 files, so 300 may not be all.
-        many = changes(*["src/file_%d.c" % n for n in range(300)])
-        for compare in (many, {"files": None}, {}):
+        many = ["src/file_%d.c" % n for n in range(300)]
+        cant_tell = ("GitHub can't list all of its changed files, so autodev "
+                     "can't tell whether it changes `test/save_format.txt`")
+        for compare in (changes(*many), {"files": None}, {}):
             with self.subTest(files=len(compare.get("files") or [])):
-                self.assertEqual(self.breaking(compare), (
-                    "GitHub can't list all of its changed files, so autodev "
-                    "can't tell whether it changes `test/save_format.txt`"))
+                self.assertEqual(self.breaking(compare), cant_tell)
+        # One it could list says more.
+        self.assertEqual(self.breaking(changes(*many[1:] + ["test/save_format.txt"])),
+                         "it changes `test/save_format.txt`")
+        # Nor can it when the compare fails (a diff too big to work out, or
+        # GitHub having a bad minute): the PR is still answered, as breaking,
+        # rather than dropped from the tick.
+        gets = {PULLS: [pr(73, "issue-68-note")], **timeline()}
+        github = GitHub(FailingRest(gets, COMPARE), CONFIG, BOARD)
+        self.assertEqual(github.ticket_pr(68).breaking, cant_tell)
 
     def test_a_breaking_change_section_in_its_body_or_a_bot_reply_is_breaking(self):
         self.assertEqual(self.breaking(body="Fixes #68\n\n" + SECTION),

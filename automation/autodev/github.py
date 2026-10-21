@@ -171,7 +171,7 @@ class GitHub:
             return found
         repo = self.config.repo
         said = pr_timeline(self.gh, repo, pr["number"])
-        return replace(found, comments=said, breaking=breaking(
+        return replace(found, comments=said, breaking=breaking_reason(
             self.config, changed_files(self.gh, repo, pr["head"]["sha"]),
             pr["body"], said))
 
@@ -194,16 +194,13 @@ class GitHub:
         repo = self.config.repo
         data = self.gh.rest("GET", "repos/%s/pulls/%d" % (repo, pr))
         said = pr_timeline(self.gh, repo, pr)
-        answered = next((c for c in said if c.id == handled_through), None)
-        unapproved = (not data["merged"] and answered is not None
-                      and not approves_breaking(answered)
-                      and bool(breaking(self.config, changed_files(
-                          self.gh, repo, data["head"]["sha"]), data["body"], said)))
         return MergeOutcome(
             merged=data["merged"], replied=self._replied(said, handled_through),
             superseded=merge_cancelled(self.config.owner, said,
                                        handled_through) is not None,
-            breaking_unapproved=unapproved)
+            breaking_unapproved=not data["merged"] and bool(needs_merge_breaking(
+                self.gh, self.config, data["head"]["sha"], data["body"], said,
+                handled_through)))
 
     def fixup_outcome(self, pr, handled_through):
         """Whether the bot replied on the PR naming the comment the fix-up
@@ -262,9 +259,9 @@ def prose(body):
 # ── breaking changes ─────────────────────────────────────────────────────
 #
 # A breaking change (CLAUDE.md, "Breaking changes") merges only on the
-# owner's exact "/merge breaking" (#139). Some are caught by a record the
-# suite checks against the tree; the rest only a session can see, so it
-# declares them in a "## Breaking change" section.
+# owner's exact "/merge breaking" (#139). The save format record catches a
+# change to how the save is laid out; the rest only a session can see, so
+# it declares them in a "## Breaking change" section.
 
 # The save format, as agbcc lays it out (test/tools/save_format.py). Any
 # change to it is a breaking change.
@@ -274,56 +271,72 @@ SAVE_FORMAT = "test/save_format.txt"
 # so a list this long may not be all of them.
 COMPARE_FILE_LIMIT = 300
 
-# A "## Breaking change" heading (on GitHub, a line starting "## " is a
-# heading, even indented by up to three spaces).
-BREAKING_HEADING = re.compile(r"^ {0,3}##[ \t]+Breaking changes?\b",
-                              re.IGNORECASE | re.MULTILINE)
+# A "## Breaking change" heading line. On GitHub a line starting "## " is
+# a heading even indented by up to three spaces; "changes", and more words
+# after it, count too: whatever the owner would read as that heading is.
+BREAKING_HEADING = r"^ {0,3}##[ \t]+Breaking changes?\b[^\n]*"
 
 
 def changed_files(gh, repo, head):
     """The files commit or branch `head` changes since it left master, as
-    GitHub lists them (each with its "filename", its "status", and a
-    renamed file's "previous_filename"), or None when GitHub can't list
-    them all. Three dots compare with where `head` left master, so what
-    master changed since isn't counted as the branch's."""
-    files = gh.rest("GET", "repos/%s/compare/master...%s" % (repo, head)).get("files")
-    if files is None or len(files) >= COMPARE_FILE_LIMIT:
+    GitHub's compare lists them (each with its "filename", its "status",
+    and a renamed file's "previous_filename"), at most COMPARE_FILE_LIMIT
+    of them, or None if it lists none: the compare failed (a diff too big
+    to work out, or GitHub having a bad minute). Three dots compare with
+    where `head` left master, so what master changed since isn't counted
+    as the branch's."""
+    try:
+        return gh.rest("GET", "repos/%s/compare/master...%s" % (repo, head)).get("files")
+    except GhError:
         return None
-    return files
 
 
 def record_change(files):
-    """Why the branch's `files` (changed_files, but never None) make it a
-    breaking change by the records, or "": it adds, changes, removes or
-    renames the save format record."""
+    """Why a branch whose changed_files are `files` is a breaking change by
+    the save format record, or "": it adds, changes, removes or renames
+    it."""
     if any(f["filename"] == SAVE_FORMAT or f.get("previous_filename") == SAVE_FORMAT
-           for f in files):
+           for f in files or []):
         return "it changes `%s`" % SAVE_FORMAT
     return ""
 
 
 def has_breaking_section(text):
     """Whether `text` has a "## Breaking change" heading outside code."""
-    return BREAKING_HEADING.search(prose(text)) is not None
+    return re.search(BREAKING_HEADING, prose(text),
+                     re.IGNORECASE | re.MULTILINE) is not None
 
 
-def breaking(config, files, body, said):
+def breaking_reason(config, files, body, said):
     """Why a ticket's PR is a breaking change, or "" if it isn't one: its
-    branch's `files` (changed_files) change a record, or GitHub couldn't
-    list them all (None), or its `body` or one of the bot's replies or
-    reviews among `said` (PrComment) has a "## Breaking change" section.
-    The owner's own comments don't count: only the PR's own words do."""
-    if files is None:
-        return ("GitHub can't list all of its changed files, so autodev can't "
-                "tell whether it changes `%s`" % SAVE_FORMAT)
+    branch's `files` (changed_files) change the save format record, or
+    GitHub couldn't list them all, or its `body` or one of the bot's
+    replies or reviews among `said` (PrComment) has a "## Breaking change"
+    section. The owner's own comments don't count: only the PR's own words
+    do."""
     reason = record_change(files)
     if reason:
         return reason
+    if files is None or len(files) >= COMPARE_FILE_LIMIT:
+        return ("GitHub can't list all of its changed files, so autodev can't "
+                "tell whether it changes `%s`" % SAVE_FORMAT)
     if has_breaking_section(body):
         return "its body has a Breaking change section"
     if any(c.author == config.bot and has_breaking_section(c.body) for c in said):
         return "a reply of autodev's on it has a Breaking change section"
     return ""
+
+
+def needs_merge_breaking(gh, config, head, body, said, answered_id):
+    """Why a ticket's PR, at commit `head`, can't merge on comment
+    `answered_id` among `said`: the PR is a breaking change (breaking_reason),
+    and that comment isn't the owner's exact /merge breaking. "" when it
+    can. GitHub is asked only when it matters."""
+    answered = next((c for c in said if c.id == answered_id), None)
+    if (answered is not None and answered.author == config.owner
+            and approves_breaking(answered)):
+        return ""
+    return breaking_reason(config, changed_files(gh, config.repo, head), body, said)
 
 
 def _handles(body, comment_id):

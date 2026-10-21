@@ -20,10 +20,10 @@ trust") in code, not just in instructions:
 import re
 
 from autodev.board import issue_numbers, section
-from autodev.decide import (MARKER, approves_breaking, handled_marker,
-                            merge_cancelled, unhandled)
-from autodev.github import (breaking, changed_files, is_ticket_pr, pr_timeline,
-                            prose, record_change)
+from autodev.decide import MARKER, handled_marker, merge_cancelled, unhandled
+from autodev.github import (BREAKING_HEADING, changed_files, is_ticket_pr,
+                            needs_merge_breaking, pr_timeline, prose,
+                            record_change)
 from autodev.worktrees import branch_prefix
 
 
@@ -125,15 +125,16 @@ CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+"
                      r"(?:(?:[\w.-]+/[\w.-]+)?#|https://github\.com/[\w.-]+/"
                      r"[\w.-]+/issues/)(\d+)", re.IGNORECASE)
 
-def _section_with_text(heading):
-    """A PR body's "## <heading>" with some text under it (anything but
-    another heading) before the next heading or the end."""
-    return re.compile(r"^## %s[ \t]*\n(?:[ \t]*\n)*[ \t]*[^#\s]" % heading,
-                      re.IGNORECASE | re.MULTILINE)
+# Some text under a heading line (anything but another heading), before
+# the next heading or the end.
+TEXT_UNDER = r"[ \t]*\n(?:[ \t]*\n)*[ \t]*[^#\s]"
 
-
-WHAT_CHANGES = _section_with_text("What changes for you")
-BREAKING_CHANGE = _section_with_text("Breaking change")
+# A PR body's "## What changes for you" section, and its "## Breaking
+# change" section (the heading the dispatcher counts), each with text.
+WHAT_CHANGES = re.compile(r"^## What changes for you" + TEXT_UNDER,
+                          re.IGNORECASE | re.MULTILINE)
+BREAKING_CHANGE = re.compile(BREAKING_HEADING + TEXT_UNDER,
+                             re.IGNORECASE | re.MULTILINE)
 
 
 def _check_mention(config, body, what):
@@ -180,12 +181,14 @@ def open_pr(gh, config, ticket, title, head, body):
         raise Refused("the PR body may close only #%d, but a closing keyword "
                       "also names %s; reword it (e.g. \"see #N\")" % (
                           ticket, ", ".join("#%d" % n for n in others)))
-    # A branch that changes a record is a breaking change, which the owner
-    # approves with /merge breaking after reading this section (CLAUDE.md,
-    # "Breaking changes"). The pushed branch is what's compared, with where
-    # it left master. A section the records don't call for is fine: some
-    # breaks only a session can see.
-    reason = record_change(changed_files(gh, config.repo, head) or [])
+    # A branch that changes the save format record is a breaking change,
+    # which the owner approves with /merge breaking after reading this
+    # section (CLAUDE.md, "Breaking changes"). The pushed branch is what's
+    # compared, with where it left master. A section the record doesn't call
+    # for is fine: some breaks only a session can see. A branch GitHub can't
+    # list in full is checked as far as it lists; the dispatcher counts it
+    # as breaking anyway.
+    reason = record_change(changed_files(gh, config.repo, head))
     if reason and not BREAKING_CHANGE.search(prose(body)):
         raise Refused(
             "this PR is a breaking change (%s; see CLAUDE.md, \"Breaking "
@@ -231,12 +234,12 @@ def merge_pr(gh, config, ticket, pr, head, handled_through):
         raise Refused("master has %d commit%s your branch doesn't: merge master "
                       "in again, re-test, push, and try again" % (
                           behind, "" if behind == 1 else "s"))
-    # The dispatcher only starts a merge on a plain /merge for a PR that
-    # wasn't a breaking change, but merging master in, or a reply since, may
-    # have made it one: checked again, on the very commit being merged.
-    reason = breaking(config, changed_files(gh, config.repo, head), data["body"], said)
-    answered = next(c for c in said if c.id == handled_through)
-    if reason and not (answered.author == config.owner and approves_breaking(answered)):
+    # The dispatcher starts a merge on a plain /merge only for a PR it didn't
+    # see as a breaking change. This backs it up, on the very commit being
+    # merged.
+    reason = needs_merge_breaking(gh, config, head, data["body"], said,
+                                  handled_through)
+    if reason:
         raise Refused("this PR is a breaking change (%s), and the /merge it "
                       "answers is a plain /merge: only @%s's /merge breaking "
                       "merges it. Don't merge and don't reply; report failed, and "
