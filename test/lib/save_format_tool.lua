@@ -9,11 +9,11 @@
 -- copies of what it compiles (the repo's include/ folder, made by
 -- `mktemp -d`, with tools/agbcc linked in), each with one edit made to the
 -- copy. The repo's own files are never changed: a run that writes records
--- writes them to scratch records (scratch_records), never to the repo's.
+-- names scratch ones (scratch_record), and the tool writes only those.
 --
 --   local tool = dofile(project_dir .. "test/lib/save_format_tool.lua")
 --   local tree = tool.scratch_tree()
---   local code, output = tool.run_tool(tool.on_tree(tree))
+--   local code, output = tool.run_tool(tool.on_tree(tree, { format = tool.FORMAT_RECORD }))
 --   tool.expect_exit(code, output, 1, "S2 inserted field")
 --   ...
 --   tool.remove_scratch()            -- at the end of the test
@@ -127,20 +127,30 @@ function M.scratch_tree(with_agbcc)
     return dir
 end
 
--- A pair of scratch records, in a new folder: `format` and `ids` are their
--- paths, `args` the tool's arguments that point it at them. --write with
--- them writes there, not over the repo's records.
-function M.scratch_records()
-    local dir = M.scratch_dir()
-    local records = { format = dir .. "/save_format.txt", ids = dir .. "/save_ids.txt" }
-    records.args = "--record " .. q(records.format) .. " --ids-record " .. q(records.ids)
-    return records
+-- A path for a scratch record called `name`, in a new folder.
+function M.scratch_record(name)
+    return M.scratch_dir() .. "/" .. name
 end
 
--- The tool's arguments to check scratch tree `tree`, against `records`
--- (from scratch_records; default: the repo's records).
+-- The tool's arguments to check scratch tree `tree` (nil: the repo)
+-- against `records`, a table whose `format` and `ids`, when set, are the
+-- save format and ID records to use. The tool works only on the records it
+-- is given; given none, on both of the repo's.
 function M.on_tree(tree, records)
-    return "--root " .. q(tree) .. (records and (" " .. records.args) or "")
+    local args = {}
+    if tree then table.insert(args, "--root " .. q(tree)) end
+    records = records or {}
+    if records.format then table.insert(args, "--record " .. q(records.format)) end
+    if records.ids then table.insert(args, "--ids-record " .. q(records.ids)) end
+    return table.concat(args, " ")
+end
+
+-- `text` with plain text `old` replaced by `new`, or nil unless `old` is in
+-- it exactly once.
+function M.replace_once(text, old, new)
+    local at = text:find(old, 1, true)
+    if not at or text:find(old, at + 1, true) then return nil end
+    return text:sub(1, at - 1) .. new .. text:sub(at + #old)
 end
 
 -- In `tree`'s copy of `header` (a path under include/), replace plain text
@@ -148,13 +158,9 @@ end
 -- can't pass on an unchanged copy.
 function M.edit_header(tree, header, old, new, what)
     local path = tree .. "/include/" .. header
-    local text = M.read_file(path) or ""
-    local at = text:find(old, 1, true)
-    local once = at ~= nil and text:find(old, at + 1, true) == nil
-    fw.assert_true(once, what .. ": found \"" .. old:gsub("\n", "\\n") .. "\" once in " .. header)
-    if once then
-        M.write_file(path, text:sub(1, at - 1) .. new .. text:sub(at + #old))
-    end
+    local edited = M.replace_once(M.read_file(path) or "", old, new)
+    fw.assert_true(edited ~= nil, what .. ": found \"" .. old:gsub("\n", "\\n") .. "\" once in " .. header)
+    if edited then M.write_file(path, edited) end
 end
 
 -- Remove every scratch folder. Each is checked to be one mktemp made (a

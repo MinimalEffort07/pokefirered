@@ -43,13 +43,14 @@
 -- SCRATCH TREES: S2 to S9 run the tool on a copy of what it compiles, with
 --   one edit made to the copy (test/lib/save_format_tool.lua). Each edit is
 --   checked to have happened, so a scenario can't pass on an unchanged copy.
---   The repo's own files are never changed: --write goes to scratch records
---   (the tool writes the saved-ID record too, test_save_ids.lua's).
+--   The repo's own files are never changed: --write goes to a scratch
+--   record. Every run names its save format record with --record, so the
+--   tool checks or writes only that one, never the saved-ID record
+--   (test_save_ids.lua's).
 --
 -- EXIT CODES ARE CHECKED WITH WHAT WAS PRINTED: the tool exits 1 only for
---   "a record differs" (a crash is reported as 2, can't run), and each
---   exit-1 scenario also checks the diff shows its change. Its scratch trees
---   keep every saved ID, so the saved-ID record matches them.
+--   "the save format differs" (a crash is reported as 2, can't run), and
+--   each exit-1 scenario also checks the diff shows its change.
 --
 -- HOW A TEST CAN RUN A PROGRAM: through io.popen (save_format_tool.lua).
 --   This test never looks at the game; the ROM boots only because
@@ -69,7 +70,14 @@ local tool = dofile(project_dir .. "test/lib/save_format_tool.lua")
 local RECORD = tool.FORMAT_RECORD
 local run_tool, expect_exit, has = tool.run_tool, tool.expect_exit, tool.has
 local read_file, write_file = tool.read_file, tool.write_file
-local scratch_tree, on_tree = tool.scratch_tree, tool.on_tree
+local scratch_tree, replace_once = tool.scratch_tree, tool.replace_once
+
+-- The tool's arguments to check scratch tree `tree` (nil: the repo) against
+-- the repo's save format record, or the scratch one at `record`: only that
+-- record, so the saved IDs (test_save_ids.lua's) never decide the outcome.
+local function on_tree(tree, record)
+    return tool.on_tree(tree, { format = record or RECORD })
+end
 
 -------------------------------------------------------------------------------
 -- Editing scratch trees, reading records
@@ -92,14 +100,6 @@ local function edit_struct(tree, header, name, change, what)
     local new_body = change(body)
     fw.assert_true(new_body ~= nil and new_body ~= body, what .. ": the edit changed struct " .. name)
     write_file(path, text:sub(1, body_start - 1) .. (new_body or body) .. text:sub(body_end + 1))
-end
-
--- `body` with plain text `old` replaced by `new`, or nil unless `old` is in
--- it exactly once.
-local function replace_once(body, old, new)
-    local at = body:find(old, 1, true)
-    if not at or body:find(old, at + 1, true) then return nil end
-    return body:sub(1, at - 1) .. new .. body:sub(at + #old)
 end
 
 -- The lines of a unified diff in `output` that start with `sign` ("+" or
@@ -140,10 +140,10 @@ end
 -- Write scratch tree `tree`'s save format into a scratch record and return
 -- that record's sections.
 local function tree_sections(tree, what)
-    local records = tool.scratch_records()
-    local code, output = run_tool("--write " .. on_tree(tree, records))
+    local record = tool.scratch_record("save_format.txt")
+    local code, output = run_tool("--write " .. on_tree(tree, record))
     expect_exit(code, output, 0, what .. ": --write")
-    return sections_of(read_file(records.format) or "")
+    return sections_of(read_file(record) or "")
 end
 
 -- Does any line in `lines` contain every string in `parts`?
@@ -160,9 +160,10 @@ end
 
 fw.run(function()
     fw.log("=== S1: the repo as committed matches test/save_format.txt ===")
-    local code, output = run_tool()
+    local code, output = run_tool(on_tree(nil))
     expect_exit(code, output, 0, "S1 the repo")
     fw.assert_true(has(output, "test/save_format.txt"), "S1 the output names test/save_format.txt")
+    fw.assert_true(not has(output, "saved IDs"), "S1 given only --record, the tool checks only the save format")
 
     fw.log("=== S2: a u8 inserted before SaveBlock2's playerGender ===")
     local s2_tree = scratch_tree()
@@ -253,15 +254,16 @@ fw.run(function()
     expect_exit(code, output, 0, "S7 not saved")
 
     fw.log("=== S8: --write round-trips ===")
-    local s8_records = tool.scratch_records()
-    code, output = run_tool("--write " .. on_tree(s2_tree, s8_records))
+    local s8_record = tool.scratch_record("save_format.txt")
+    code, output = run_tool("--write " .. on_tree(s2_tree, s8_record))
     expect_exit(code, output, 0, "S8 --write on the S2 tree")
-    code, output = run_tool(on_tree(s2_tree, s8_records))
+    fw.assert_true(not has(output, "saved IDs"), "S8 given only --record, --write writes only that record")
+    code, output = run_tool(on_tree(s2_tree, s8_record))
     expect_exit(code, output, 0, "S8 the S2 tree against the record --write gave it")
-    local repo_records = tool.scratch_records()
-    code, output = run_tool("--write " .. repo_records.args)
+    local repo_record = tool.scratch_record("save_format.txt")
+    code, output = run_tool("--write " .. on_tree(nil, repo_record))
     expect_exit(code, output, 0, "S8 --write on the repo")
-    local written, committed = read_file(repo_records.format), read_file(RECORD)
+    local written, committed = read_file(repo_record), read_file(RECORD)
     fw.assert_true(written ~= nil and written == committed,
         "S8 --write on the repo gives test/save_format.txt byte for byte")
 

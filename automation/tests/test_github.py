@@ -17,7 +17,7 @@ from autodev.gh import GhError
 from autodev.github import GitHub
 from autodev.registry import Registry
 from autodev.sessions import SessionConfig
-from tests.test_issue_tool import FakeRest, comment, issue, timeline
+from tests.test_issue_tool import FakeRest, changes, comment, issue, timeline
 
 CONFIG = Config(owner="MinimalEffort07", repo="MinimalEffort07/pokefirered",
                 board_title="pokefirered autodev", bot="MinimalEffort07-Autodev")
@@ -143,12 +143,6 @@ def pr(number, ref, author="MinimalEffort07-Autodev",
 
 # What GitHub's compare says commit abc123 changes since it left master.
 COMPARE = "repos/MinimalEffort07/pokefirered/compare/master...abc123"
-
-
-def changes(*files):
-    """A compare response listing `files`: names, or GitHub's own records."""
-    return {"files": [f if isinstance(f, dict) else {"filename": f, "status": "modified"}
-                      for f in files]}
 
 
 NOTHING_BREAKS = {COMPARE: changes("automation/README.md")}

@@ -34,6 +34,8 @@ fails.
                      in the repo this tool is in).
   --ids-record FILE  the ID record (default: test/save_ids.txt in the repo
                      this tool is in).
+Given --record or --ids-record, it checks or writes only the records given,
+so `--record FILE` alone does what it did before there were two records.
 
 HOW IT WORKS. The C compiler already knows the exact layout: with -g it
 writes it into the object file as DWARF debug information, a standard
@@ -63,7 +65,7 @@ SAVED IDS. The names come from the headers in ID_KINDS below: every
 `#define` and enum member that starts with its kind's prefix, except the
 ones a save never stores (see left_out). Their numbers come from the
 compiler, the same way as the flash constants: a second probe includes the
-headers and holds an enum with one member per name, set to it. The record
+headers and holds an enum with one member per name, set to it. The ID record
 lists one `NAME number` line per ID, kind by kind, each kind in number
 order, so a new ID only adds a line. Checking compares the names and
 numbers:
@@ -204,15 +206,21 @@ ID_KINDS = [
     ("MAPSEC_", "constants/region_map_sections.h"),
     ("LOCALID_", "constants/map_event_ids.h"),
 ]
-GENERATED_HEADERS = [header for _, header in ID_KINDS[-4:]]
+GENERATED_HEADERS = [
+    "constants/map_groups.h",
+    "constants/layouts.h",
+    "constants/region_map_sections.h",
+    "constants/map_event_ids.h",
+]
 
 # A placeholder is a name that is only its prefix and a number, such as
 # FLAG_0x020, VAR_0x402A or ITEM_034: a slot nothing uses yet.
 PLACEHOLDER = re.compile(r"0x[0-9A-Fa-f]+|\d+")
 
-# Names with a kind's prefix that are the size of its list, not an ID:
-# each grows whenever an ID is added at the end of the list.
-LIST_SIZES = {"MAP_GROUPS_COUNT", "MAPSEC_COUNT", "NATIONAL_DEX_COUNT"}
+# Names with a kind's prefix that mark the end of its list, not an ID: each
+# moves whenever an ID is added at the end of the list. The build puts
+# MAPSEC_NONE right after the last map section, then MAPSEC_COUNT.
+LIST_ENDS = {"MAP_GROUPS_COUNT", "MAPSEC_NONE", "MAPSEC_COUNT", "NATIONAL_DEX_COUNT"}
 
 # The name the ID probe gives each ID's enum member.
 ID_PREFIX = "SAVE_IDS_PROBE_"
@@ -243,8 +251,9 @@ IDS_RECORD_HEADER = """\
 # and LOCALID_ (map_event_ids.h).
 # Left out: placeholders, names that are only a prefix and a number (such
 # as FLAG_0x020, VAR_0x402A, ITEM_034), so giving one its first use adds a
-# new ID; names containing UNUSED; the sizes of lists (MAP_GROUPS_COUNT,
-# MAPSEC_COUNT, NATIONAL_DEX_COUNT); and function-like macros.
+# new ID; names containing UNUSED; the ends of lists, which move whenever
+# an ID is added at the end (MAP_GROUPS_COUNT, MAPSEC_NONE, MAPSEC_COUNT,
+# NATIONAL_DEX_COUNT); and function-like macros.
 #
 # One line per ID: its name and its number, in decimal. The kinds come in
 # the order above, each in number order.
@@ -665,8 +674,8 @@ def left_out(prefix, name):
         return "a placeholder"
     if "UNUSED" in name:
         return "unused"
-    if name in LIST_SIZES:
-        return "a list's size"
+    if name in LIST_ENDS:
+        return "a list's end"
     return None
 
 
@@ -677,7 +686,11 @@ def header_names(prefix, text):
     text = without_comments(text)
     names = re.findall(r"^[ \t]*#[ \t]*define[ \t]+(\w+)[ \t]+\S", text, re.MULTILINE)
     for body in re.findall(r"\benum\b[^{};]*\{([^}]*)\}", text):
-        names += re.findall(r"(?:^|,)\s*(\w+)", body)
+        # A member is a name after "{" or ",", followed by "=", "," or "}"
+        # (so not a name inside a value such as M(a, b)). Preprocessor lines
+        # (#if) between members are left out first.
+        body = re.sub(r"^[ \t]*#[^\n]*", "", body, flags=re.MULTILINE)
+        names += re.findall(r"(?:^|,)\s*(\w+)\s*(?=[=,]|$)", body)
     return [name for name in names if name.startswith(prefix)]
 
 
@@ -773,16 +786,13 @@ def shown_path(path):
         return str(path)
 
 
-def write_command(args):
-    """The --write command for the tree and records this run used."""
+def write_command(args, option, record_name):
+    """The --write command that writes only one record, `record_name`,
+    named with `option`, from the tree this run used."""
     command = TOOL_COMMAND + " --write"
     if args.root is not None:
         command += " --root " + str(args.root)
-    if args.record is not None:
-        command += " --record " + str(args.record)
-    if args.ids_record is not None:
-        command += " --ids-record " + str(args.ids_record)
-    return command
+    return command + " {} {}".format(option, record_name)
 
 
 def explain_difference(record_name, old, new, args):
@@ -808,7 +818,7 @@ def explain_difference(record_name, old, new, args):
         "  2. Treat it as a breaking change, which the owner must approve.",
         "     Even a change old saves survive counts, such as reserved bytes",
         "     given a use. Run",
-        "       " + write_command(args),
+        "       " + write_command(args, "--record", record_name),
         "     commit {}, and say so in the PR, in a".format(record_name),
         "     \"## Breaking change\" section.",
         "",
@@ -827,8 +837,8 @@ def read_ids(record_name, text):
         match = re.fullmatch(r"(\w+) (\d+)", line)
         if not match:
             raise CantRun("- line {} of {} isn't an ID's name and number: {!r}. "
-                          "Rewrite the record with: {}".format(
-                              number, record_name, line, TOOL_COMMAND + " --write"))
+                          "Rewrite the record with: {} --write --ids-record {}".format(
+                              number, record_name, line, TOOL_COMMAND, record_name))
         ids[match.group(1)] = int(match.group(2))
     return ids
 
@@ -838,6 +848,7 @@ def explain_ids_difference(record_name, old, new, args):
     ID under a heading saying whether it is a breaking change, then what it
     means and the ways out."""
     old_ids, new_ids = read_ids(record_name, old), read_ids(record_name, new)
+    write = write_command(args, "--ids-record", record_name)
     changed = sorted(n for n in old_ids if n in new_ids and old_ids[n] != new_ids[n])
     gone = sorted(n for n in old_ids if n not in new_ids)
     added = sorted(n for n in new_ids if n not in old_ids)
@@ -864,7 +875,7 @@ def explain_ids_difference(record_name, old, new, args):
             "     placeholder (such as FLAG_0x020 or VAR_0x402A) its first use:",
             "     either is a new ID, not a breaking change.",
             "  2. Treat it as a breaking change, which the owner must approve. Run",
-            "       " + write_command(args),
+            "       " + write,
             "     commit {}, and say so in the PR, in a".format(record_name),
             "     \"## Breaking change\" section.",
             "",
@@ -876,7 +887,7 @@ def explain_ids_difference(record_name, old, new, args):
             "",
             "New IDs aren't a breaking change: no save made before holds them.",
             "Add them to the record with",
-            "  " + write_command(args),
+            "  " + write,
             "and commit {}. That only adds lines to it.".format(record_name),
         ])
     # The same IDs and numbers, but not the text --write gives: an edit by
@@ -884,58 +895,62 @@ def explain_ids_difference(record_name, old, new, args):
     return "\n".join(lines + [
         "Every ID in it has the same number, but it isn't the text the tool",
         "writes (its header, or the order of its lines). Rewrite it with",
-        "  " + write_command(args),
+        "  " + write,
     ])
 
 
 class Record:
     """One of the tool's records: what it holds (`what`, as messages name
     it), what a match prints (`matches`, given the record's name), the
-    argument that points at it and its default path, what makes its text
-    from a tree, and what a mismatch prints."""
+    command-line option that names it and its default path, what makes its
+    text from a tree, and what a mismatch prints."""
 
-    def __init__(self, what, matches, arg, default, make, explain):
+    def __init__(self, what, matches, option, default, make, explain):
         self.what, self.matches = what, matches
-        self.arg, self.default = arg, default
+        self.option, self.default = option, default
         self.make, self.explain = make, explain
+
+    def given(self, args):
+        """The path the command line names this record by, or None."""
+        return getattr(args, self.option[2:].replace("-", "_"))
 
 
 # The records, in the order a run writes or checks them.
 RECORDS = [
-    Record("the save format", "The save format matches {}.", "record",
+    Record("the save format", "The save format matches {}.", "--record",
            DEFAULT_RECORD, save_format, explain_difference),
-    Record("the saved IDs", "The saved IDs match {}.", "ids_record",
+    Record("the saved IDs", "The saved IDs match {}.", "--ids-record",
            DEFAULT_IDS_RECORD, ids_record_text, explain_ids_difference),
 ]
 
 
-def check_record(spec, root, args):
+def check_record(record, root, args):
     """Write or check one record (a Record); print what happened. Returns
     the exit code."""
-    record = getattr(args, spec.arg) or spec.default
-    record_name = shown_path(record)
+    path = record.given(args) or record.default
+    record_name = shown_path(path)
     try:
-        new = spec.make(root)
+        new = record.make(root)
         if args.write:
-            record.write_text(new)
-            print("Wrote {} of {} into {}.".format(spec.what, root, record_name))
+            path.write_text(new)
+            print("Wrote {} of {} into {}.".format(record.what, root, record_name))
             return MATCHES
-        if not record.is_file():
+        if not path.is_file():
             raise CantRun("- there is no record at {}. Write one with: {}".format(
-                record_name, write_command(args)))
-        old = record.read_text()
+                record_name, write_command(args, record.option, record_name)))
+        old = path.read_text()
         if old == new:
-            print(spec.matches.format(record_name))
+            print(record.matches.format(record_name))
             return MATCHES
-        print(spec.explain(record_name, old, new, args))
+        print(record.explain(record_name, old, new, args))
         return DIFFERS
     except CantRun as problem:
-        print("save_format.py can't check {}:\n{}".format(spec.what, problem))
+        print("save_format.py can't check {}:\n{}".format(record.what, problem))
         return CANT_RUN
     except Exception:  # a bug, or debug information it can't read
         # Python's own exit code for a crash is 1, which here means "the
         # record differs", so a crash is reported as can't run.
-        print("save_format.py can't check {}: it failed.".format(spec.what))
+        print("save_format.py can't check {}: it failed.".format(record.what))
         traceback.print_exc(file=sys.stdout)
         return CANT_RUN
 
@@ -944,7 +959,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Check the tree's save format and saved IDs against their "
                     "records, test/save_format.txt and test/save_ids.txt, or "
-                    "write them there.")
+                    "write them there. Given --record or --ids-record, it "
+                    "works on the records given only.")
     parser.add_argument("--write", action="store_true",
                         help="write the tree's save format and saved IDs into the records")
     parser.add_argument("--root", type=Path,
@@ -957,11 +973,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     root = (args.root or REPO).resolve()
+    # Given a record, the tool works on that one only, so --record means
+    # what it did before there were two; given none, on both of the repo's.
+    records = [r for r in RECORDS if r.given(args) is not None] or RECORDS
     codes = []
-    for i, spec in enumerate(RECORDS):
+    for i, record in enumerate(records):
         if i:
             print()
-        codes.append(check_record(spec, root, args))
+        codes.append(check_record(record, root, args))
     # Can't run outweighs differs: a check that couldn't run may hide a
     # difference.
     return max(codes)

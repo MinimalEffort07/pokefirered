@@ -328,8 +328,8 @@ def breaking_reason(config, files, body, said):
     branch's `files` (changed_files) are breaking by the records
     (record_change), or GitHub couldn't list them all, or its `body` or one
     of the bot's replies or reviews among `said` (PrComment) has a
-    "## Breaking change" section. The owner's own comments don't count: only the PR's own words
-    do."""
+    "## Breaking change" section. The owner's own comments don't count:
+    only the PR's own words do."""
     reason = record_change(files)
     if reason:
         return reason

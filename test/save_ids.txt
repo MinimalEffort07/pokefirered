@@ -23,8 +23,9 @@
 # and LOCALID_ (map_event_ids.h).
 # Left out: placeholders, names that are only a prefix and a number (such
 # as FLAG_0x020, VAR_0x402A, ITEM_034), so giving one its first use adds a
-# new ID; names containing UNUSED; the sizes of lists (MAP_GROUPS_COUNT,
-# MAPSEC_COUNT, NATIONAL_DEX_COUNT); and function-like macros.
+# new ID; names containing UNUSED; the ends of lists, which move whenever
+# an ID is added at the end (MAP_GROUPS_COUNT, MAPSEC_NONE, MAPSEC_COUNT,
+# NATIONAL_DEX_COUNT); and function-like macros.
 #
 # One line per ID: its name and its number, in decimal. The kinds come in
 # the order above, each in number order.
@@ -4546,7 +4547,6 @@ MAPSEC_RIXY_CHAMBER 193
 MAPSEC_VIAPOIS_CHAMBER 194
 MAPSEC_EMBER_SPA 195
 MAPSEC_SPECIAL_AREA 196
-MAPSEC_NONE 197
 LOCALID_BERRY_FOREST_LOSTELLE 1
 LOCALID_BILL_HUMAN 1
 LOCALID_BIRTH_ISLAND_EXTERIOR_ROCK 1
