@@ -16,7 +16,6 @@ local ADDR = dofile(project_dir .. "test/lib/addresses.lua")
 local STATE_PATH = "/tmp/pokefirered-route1.ss"
 
 fw.run(function()
-    fw.speed_up()
     fw.wait_frames(30)
     if not fw.try_load_state(STATE_PATH) then
         fw.log_error("no state"); fw.finish(); return

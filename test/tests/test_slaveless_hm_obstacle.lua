@@ -61,6 +61,22 @@
 --   scores 0. Passing needs at least 64 such pixels; a real portrait has
 --   hundreds.
 --
+-- MOMENTS (what a recording plays at normal speed; see MOMENTS in
+-- test/lib/framework.lua): everything else fast-forwards. One per sub-test,
+-- and two for D, whose prompt and surf are seconds apart:
+--   A  the "can't cut" sign, with the tree standing below the player;
+--   B  the portrait at rest on the outdoor banner, then the tree cut down;
+--   C  the player still on land at the pond's edge, with no prompt;
+--   D  the Surf prompt's YES/NO, and then the player jumping onto the water;
+--   E  the portrait at rest on the indoor banner (Strength);
+--   F  the portrait at rest, then the player climbing the falls.
+-- The portrait rests in the middle of the screen for only 30 frames, so
+-- each portrait moment starts as measure_portrait() finds it there. The
+-- moments in B, D, E and F play frames the test waits anyway (D's surf is
+-- a fw.show in place of the 60-frame wait it had), so they change none of
+-- the frames the game sees; A and C hold the outcome on screen (fw.show)
+-- after their checks, which adds their frames at the end of the sub-test.
+--
 -- Run:    bash test/run_test.sh test/tests/test_slaveless_hm_obstacle.lua
 -- Record: bash test/record_test.sh test/tests/test_slaveless_hm_obstacle.lua
 -------------------------------------------------------------------------------
@@ -631,6 +647,11 @@ fw.run(function()
     local tree_after_a = read_flag(sb1, TREE_FLAG)
     fw.log(string.format("  FLAG_TEMP_11 after A-test: %s", tostring(tree_after_a)))
     check("A: tree intact (no prompt without badge/HM)", not tree_after_a)
+    -- The sign types out at 4 frames a letter and is still typing; this
+    -- lets it finish, so the moment holds the whole message.
+    fw.wait_frames(60)
+    fw.screenshot(fw.out_path("mgba-slaveless-a-cant-cut.png"))
+    fw.show("A: \"This tree looks like it can be CUT down!\" and no prompt; the tree still stands")
 
     -- ── Sub-test B: badge + HM01, empty party → slaveless → tree cut ──────
     fw.log("--- Sub-test B: badge set, HM01 in bag, empty party ---")
@@ -719,14 +740,15 @@ fw.run(function()
     fw.press("A")         -- A2: confirm YES → "mysterious POKéMON appeared" message shows
     fw.wait_frames(250)   -- wait for appeared text to scroll
     fw.screenshot(fw.out_path("mgba-slaveless-b-appeared.png"))
-    fw.slow_down("slaveless HM silhouette animation")
     fw.press("A")         -- A3: dismiss appeared message → animation starts
     local outdoor_pixels = measure_portrait("mgba-slaveless-b-silhouette.png")
+    -- The portrait rests for 30 frames and slides out, and the tree is cut
+    -- down by about 115 frames after it comes to rest.
+    fw.show_next("B: the mysterious POKéMON on the outdoor banner, then the tree is cut down", 120)
     check("B: mysterious POKéMON visible on the outdoor banner",
         outdoor_pixels >= MIN_VISIBLE_PORTRAIT_PIXELS)
     fw.wait_frames(600)   -- full animation + tree removal
     fw.screenshot(fw.out_path("mgba-slaveless-b-after-anim.png"))
-    fw.speed_up()
 
     sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
     local tree_after_b = read_flag(sb1, TREE_FLAG)
@@ -748,6 +770,7 @@ fw.run(function()
     fw.wait_frames(120)
     fw.screenshot(fw.out_path("mgba-slaveless-c-no-badge.png"))
     check("C: no Surf prompt without BADGE05", not message_is("Text_WantToSurf"))
+    fw.show("C: no SOUL BADGE: A at the water brings no Surf prompt, and the player stays on land")
     fw.press("B")
     fw.wait_frames(60)
     check("C: not surfing without BADGE05", not is_surfing())
@@ -767,7 +790,11 @@ fw.run(function()
     local surf_prompt = message_is("Text_WantToSurf")
     fw.screenshot(fw.out_path("mgba-slaveless-d-prompt.png"))
     check("D: Surf YES/NO prompt shown (gStringVar4 == Text_WantToSurf)", surf_prompt)
-    fw.wait_frames(300)    -- text scroll + YES/NO cursor
+    -- Text scroll + YES/NO cursor: the YES/NO box is up by about 180
+    -- frames into this wait, and the moment plays its last 60.
+    fw.wait_frames(240)
+    fw.show_next("D: \"Would you like to SURF?\" YES/NO, with no party POKéMON that knows SURF")
+    fw.wait_frames(60)
     fw.screenshot(fw.out_path("mgba-slaveless-d-yesno.png"))
     fw.press("A")          -- A2: YES (the cursor starts on YES)
     fw.wait_frames(250)
@@ -778,7 +805,7 @@ fw.run(function()
     -- water tile (15, 26) = world (22, 33).
     fw.wait_until(function() local _, y = read_pos(); return y == 33 end, 600,
         "player reaches the water tile")
-    fw.wait_frames(60)
+    fw.show("D: the player surfs on the water")  -- the jump on, as it plays
     fw.screenshot(fw.out_path("mgba-slaveless-d-surfing.png"))
     local sx, sy = read_pos()
     check("D: player is surfing after slaveless YES", is_surfing())
@@ -810,6 +837,7 @@ fw.run(function()
     fw.wait_frames(250)
     fw.press("A")          -- A3: dismiss → banner + portrait
     local indoor_pixels = measure_portrait("mgba-slaveless-e-silhouette.png")
+    fw.show_next("E: the mysterious POKéMON on the indoor banner (STRENGTH)")
     check("E: mysterious POKéMON visible on the indoor banner",
         indoor_pixels >= MIN_VISIBLE_PORTRAIT_PIXELS)
     fw.wait_frames(400)
@@ -839,6 +867,9 @@ fw.run(function()
     fw.wait_frames(250)
     fw.press("A")          -- A3: dismiss → banner + portrait, then the climb
     local falls_pixels = measure_portrait("mgba-slaveless-f-silhouette.png")
+    -- The climb starts about 50 frames after the portrait comes to rest and
+    -- takes four 31-frame steps.
+    fw.show_next("F: the mysterious POKéMON during WATERFALL, then the player climbs the falls", 180)
     check("F: mysterious POKéMON visible while using Waterfall",
         falls_pixels >= MIN_VISIBLE_PORTRAIT_PIXELS)
     fw.wait_until(function() local _, y = read_pos(); return y == 29 end, 600,

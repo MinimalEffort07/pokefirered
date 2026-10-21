@@ -29,6 +29,13 @@
 --   player stands beside the NPC and faces it, press A. Pressing A while the
 --   NPC is mid-step just does nothing, so that attempt is retried.
 --
+-- MOMENTS (what a recording plays at normal speed; see MOMENTS in
+-- test/lib/framework.lua): the boot, the walks and the dialogs
+-- fast-forward. For the Woman and then the Boy, the first second of the
+-- watch in step 4 is a moment: the dialog has closed and the screen stays
+-- on Route 4, with no fade to Oak's Lab. The watch is a timed stretch, so
+-- the moment is a fw.show_next at its start, which adds no frames.
+--
 -- RECORDING:
 --   Set MGBA_FRAME_DIR to a directory and every second emulated frame from the
 --   Route 4 warp onwards is saved there as frame_NNNNN.png, with a matching
@@ -378,6 +385,7 @@ local function check_no_warp(name, local_id, sides)
     fw.assert_true(closed, name .. ": dialog closed and script ended")
 
     set_phase("Dialog closed: watching for a warp")
+    fw.show_next(name .. ": the dialog has closed and the screen stays on Route 4, with no fade to Oak's Lab")
     local left_at = nil
     local left_to = nil
     for i = 1, WATCH_FRAMES do
@@ -420,7 +428,6 @@ fw.run(function()
 
     start_capture()
     set_phase("Route 4, outside MT. MOON")
-    fw.slow_down("showing the Route 4 NPC conversations")
     fw.wait_frames(60)
 
     check_no_warp("WOMAN", LOCALID_WOMAN, { DIR_NORTH, DIR_EAST, DIR_WEST })

@@ -9,6 +9,13 @@
 --      water → "Would you like to SURF?" → YES → silhouette → the player
 --      surfs onto the pond.
 --
+-- MOMENTS (what a recording plays at normal speed; see MOMENTS in
+-- test/lib/framework.lua): the rest fast-forwards. For each of CUT and
+-- SURF, the prompt with its YES/NO box (the last second before YES), then
+-- the silhouette on the banner and what the move does: the tree cut down,
+-- the player surfing onto the pond. The moments play frames the demo waits
+-- anyway, so the GIF's frames don't change.
+--
 -- Starts from the fixture test_slaveless_hm_obstacle.lua saves. Each
 -- test/run_test.sh run writes it to its own output directory (printed as
 -- "Output:"), so pass its path in SLAVELESS_HM_FIXTURE. A fixture only loads
@@ -86,8 +93,6 @@ fw.run(function()
     inject_item(sb1, 1, ITEM_HM03)
     fw.wait_frames(10)
 
-    -- Slow down so the demo is watchable in the GUI.
-    fw.slow_down("showing slaveless HM prompts")
     capture.start()
 
     -- 1. CUT: face south toward the tree at tile (11,24).
@@ -95,11 +100,17 @@ fw.run(function()
     fw.hold("DOWN", 8)
     fw.wait_frames(40)
     fw.press("A")          -- tree → "Use CUT?" YES/NO
-    fw.wait_frames(330)
+    fw.wait_frames(270)    -- the YES/NO box is up by about 240 frames
+    fw.show_next("CUT: \"Use CUT?\" YES/NO, with no party POKéMON that knows CUT")
+    fw.wait_frames(60)
     fw.press("A")          -- YES → "A mysterious POKéMON appeared and used CUT!"
     fw.wait_frames(260)
     fw.press("A")          -- dismiss → silhouette on the banner, tree cut
-    fw.wait_frames(280)
+    -- The banner slides in about 28 frames after A; the tree is cut down
+    -- about 145 frames after that.
+    fw.wait_frames(28)
+    fw.show_next("CUT: the grey silhouette on the banner, then the tree is cut down", 150)
+    fw.wait_frames(252)
 
     -- 2. SURF: walk to the pond edge at tile (15,25) and face the water.
     capture.caption("SURF: no party POKEMON knows SURF; HM03 + SOUL BADGE")
@@ -110,11 +121,17 @@ fw.run(function()
     fw.hold("DOWN", 4)
     fw.wait_frames(30)
     fw.press("A")          -- water → "Would you like to SURF?" YES/NO
-    fw.wait_frames(330)
+    fw.wait_frames(270)    -- the YES/NO box is up by about 240 frames
+    fw.show_next("SURF: \"Would you like to SURF?\" YES/NO, with no party POKéMON that knows SURF")
+    fw.wait_frames(60)
     fw.press("A")          -- YES → "A mysterious POKéMON appeared and used SURF!"
     fw.wait_frames(260)
     fw.press("A")          -- dismiss → silhouette on the banner, surf onto the pond
-    fw.wait_frames(200)
+    -- The banner slides in about 29 frames after A; the player has jumped
+    -- onto the pond about 115 frames after that.
+    fw.wait_frames(29)
+    fw.show_next("SURF: the grey silhouette on the banner, then the player surfs onto the pond", 150)
+    fw.wait_frames(171)
 
     capture.stop()
     fw.finish()
