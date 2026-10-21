@@ -544,10 +544,13 @@ local is_headless = (canvas == nil)
 -- frame callback, outside the coroutine, every change works. So the test
 -- only marks moments, and the framework makes every speed change itself, in
 -- its frame callback, before it resumes the test: the fast-forward at the
--- start, each moment, fw.finish()'s normal speed (record_test.sh films 3
--- seconds of the final screen), and the older fw.slow_down/fw.speed_up. A
--- moment marked on frame F therefore starts in the window on frame F+1, a
--- sixtieth of a second later.
+-- start, each moment, and fw.finish()'s normal speed (record_test.sh films 3
+-- seconds of the final screen). A moment marked on frame F therefore starts
+-- in the window on frame F+1, a sixtieth of a second later. Moments are the
+-- only way a test slows down, and nothing but this file may set the speed:
+-- check M8 in test/tests/test_recording_moments.lua fails if any other .lua
+-- file under test/ calls emu:setFastForward (or the open-ended
+-- fw.slow_down/fw.speed_up this file used to have, removed by #129).
 --
 -- ONE SPEED PER RUN. Like the results table above, the speed state lives in
 -- a global shared by every copy of this file, so a moment marked by a test
@@ -565,8 +568,6 @@ local function reset_watch(watch)
     watch.normal_until = 0    -- the last frame a moment covers
     watch.moments = 0         -- moments marked
     watch.moment_frames = 0   -- frames moments played, overlaps counted once
-    watch.slowed = false      -- between fw.slow_down and fw.speed_up
-    watch.slowed_frames = 0   -- frames slowed that way, outside any moment
     watch.finishing = false   -- fw.finish() was called: normal speed
     watch.applied = nil       -- the speed last set in the window
 end
@@ -580,7 +581,7 @@ end
 
 -- "normal" or "fast": the speed of the frame the test is on (see above).
 function fw.speed()
-    if watch.finishing or watch.slowed or watch.frame <= watch.normal_until then
+    if watch.finishing or watch.frame <= watch.normal_until then
         return "normal"
     end
     return "fast"
@@ -637,20 +638,6 @@ function fw.show_next(label, frames)
     mark_moment(label, frames)
 end
 
--- The older way to slow down: normal speed from fw.slow_down(reason) until
--- fw.speed_up(). It is kept only until #119's tickets have given every test
--- that calls it moments instead, and then removed. Prefer fw.show and
--- fw.show_next.
-function fw.slow_down(reason)
-    watch.slowed = true
-    fw.log("[SLOW] " .. (reason or "visual inspection"))
-end
-
-function fw.speed_up()
-    watch.slowed = false
-    fw.log("[FAST] resumed fast-forward")
-end
-
 -- Set the window to fw.speed(), if it isn't already. Called only from the
 -- frame callback, before it resumes the test (see WHY A TEST NEVER SETS THE
 -- SPEED ITSELF). emu.setFastForward is a binding added to our patched mGBA:
@@ -671,21 +658,11 @@ end
 -- The [WATCH] total fw.finish() logs: how many moments, and how long the
 -- window played at normal speed for them.
 local function watch_total()
-    local lines = {}
-    if watch.moments > 0 then
-        lines[1] = string.format("[WATCH] %d moment%s, %.1f s at normal speed",
-            watch.moments, watch.moments == 1 and "" or "s", watch.moment_frames / 60)
-    elseif watch.slowed_frames == 0 then
-        lines[1] = "[WATCH] no moments: in the mGBA window this test fast-forwards throughout"
-    else
-        lines[1] = "[WATCH] no moments"
+    if watch.moments == 0 then
+        return "[WATCH] no moments: in the mGBA window this test fast-forwards throughout"
     end
-    if watch.slowed_frames > 0 then
-        lines[#lines + 1] = string.format(
-            "[WATCH] and %.1f s at normal speed between fw.slow_down and fw.speed_up",
-            watch.slowed_frames / 60)
-    end
-    return lines
+    return string.format("[WATCH] %d moment%s, %.1f s at normal speed",
+        watch.moments, watch.moments == 1 and "" or "s", watch.moment_frames / 60)
 end
 
 -------------------------------------------------------------------------------
@@ -781,9 +758,7 @@ function fw.finish()
         summary = "RESULTS: 0 assertions, so the test fails"
     end
 
-    for _, line in ipairs(watch_total()) do
-        fw.log(line)
-    end
+    fw.log(watch_total())
 
     fw.write_results()
     if results.fail > 0 then
@@ -906,8 +881,6 @@ function fw.run(test_fn)
         watch.frame = watch.frame + 1
         if watch.frame <= watch.normal_until then
             watch.moment_frames = watch.moment_frames + 1
-        elseif watch.slowed then
-            watch.slowed_frames = watch.slowed_frames + 1
         end
         if watch.frame > STARTUP_FRAMES then
             apply_speed()
