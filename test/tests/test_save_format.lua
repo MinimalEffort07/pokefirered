@@ -40,23 +40,22 @@
 --   S10  S2's output names `python3 test/tools/save_format.py --write` and
 --        CLAUDE.md's "Breaking changes".
 --
--- SCRATCH TREES: S2 to S9 run the tool on a copy of what it compiles (the
---   repo's include/ folder, made by `mktemp -d`, with tools/agbcc linked in)
---   with one edit made to the copy. The repo's own files are never changed.
---   Each edit is checked to have happened, so a scenario can't pass on an
---   unchanged copy. run_test.sh points TMPDIR at the run's own folder, so
---   mktemp makes the copies there. They are removed at the end; a test that
---   stops early leaves them in its run folder, like its other files.
+-- SCRATCH TREES: S2 to S9 run the tool on a copy of what it compiles, with
+--   one edit made to the copy (test/lib/save_format_tool.lua). Each edit is
+--   checked to have happened, so a scenario can't pass on an unchanged copy.
+--   The repo's own files are never changed: --write goes to a scratch
+--   record. Every run names its save format record with --record, so the
+--   tool checks or writes only that one, never the saved-ID record
+--   (test_save_ids.lua's).
 --
 -- EXIT CODES ARE CHECKED WITH WHAT WAS PRINTED: the tool exits 1 only for
 --   "the save format differs" (a crash is reported as 2, can't run), and
 --   each exit-1 scenario also checks the diff shows its change.
 --
--- HOW A TEST CAN RUN A PROGRAM: mGBA's Lua has the standard io library, so
---   io.popen starts each command as a separate process and reads what it
---   prints; the emulator just waits (no frames pass) until it is done. This
---   test never looks at the game; the ROM boots only because run_test.sh
---   always starts the emulator. Each run of the tool takes about a second.
+-- HOW A TEST CAN RUN A PROGRAM: through io.popen (save_format_tool.lua).
+--   This test never looks at the game; the ROM boots only because
+--   run_test.sh always starts the emulator. Each run of the tool takes about
+--   a second.
 --
 -- Run:
 --   bash test/run_test.sh test/tests/test_save_format.lua
@@ -66,101 +65,23 @@ local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
 local project_dir = script_dir .. "../../"
 local fw = dofile(project_dir .. "test/lib/framework.lua")
 
-local TOOL = project_dir .. "test/tools/save_format.py"
-local RECORD = project_dir .. "test/save_format.txt"
+local tool = dofile(project_dir .. "test/lib/save_format_tool.lua")
 
--- `s` in single quotes, safe to paste into a shell command.
-local function sh_quote(s)
-    return "'" .. s:gsub("'", "'\\''") .. "'"
-end
+local RECORD = tool.FORMAT_RECORD
+local run_tool, expect_exit, has = tool.run_tool, tool.expect_exit, tool.has
+local read_file, write_file = tool.read_file, tool.write_file
+local scratch_tree, replace_once = tool.scratch_tree, tool.replace_once
 
--- Run shell command `cmd`. Returns its exit code and everything it printed
--- (stdout and stderr together).
-local function run(cmd)
-    local pipe = io.popen(cmd .. " 2>&1", "r")
-    if pipe == nil then
-        fw.log_error("io.popen failed for: " .. cmd)
-        return nil, ""
-    end
-    local output = pipe:read("a") or ""
-    -- close() on a popen'd file returns (true|nil, "exit"|"signal", code).
-    local _, _, code = pipe:close()
-    return code, output
-end
-
--- The repo's full path: a link in a scratch tree must not be relative.
-local REPO_PATH = select(2, run("cd " .. sh_quote(project_dir) .. " && pwd")):match("^(%S+)")
-
--- Run the tool with `args` (already quoted). Returns its exit code and output.
-local function run_tool(args)
-    return run("python3 " .. sh_quote(TOOL) .. (args and (" " .. args) or ""))
-end
-
--- Check that the tool exited with `want`; if not, show what it printed, one
--- log line per line (run_test.sh shows only lines mGBA starts with
--- "Scripting:", so the rest of a multi-line message would be lost).
-local function expect_exit(code, output, want, what)
-    fw.assert_eq(code, want, what .. ": exit code")
-    if code ~= want then
-        fw.log_error(what .. ": the tool printed:")
-        for line in output:gmatch("[^\n]+") do
-            fw.log_error("  " .. line)
-        end
-    end
-end
-
-local function read_file(path)
-    local f = io.open(path, "r")
-    if not f then return nil end
-    local text = f:read("a")
-    f:close()
-    return text
-end
-
-local function write_file(path, text)
-    local f = io.open(path, "w")
-    if not f then
-        fw.log_error("can't write " .. path)
-        return
-    end
-    f:write(text)
-    f:close()
-end
-
--- Does `text` contain `s`, as plain text?
-local function has(text, s)
-    return text:find(s, 1, true) ~= nil
+-- The tool's arguments to check scratch tree `tree` (nil: the repo) against
+-- the repo's save format record, or the scratch one at `record`: only that
+-- record, so the saved IDs (test_save_ids.lua's) never decide the outcome.
+local function on_tree(tree, record)
+    return tool.on_tree(tree, { format = record or RECORD })
 end
 
 -------------------------------------------------------------------------------
--- Scratch trees
+-- Editing scratch trees, reading records
 -------------------------------------------------------------------------------
-
--- Every folder made, removed at the end.
-local scratch_dirs = {}
-
--- A new empty folder, from `mktemp -d`.
-local function scratch_dir()
-    local _, output = run("mktemp -d")
-    local dir = output:match("^(%S+)")
-    fw.assert_true(dir ~= nil, "mktemp -d made a folder")
-    table.insert(scratch_dirs, dir)
-    return dir
-end
-
--- A scratch tree: a copy of the repo's include/ folder, with tools/agbcc
--- linked to the repo's own (unless `with_agbcc` is false). Returns its path.
-local function scratch_tree(with_agbcc)
-    local dir = scratch_dir()
-    local code = run("cp -R " .. sh_quote(project_dir .. "include") .. " " .. sh_quote(dir .. "/include"))
-    fw.assert_eq(code, 0, "copied include/ into a scratch tree")
-    if with_agbcc ~= false then
-        code = run("mkdir " .. sh_quote(dir .. "/tools") .. " && ln -s "
-            .. sh_quote(REPO_PATH .. "/tools/agbcc") .. " " .. sh_quote(dir .. "/tools/agbcc"))
-        fw.assert_eq(code, 0, "linked tools/agbcc into a scratch tree")
-    end
-    return dir
-end
 
 -- In `tree`'s copy of `header` (a path under include/), change the body of
 -- `struct name` (from its "{" to its "};") with `change`, a function from
@@ -179,20 +100,6 @@ local function edit_struct(tree, header, name, change, what)
     local new_body = change(body)
     fw.assert_true(new_body ~= nil and new_body ~= body, what .. ": the edit changed struct " .. name)
     write_file(path, text:sub(1, body_start - 1) .. (new_body or body) .. text:sub(body_end + 1))
-end
-
--- `body` with plain text `old` replaced by `new`, or nil unless `old` is in
--- it exactly once.
-local function replace_once(body, old, new)
-    local at = body:find(old, 1, true)
-    if not at or body:find(old, at + 1, true) then return nil end
-    return body:sub(1, at - 1) .. new .. body:sub(at + #old)
-end
-
--- The tool's arguments to check scratch tree `tree`, against `record`
--- (default: the repo's record).
-local function on_tree(tree, record)
-    return "--root " .. sh_quote(tree) .. (record and (" --record " .. sh_quote(record)) or "")
 end
 
 -- The lines of a unified diff in `output` that start with `sign` ("+" or
@@ -233,7 +140,7 @@ end
 -- Write scratch tree `tree`'s save format into a scratch record and return
 -- that record's sections.
 local function tree_sections(tree, what)
-    local record = scratch_dir() .. "/save_format.txt"
+    local record = tool.scratch_record("save_format.txt")
     local code, output = run_tool("--write " .. on_tree(tree, record))
     expect_exit(code, output, 0, what .. ": --write")
     return sections_of(read_file(record) or "")
@@ -253,9 +160,10 @@ end
 
 fw.run(function()
     fw.log("=== S1: the repo as committed matches test/save_format.txt ===")
-    local code, output = run_tool()
+    local code, output = run_tool(on_tree(nil))
     expect_exit(code, output, 0, "S1 the repo")
     fw.assert_true(has(output, "test/save_format.txt"), "S1 the output names test/save_format.txt")
+    fw.assert_true(not has(output, "saved IDs"), "S1 given only --record, the tool checks only the save format")
 
     fw.log("=== S2: a u8 inserted before SaveBlock2's playerGender ===")
     local s2_tree = scratch_tree()
@@ -346,13 +254,14 @@ fw.run(function()
     expect_exit(code, output, 0, "S7 not saved")
 
     fw.log("=== S8: --write round-trips ===")
-    local s8_record = scratch_dir() .. "/save_format.txt"
+    local s8_record = tool.scratch_record("save_format.txt")
     code, output = run_tool("--write " .. on_tree(s2_tree, s8_record))
     expect_exit(code, output, 0, "S8 --write on the S2 tree")
+    fw.assert_true(not has(output, "saved IDs"), "S8 given only --record, --write writes only that record")
     code, output = run_tool(on_tree(s2_tree, s8_record))
     expect_exit(code, output, 0, "S8 the S2 tree against the record --write gave it")
-    local repo_record = scratch_dir() .. "/save_format.txt"
-    code, output = run_tool("--record " .. sh_quote(repo_record) .. " --write")
+    local repo_record = tool.scratch_record("save_format.txt")
+    code, output = run_tool("--write " .. on_tree(nil, repo_record))
     expect_exit(code, output, 0, "S8 --write on the repo")
     local written, committed = read_file(repo_record), read_file(RECORD)
     fw.assert_true(written ~= nil and written == committed,
@@ -364,15 +273,7 @@ fw.run(function()
     expect_exit(code, output, 2, "S9 no agbcc")
     fw.assert_true(has(output, "agbcc"), "S9 the output names agbcc")
 
-    -- Remove the scratch folders. Each is checked to be one mktemp made (a
-    -- full path whose last name is tmp. and ten letters or digits), so a
-    -- mistake here can never remove anything else.
-    for _, dir in ipairs(scratch_dirs) do
-        local name = dir:match("^/.+/([^/]+)$")
-        if name and name:match("^tmp%.%w+$") then
-            os.execute("rm -rf " .. sh_quote(dir))
-        end
-    end
+    tool.remove_scratch()
 
     fw.finish()
 end)
