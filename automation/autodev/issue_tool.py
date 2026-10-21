@@ -181,13 +181,13 @@ def open_pr(gh, config, ticket, title, head, body):
         raise Refused("the PR body may close only #%d, but a closing keyword "
                       "also names %s; reword it (e.g. \"see #N\")" % (
                           ticket, ", ".join("#%d" % n for n in others)))
-    # A branch that changes the save format record is a breaking change,
-    # which the owner approves with /merge breaking after reading this
-    # section (CLAUDE.md, "Breaking changes"). The pushed branch is what's
-    # compared, with where it left master. A section the record doesn't call
-    # for is fine: some breaks only a session can see. A branch GitHub can't
-    # list in full is checked as far as it lists; the dispatcher counts it
-    # as breaking anyway.
+    # A branch that changes the save format record, or removes a line from
+    # the saved-ID record, is a breaking change, which the owner approves
+    # with /merge breaking after reading this section (CLAUDE.md, "Breaking
+    # changes"). The pushed branch is what's compared, with where it left
+    # master. A section the records don't call for is fine: some breaks only
+    # a session can see. A branch GitHub can't list in full is checked as
+    # far as it lists; the dispatcher counts it as breaking anyway.
     reason = record_change(changed_files(gh, config.repo, head))
     if reason and not BREAKING_CHANGE.search(prose(body)):
         raise Refused(
