@@ -74,9 +74,11 @@ local walk = dofile(script_dir .. "walk.lua")
 
 local pr = {}
 
--- Struct offsets. The `unused_348C` field is misnamed — despite what the
--- comment in include/global.h says, MysteryGiftSave grew by 40 bytes at some
--- point and the slack region actually starts at 0x34B4. src/poke_radar.c
+-- Struct offsets. The `unused_348C` field's name gives its offset in vanilla
+-- FireRed; here the slack region starts at 0x34B4, 0x28 bytes later, because
+-- the quick-select change (48ef17586) grew SaveBlock1's registeredItem into
+-- registeredItems[20], which moved everything from pcItems on.
+-- test/save_format.txt records the real layout, and src/poke_radar.c
 -- carries a STATIC_ASSERT that pins this to 0x34B4, so if a future refactor
 -- breaks it the build will fail before the test runs.
 pr.OFF_UNUSED_348C       = 0x34B4  -- inside SaveBlock1

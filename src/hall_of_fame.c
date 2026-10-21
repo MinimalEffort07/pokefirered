@@ -53,36 +53,8 @@
 #include "constants/songs.h"
 #include "constants/maps.h"
 
-/* Maximum number of Hall of Fame entries stored in flash memory.
- * After 50 entries, old ones are overwritten. */
-#define HALL_OF_FAME_MAX_TEAMS 50
 /* The muted blue-gray background color for the Hall of Fame screen. */
 #define HALL_OF_FAME_BG_PAL    RGB(22, 24, 29)
-
-/**
- * HallofFameMon — data stored for each Pokemon in a Hall of Fame entry.
- *
- * Uses bitfields to pack species (9 bits = 0-511, enough for Gen 3's 386
- * species) and level (7 bits = 0-127, enough for max level 100) into a
- * single 16-bit word, saving precious flash storage space.
- */
-struct HallofFameMon
-{
-    u32 tid;                           /* Original Trainer ID (for shiny check) */
-    u32 personality;                   /* Personality value (for sprite variant) */
-    u16 species:9;                     /* Bitfield: Pokemon species (0-511) */
-    u16 lvl:7;                         /* Bitfield: Pokemon level (0-127) */
-    u8 nick[POKEMON_NAME_LENGTH];      /* Nickname string */
-};
-
-/**
- * HallofFameTeam — one complete team entry (up to 6 Pokemon).
- * Multiple of these are stored sequentially in flash memory.
- */
-struct HallofFameTeam
-{
-    struct HallofFameMon mon[PARTY_SIZE];
-};
 
 /* Compile-time check that all 50 teams fit within the flash sectors
  * allocated for Hall of Fame data. If this fails, the storage is too small. */
