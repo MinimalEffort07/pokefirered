@@ -13,6 +13,37 @@ Pokemon FireRed decompilation (forked from pret/pokefirered) with custom feature
 - **What the suite checks.** `test/tests/test_system_map.lua` fails when a script is missing from the map, or when the map names a file that doesn't exist. A script is any `.sh`, `.py`, `.pl` or `.lua` file directly in the top level, `.github/calcrom/`, `automation/`, `automation/bin/`, `automation/autodev/`, `test/`, `test/lib/` or `test/tools/`. Whether each line still says what its script does is for the code review (step 10).
 - **Every PR says what changes for the owner.** Its body has a `## What changes for you` section (step 11). `issue.py open-pr` refuses an autodev PR body without one.
 
+## Breaking changes
+
+A **breaking change** is any change to the save format, even one old saves survive, or anything else that stops something made before from working the way it did. It covers:
+1. **The save format**: the layout of everything the game writes to flash.
+   - `struct SaveBlock1`, `struct SaveBlock2` and `struct PokemonStorage`, and every type inside them: party and box Pokémon, object events, items, mail, the quest log and the rest.
+   - The Hall of Fame (`struct HallofFameTeam`) and the Trainer Tower e-Reader data (`struct EReaderTrainerTowerSet`).
+   - The flash sector (`struct SaveSector`, its signature and its sizes).
+   - Any struct laid over reserved bytes (`struct PokeRadar` over `unused_348C`).
+
+   Giving reserved or filler bytes a use, renaming a member and growing a struct at its end all count. So does a change to how `src/save.c` and `src/load_save.c` write and read the save: the sector table, the checksum, which fields are encrypted, and what loading does to old data.
+2. **A saved ID changing meaning**: renumbering or removing a flag, var, item, species, move, map, layout, map section, trainer, object-event graphics ID, object local ID or game stat. Adding one at a free number isn't breaking, nor is giving a placeholder flag or var (`FLAG_0x…`, `VAR_0x…`) its first use.
+3. **A saved value meaning something else**: what a var holds, the Poke Radar state, the player's graphics ID.
+4. **The multiplayer link**: what two GBAs send each other (`src/multiplayer.c`). Builds from either side of a change must still play together.
+5. **What this machine keeps**: recording notes files in `~/recordings`, autodev's session records and `paused-until`, and `automation/config.json`. Newer code must still read what older code wrote.
+6. **What autodev reads back from GitHub**: its comment markers, the `## Parent` and `## Blocked by` headings, the board's Status names, branch names and the PR comment commands.
+7. **What the owner types**: removing or renaming a command, option, make target, environment variable or comment command that the README, the system map or this file documents.
+
+**Not breaking:** adding something new; a change that still reads the old form, or converts it; mGBA savestates and other test fixtures (each is good only for the build that made it); the addresses tests hard-code; memory that isn't saved; the ROM's own layout; a refactor that behaves the same; Mt. Moon building a different cave from the same seed (Continue rebuilds the cave from the saved seed, and the safety net, S9, moves the player onto floor).
+
+**Prefer the compatible way**: reserved bytes, a free flag or var, a new ID at the end of its list, code that reads both the old and the new form. Only when there's none is it a breaking change. Then the design, the ticket and the PR all say so (step 11), and **it merges only with the owner's explicit approval**.
+
+**Autodev's rule: a breaking PR merges only on the owner's exact `/merge breaking`.**
+- **Which PRs count**, compared with master on GitHub: one that changes `test/save_format.txt` in any way, one whose files GitHub can't all list, and one whose body or one of the bot's replies on it has a `## Breaking change` heading outside code. Only a breaking PR carries that heading; any other PR may say "Breaking change: none." as plain text.
+- **A plain `/merge`** on one starts no session: the dispatcher replies on the PR, saying why it is breaking and to comment `/merge breaking`.
+- **`issue.py`** backs it up: `open-pr` refuses a branch that changes the record without a `## Breaking change` section, and `merge-pr` checks again on the commit it merges.
+
+**The save format record.** `test/save_format.txt` is the save format exactly as agbcc lays it out: every struct, union, enum and typedef a save holds, with each member's offset and type, and the flash format's constants. `test/tools/save_format.py` writes it, and checks the tree against it; `test/tests/test_save_format.lua` fails the suite when they differ.
+- **The record changes only through `python3 test/tools/save_format.py --write`**, never by hand, and only for a breaking change, committed in the PR that declares it.
+- **A merge conflict in the record** is resolved by running `--write` on the merged tree.
+- **A new struct laid over reserved bytes** joins the tool's `ROOTS` in the same PR, so the record covers it.
+
 ## Build Commands
 
 Targets live in `Makefile`; variable defaults live in `config.mk`. Add `-j$(nproc)` to any build.
@@ -67,6 +98,7 @@ Finer-grained cleans: `clean-tools`, `clean-generated` (headers generated from J
 - **One test:** `bash test/run_test.sh test/tests/<test>.lua` exits 0 = pass, 1 = fail, 124 = timed out (`MGBA_TEST_TIMEOUT`, default 60 s). Each run writes to its own `mktemp` folder, printed as `Output:`, so runs can go in parallel.
 - **Whole suite:** `bash test/run_suite.sh` is the merge gate. It runs every top-level `test/tests/*.lua` 4 at a time, each with `MGBA_TEST_TIMEOUT=1500`, and exits 0 only if every test it ran passed; the whole run takes about 10 minutes. Its summary gives each test's result and seconds; failing and timed-out runs keep their folder (with `run_test.log`), passing runs' folders are deleted. Name test files to run a subset (exclusions still apply); `--help` lists the options.
 - **Exclusions:** `test/suite_exclude.txt` lists the tests the suite skips, one per line: the test name, then a one-line reason. Every exclusion needs a reason and must name an existing test; the suite refuses to start on a line that breaks either rule. Exclude only a test that needs a fixture made by hand or makes no assertions (a demo or probe declaring `fw.allow_no_assertions`); a failing test gets fixed.
+- **Moments:** in the mGBA window (a recording) a test fast-forwards except at its moments, which it marks with `fw.show`/`fw.show_next` and which play at normal speed for about a second. A test never sets the speed itself. The README's "Tests" section says how to use them and where they go.
 - The README's "Tests" section has the framework rules (a test with zero assertions fails). `test/tests/test_run_suite.lua` and `test_framework_rules.lua` test the runners themselves.
 
 ## Toolchain Requirements
@@ -202,7 +234,9 @@ Their PR says "No recording: no in-game behaviour changes." and the rest of this
 
 In a session autodev started, `record_test.sh` backs the rule up: it refuses to record (and so does `--check`) when the branch changes no file the ROM is built from. That is every file that differs from where the branch left master (`git merge-base HEAD origin/master`): commits, staged and unstaged edits, untracked new files, deletions and renames. The game is anything under `src/`, `include/`, `asm/`, `data/`, `graphics/`, `sound/`, `constants/` or `tools/`, plus the top-level `Makefile`, `config.mk`, `*.mk`, `ld_script*.ld`, `sym_*.txt` and `charmap.txt`. With no `origin/master` or no commit shared with it, it can't tell, so it refuses too. It judges paths, not the screen: a `src/` change you can't see, such as a refactor, gets past it, and the rule above still says not to record it. Your own recordings are never refused.
 
-For a change you can see, write the recording's notes first, then record with them on stdin (`--notes -`), as a heredoc:
+For a change you can see, first check that the test marks its moments (`fw.show`, `fw.show_next`; the README's "Tests" section has the rule for where they go). If it has none, add them: otherwise the whole video fast-forwards and its outcomes flash by. `bash test/run_test.sh` on it shows them as `[WATCH]` lines and their total.
+
+Then write the recording's notes, and record with them on stdin (`--notes -`), as a heredoc:
 ```bash
 bash test/record_test.sh --notes - test/tests/<relevant_test>.lua <<'EOF'
 ticket: <T> <the ticket's title>
@@ -219,7 +253,7 @@ EOF
 The notes are for the owner, who watches the video on their phone, so write them in plain words:
 - **What's tested:** the scenarios the test plays, in more detail than the test's name.
 - **The problem:** what was wrong or missing before the change.
-- **What you should see:** the moments to watch for, in order, and roughly when in a long video ("about 40 s in, the BAG closes and the same four patches still shake").
+- **What you should see:** the test's moments, in order, with roughly when each comes ("about 40 s in, the BAG closes and the same four patches still shake").
 
 Leave `pr:` out: the PR doesn't exist yet, so step 11 adds its number. `record_test.sh` checks the notes before it starts (`--check` only checks). Its last two lines are the `mv` that keeps the video and its notes file in `~/recordings/`, and the recording's own page. Run that `mv`, and keep the page's link for the PR.
 
@@ -227,7 +261,7 @@ Leave `pr:` out: the PR doesn't exist yet, so step 11 adds its number. `record_t
 Add or update the feature description and include a demo GIF if the feature has visible in-game behaviour. Update `docs/SYSTEM_MAP.md` too when the change touches anything on it (see "System map").
 
 **10. Code review**
-Invoke the `mattpocock-skills:code-review` skill against `master` and address its findings. Give the review this file's "System map" section as one of its standards: `docs/SYSTEM_MAP.md` must still describe everything the change touched.
+Invoke the `mattpocock-skills:code-review` skill against `master` and address its findings. Give the review this file's "System map" and "Breaking changes" sections as standards: `docs/SYSTEM_MAP.md` must still describe everything the change touched, and a breaking change the PR doesn't declare is a finding.
 
 **11. Create a PR**
 
@@ -235,6 +269,8 @@ Invoke the `mattpocock-skills:code-review` skill against `master` and address it
 gh pr create --title "Fix #<T>: <short description>" --body "..."
 ```
 PR body must reference the ticket and parent issue numbers, summarise what changed, and list what was tested. It also has a `## What changes for you` section: two or three plain sentences telling the owner what is different for them, such as a new command, a new board behaviour, a new rule for tests or a feature to try. When nothing is, it says `Nothing: internal only.`
+
+A PR that is a breaking change (see "Breaking changes") also has a `## Breaking change` section. It says what stops working and what happens to a save made before, why there was no compatible way, and what the owner should do, and ends "Comment `/merge breaking` to approve it." Its "What changes for you" says so too.
 
 With a recording, the PR body links each recording's own page: one `Recording: http://100.76.129.86:8080/r/<name>` line per recording, with `<name>` as `record_test.sh` printed it. Once the PR exists and you know its number, put it into each recording's notes, so its card links the PR:
 ```bash
@@ -257,6 +293,8 @@ After creating the PRs, stop. The user will review them. Only run the merge comm
 gh pr merge <PR-number>
 ```
 Do **not** squash commits (`--squash`). Preserve the full commit history from the branch.
+
+A breaking PR (see "Breaking changes") merges only when the owner approves it as one: in autodev, only on their exact `/merge breaking`.
 
 **13. After merging — close the ticket, sync master, advance the frontier**
 After a PR is merged, close its ticket and sync master:
@@ -311,13 +349,13 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - **GitHub access:** only through autodev's own copy of `automation/bin/issue.py`, in its clone. Your prompt gives its full path. Don't run your worktree's copy: it's your branch's version. Plain `gh` is denied, and the tool shows only text by the owner or the bot.
   - `read <number>` shows an issue or PR and its comments. Read the ticket, its parent and the parent's design comment, including the owner's comments on the ticket, before starting.
   - `comment` comments on your ticket.
-  - `open-pr --title "Fix #<T>: …"` opens your PR into master from the branch checked out here, with the body on stdin. It refuses a body without Fixes #<T> and @MinimalEffort07 written as plain text: GitHub ignores both inside code, so the ticket wouldn't close and the owner wouldn't be notified. It also refuses a body without a `## What changes for you` section (step 11).
+  - `open-pr --title "Fix #<T>: …"` opens your PR into master from the branch checked out here, with the body on stdin. It refuses a body without Fixes #<T> and @MinimalEffort07 written as plain text: GitHub ignores both inside code, so the ticket wouldn't close and the owner wouldn't be notified. It also refuses a body without a `## What changes for you` section (step 11), and, when your branch changes `test/save_format.txt`, one without a `## Breaking change` section with text under it (step 11).
 - Run `bash test/run_suite.sh` before opening the PR. It takes about 10 minutes, and longer while another session runs its own, which is more than one foreground command may run. So start it in the background with its output in a log file, and before opening the PR wait for it to finish with a loop on that log (e.g. `until grep -q "^SUITE" suite.log; do sleep 15; done`).
 - Report your result once, at the very end, after every step has finished. Never report while a command is still running.
 - Record only a change you can see in the game (step 8). In your session `record_test.sh` (`--check` too) refuses when your branch changes no file the ROM is built from, and its message says what to do instead. When your ticket's acceptance criteria ask for a recording that the rule or that refusal rules out, leave the recording out, say "No recording: no in-game behaviour changes." in the PR, name the criterion there, and carry on: that isn't a failure, because the rule is newer than any ticket written before it.
 - `record_test.sh` waits for any other recording on the machine to finish (it takes a machine-wide lock itself), so a recording may start late.
 - Every recording you make has notes (step 8). In an autodev session, `record_test.sh` refuses to record without them, and refuses notes whose `ticket:` isn't your ticket or that have no `parent:` (your ticket's `## Parent`). Your settings deny any command naming the session variables, heredocs included, so if your notes must name them, write the notes to a file with the Write tool and pass `--notes FILE`.
-- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the tests run with the suite result, the "Branch README" line, the "Recordings available at…" lines with a `Recording: http://100.76.129.86:8080/r/<name>` line under them for each recording only when there are any (otherwise "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
+- The PR body carries Fixes #<T>, Part of #<parent>, a summary, the "What changes for you" section (step 11), the `## Breaking change` section only when the PR is a breaking change (step 11), the tests run with the suite result, the "Branch README" line, the "Recordings available at…" lines with a `Recording: http://100.76.129.86:8080/r/<name>` line under them for each recording only when there are any (otherwise "No recording: no in-game behaviour changes."), and an @mention of @MinimalEffort07.
 - `open-pr` prints the PR's number (`#97 <its URL>`). Then run `python3 test/tools/recording_notes.py set-pr <name> <PR>` for each recording (step 11).
 - Push only your own branch: `git push -u origin issue-<T>-<slug>`. Never push to master, force-push or merge.
 - If you can't finish, push the unfinished branch before reporting `failed`.
@@ -330,24 +368,26 @@ Autodev (`automation/`, design on #48) runs this workflow with nobody watching. 
 - Address every unhandled comment from the owner up to and including the one your prompt names, in one pass. Leave newer ones alone: they get a follow-up session.
 - For each change: TDD, a clean build, `cd automation && python3 -m unittest` if `automation/` changed, the README and `docs/SYSTEM_MAP.md` if they describe what changed, and a fresh recording only if the change makes something on the GBA screen look or behave differently (step 8). `record_test.sh` refuses to record when the branch changes no file the ROM is built from; when the owner asks for a recording that it refuses, leave the recording out, say so in your reply, and carry on rather than fail. A fresh recording gets notes too (step 8), and its PR's number is filled in by itself, so it needs no `set-pr`; link its page in your reply with a `Recording:` line. Then run `bash test/run_suite.sh` in the background and wait on its log, as in the ticket role.
 - A comment that only asks a question needs no change: answer it in the reply.
+- A fix-up that makes the PR a breaking change (see "Breaking changes") gives its reply a `## Breaking change` section, as step 11 describes for the PR body, which you can't edit. Autodev then merges the PR only on the owner's `/merge breaking`.
 - Push only your own branch (`git push origin <the PR's branch>`), then `pr-comment` what you did about each comment (and, if that changes what's different for the owner, an updated "What changes for you"), @mentioning @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it). Report `done` once the reply is posted.
 - Never merge master in (the merge session does that), merge, squash, rebase or force-push.
 - If you can't finish, push what you have before reporting `failed`.
 
-**Merge role** (the owner commented `/merge`; added by #57):
+**Merge role** (the owner commented `/merge` or `/merge breaking`; added by #57):
 - The dispatcher runs you in the ticket's worktree, on the PR's branch.
 - **GitHub access:** only through autodev's own copy of `automation/bin/issue.py`; your prompt gives its full path. Plain `gh` is denied.
   - `read <number>` shows the ticket or the PR.
   - `pr-comment` replies on your PR, with the body on stdin. It adds the handled-through marker naming the `/merge` you answer.
-  - `merge-pr` merges your PR with a merge commit of the commit checked out here. It refuses if that commit isn't pushed, or if it doesn't hold all of master.
+  - `merge-pr` merges your PR with a merge commit of the commit checked out here. It refuses if that commit isn't pushed, if it doesn't hold all of master, or if the PR is a breaking change (see "Breaking changes") and the comment you answer is a plain `/merge`, not `/merge breaking`.
 - First bring the branch up to date: `git pull --ff-only`, then `git fetch origin` and `git merge origin/master`.
 - **No conflict:** on that exact tree, build (`make -j$(nproc) firered`), run `cd automation && python3 -m unittest`, and run `bash test/run_suite.sh` in the background, waiting on its log as in the ticket role.
   - If everything passes: `git push origin <the PR's branch>`, then `merge-pr`. If `merge-pr` says master has moved on, merge it in again and repeat. If GitHub says the PR can't be merged yet (it briefly can't right after a push), wait a minute and try once more.
   - If `merge-pr` says the `/merge` no longer stands (the owner has said more since, or deleted it), don't merge: report `failed` with that reason. The dispatcher sends the PR back to review, where a fix-up handles any feedback.
+  - If `merge-pr` says the PR is a breaking change and the `/merge` it answers is a plain one, don't merge and don't reply: report `failed` with that reason. The dispatcher sends the PR back to review and explains to the owner.
   - If anything fails: push nothing, and report `failed` with the output.
-- **A conflict:** resolve it on the branch, keeping both sides' intent and the ticket's acceptance criteria. Then build and test as above, commit, and `git push origin <the PR's branch>`.
-  - Then `pr-comment` exactly how you resolved each conflict: the file, what each side had, and what you kept. @mention @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it).
-  - Then report `done`. Don't merge: the owner's fresh `/merge` approves your resolution and starts a new merge session.
+- **A conflict:** resolve it on the branch, keeping both sides' intent and the ticket's acceptance criteria. A conflict in `test/save_format.txt` is resolved by running `python3 test/tools/save_format.py --write` on the merged tree. Then build and test as above, commit, and `git push origin <the PR's branch>`.
+  - Then `pr-comment` exactly how you resolved each conflict: the file, what each side had, and what you kept. @mention @MinimalEffort07 as plain text, not in code (`pr-comment` refuses a reply without it). On a breaking PR, the reply says it needs a fresh `/merge breaking`.
+  - Then report `done`. Don't merge: the owner's fresh `/merge` (on a breaking PR, `/merge breaking`) approves your resolution and starts a new merge session.
 - Never squash, rebase or force-push. The PR's Fixes #<T> line closes the ticket when it merges. The dispatcher then marks the ticket `Done` and removes the worktree.
 
 ## Coding Conventions

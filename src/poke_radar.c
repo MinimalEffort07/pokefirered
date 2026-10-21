@@ -150,10 +150,11 @@
  * fails, the test's pointer math will drift from the running ROM and every
  * struct read will return stale bytes.
  *
- * The field's name (`unused_348C`) implies offset 0x348C, but that comment in
- * include/global.h is stale — MysteryGiftSave grew by 40 bytes at some point
- * and the surrounding struct layout was never renamed. The real runtime
- * offset is 0x34B4. */
+ * The field's name (`unused_348C`) gives its offset in vanilla FireRed,
+ * 0x348C. Here it is 0x34B4, 0x28 bytes later: the quick-select change
+ * (48ef17586) grew SaveBlock1's registeredItem into registeredItems[20],
+ * which moved everything from pcItems on, and the field was never renamed.
+ * test/save_format.txt records the real layout. */
 STATIC_ASSERT(sizeof(struct PokeRadar) <= sizeof(((struct SaveBlock1 *)0)->unused_348C),
               PokeRadarFitsInSlack);
 STATIC_ASSERT(offsetof(struct SaveBlock1, unused_348C) == 0x34B4,

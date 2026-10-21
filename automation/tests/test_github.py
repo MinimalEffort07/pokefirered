@@ -88,6 +88,19 @@ class SubIssues(unittest.TestCase):
                          {98: False, 99: True})
 
 
+class FailingRest(FakeRest):
+    """FakeRest whose GET of `failing` fails as gh reports it."""
+
+    def __init__(self, gets, failing):
+        super().__init__(gets)
+        self.failing = failing
+
+    def rest(self, method, path, **fields):
+        if method == "GET" and path == self.failing:
+            raise GhError("HTTP 500: this diff is taking too long to generate")
+        return super().rest(method, path, **fields)
+
+
 class RefusingGh:
     """GraphQL that refuses every change with `message`, as gh reports it."""
 
@@ -121,9 +134,24 @@ PULLS = "repos/MinimalEffort07/pokefirered/pulls?state=open"
 
 
 def pr(number, ref, author="MinimalEffort07-Autodev",
-       repo="MinimalEffort07/pokefirered", created="2026-10-19T05:00:00Z"):
+       repo="MinimalEffort07/pokefirered", created="2026-10-19T05:00:00Z",
+       body="Fixes #68", sha="abc123"):
     return {"number": number, "user": {"login": author}, "created_at": created,
-            "head": {"ref": ref, "repo": {"full_name": repo} if repo else None}}
+            "body": body, "head": {"ref": ref, "sha": sha,
+                                   "repo": {"full_name": repo} if repo else None}}
+
+
+# What GitHub's compare says commit abc123 changes since it left master.
+COMPARE = "repos/MinimalEffort07/pokefirered/compare/master...abc123"
+
+
+def changes(*files):
+    """A compare response listing `files`: names, or GitHub's own records."""
+    return {"files": [f if isinstance(f, dict) else {"filename": f, "status": "modified"}
+                      for f in files]}
+
+
+NOTHING_BREAKS = {COMPARE: changes("automation/README.md")}
 
 
 class TicketPRs(unittest.TestCase):
@@ -171,7 +199,7 @@ class TicketPRTimeline(unittest.TestCase):
 
     def test_comments_reviews_and_inline_comments_come_in_time_order(self):
         gets = {
-            PULLS: [pr(73, "issue-68-note")],
+            PULLS: [pr(73, "issue-68-note")], **NOTHING_BREAKS,
             ISSUES + "/73/comments": [
                 remark(1, "MinimalEffort07", "/merge", "2026-10-19T06:05:00Z")],
             PR73 + "/reviews": [
@@ -203,7 +231,7 @@ class TicketPRTimeline(unittest.TestCase):
         # Until then only the owner could see it, and it keeps the time it
         # was drafted: it would sort before a comment a reply has handled
         # since, and never be acted on.
-        gets = {PULLS: [pr(73, "issue-68-note")], **timeline(
+        gets = {PULLS: [pr(73, "issue-68-note")], **NOTHING_BREAKS, **timeline(
             reviews=[remark(7, "MinimalEffort07", "", "2026-10-19T06:30:00Z",
                             when="submitted_at")],
             inline_comments=[inline(5, "MinimalEffort07", "Typo",
@@ -215,6 +243,88 @@ class TicketPRTimeline(unittest.TestCase):
     def test_a_ticket_with_no_pr_of_its_own_has_none(self):
         github = GitHub(FakeRest({PULLS: [pr(93, "issue-680-other")]}), CONFIG, BOARD)
         self.assertIsNone(github.ticket_pr(68))
+
+
+SECTION = ("## Breaking change\n\nA save made before loses its PC items. "
+           "Comment `/merge breaking` to approve it.")
+
+
+class BreakingPRs(unittest.TestCase):
+    """B9: which ticket PRs merge only on the owner's exact /merge breaking
+    (CLAUDE.md, "Breaking changes"), and why, as the tick reads them."""
+
+    def breaking(self, compare=None, body="Fixes #68", comments=()):
+        gets = {PULLS: [pr(73, "issue-68-note", body=body)],
+                COMPARE: changes("automation/README.md") if compare is None else compare,
+                **timeline(comments)}
+        return GitHub(FakeRest(gets), CONFIG, BOARD).ticket_pr(68).breaking
+
+    def test_a_pr_that_changes_the_save_format_record_in_any_way_is_breaking(self):
+        record = "test/save_format.txt"
+        for change in [{"filename": record, "status": status}
+                       for status in ("added", "modified", "removed")] + [
+                {"filename": record, "status": "renamed",
+                 "previous_filename": "test/old_format.txt"},
+                {"filename": "test/old_format.txt", "status": "renamed",
+                 "previous_filename": record}]:
+            with self.subTest(change=change):
+                self.assertEqual(self.breaking(changes("README.md", change)),
+                                 "it changes `test/save_format.txt`")
+
+    def test_a_pr_that_leaves_the_record_alone_breaks_nothing(self):
+        self.assertEqual(self.breaking(changes(
+            "test/tools/save_format.py", "test/tests/test_save_format.lua",
+            {"filename": "test/save_format.txt.orig", "status": "added"})), "")
+
+    def test_a_pr_whose_files_github_cant_all_list_is_breaking(self):
+        # The compare lists at most 300 files, so 300 may not be all.
+        many = ["src/file_%d.c" % n for n in range(300)]
+        cant_tell = ("GitHub can't list all of its changed files, so autodev "
+                     "can't tell whether it changes `test/save_format.txt`")
+        for compare in (changes(*many), {"files": None}, {}):
+            with self.subTest(files=len(compare.get("files") or [])):
+                self.assertEqual(self.breaking(compare), cant_tell)
+        # One it could list says more.
+        self.assertEqual(self.breaking(changes(*many[1:] + ["test/save_format.txt"])),
+                         "it changes `test/save_format.txt`")
+        # Nor can it when the compare fails (a diff too big to work out, or
+        # GitHub having a bad minute): the PR is still answered, as breaking,
+        # rather than dropped from the tick.
+        gets = {PULLS: [pr(73, "issue-68-note")], **timeline()}
+        github = GitHub(FailingRest(gets, COMPARE), CONFIG, BOARD)
+        self.assertEqual(github.ticket_pr(68).breaking, cant_tell)
+
+    def test_a_breaking_change_section_in_its_body_or_a_bot_reply_is_breaking(self):
+        self.assertEqual(self.breaking(body="Fixes #68\n\n" + SECTION),
+                         "its body has a Breaking change section")
+        for kind in ("comments", "reviews"):
+            with self.subTest(kind=kind):
+                reply = remark(9, "MinimalEffort07-Autodev",
+                               "Did it.\n\n" + SECTION, "2026-10-19T06:01:00Z",
+                               when="created_at" if kind == "comments" else "submitted_at")
+                gets = {PULLS: [pr(73, "issue-68-note")], COMPARE: changes("README.md"),
+                        **timeline(**{kind: [reply]})}
+                self.assertEqual(
+                    GitHub(FakeRest(gets), CONFIG, BOARD).ticket_pr(68).breaking,
+                    "a reply of autodev's on it has a Breaking change section")
+
+    def test_the_owners_comment_or_a_heading_in_code_is_not_a_section(self):
+        # Only the PR's own words count: the owner quoting the heading
+        # doesn't make it a breaking change, nor does a heading GitHub shows
+        # as code, nor someone else's comment.
+        for body, comments in [
+                ("Fixes #68", [remark(9, "MinimalEffort07", SECTION, "t")]),
+                ("Fixes #68", [remark(9, "stranger", SECTION, "t")]),
+                ("Fixes #68\n\n```\n" + SECTION + "\n```", []),
+                ("Fixes #68 and a `## Breaking change` heading", []),
+                ("Fixes #68\n\nBreaking change: none.", [])]:
+            with self.subTest(body=body, comments=comments):
+                self.assertEqual(self.breaking(body=body, comments=comments), "")
+
+    def test_without_its_comments_the_tick_doesnt_ask(self):
+        # A ticket in Todo only needs to know whether it has a PR.
+        github = GitHub(FakeRest({PULLS: [pr(73, "issue-68-note")]}), CONFIG, BOARD)
+        self.assertEqual(github.ticket_pr(68, comments=False).breaking, "")
 
 
 class ParkedAt(unittest.TestCase):
@@ -249,13 +359,33 @@ MERGE = remark(501, "MinimalEffort07", "/merge", "2026-10-19T06:10:00Z")
 class MergeOutcomes(unittest.TestCase):
     """D21 and the conflict path: what a finished merge session left."""
 
-    def outcome(self, merged, comments, merge=MERGE, **said):
-        gets = {PR73: {"number": 73, "merged": merged},
+    def outcome(self, merged, comments, merge=MERGE, compare=None, **said):
+        gets = {PR73: {"number": 73, "merged": merged, "body": "Fixes #68",
+                       "head": {"ref": "issue-68-note", "sha": "abc123"}},
+                COMPARE: changes("automation/README.md") if compare is None else compare,
                 **timeline(([merge] if merge else []) + comments, **said)}
         return GitHub(FakeRest(gets), CONFIG, BOARD).merge_outcome(73, 501)
 
     def test_a_deleted_merge_no_longer_stands(self):
         self.assertTrue(self.outcome(False, [], merge=None).superseded)
+
+    def test_B8_a_breaking_pr_answered_with_a_plain_merge_wasnt_approved(self):
+        # merge-pr refuses then, and the card goes back to review, where the
+        # dispatcher's reply explains.
+        record = changes("test/save_format.txt")
+        breaking_merge = remark(501, "MinimalEffort07", "/merge breaking",
+                                "2026-10-19T06:10:00Z")
+        for merged, merge, compare, unapproved in [
+                (False, MERGE, record, True),
+                (False, breaking_merge, record, False),
+                # A PR that breaks nothing needs no more than /merge.
+                (False, MERGE, None, False),
+                # Merged is merged.
+                (True, MERGE, record, False)]:
+            with self.subTest(merged=merged, merge=merge["body"], compare=compare):
+                self.assertEqual(self.outcome(merged, [], merge=merge,
+                                              compare=compare).breaking_unapproved,
+                                 unapproved)
 
     def test_merged_is_read_from_the_pr(self):
         self.assertEqual(self.outcome(True, []), MergeOutcome(merged=True, replied=False))

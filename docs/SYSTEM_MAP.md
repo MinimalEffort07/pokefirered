@@ -57,15 +57,15 @@ Read it top to bottom; each column is one actor. The dispatcher never does the w
 
 1. Write an issue and add it to the **pokefirered autodev** board.
 2. Skim the design comment the grill session posts, starting with its **Least-confident defaults** list. Set the card to `Paused` if you want to stop work and rethink.
-3. Review each PR: the diff, its **What changes for you** section, the recording link (only when the game changed) and the branch README.
-4. Comment exactly `/merge` to approve it. Any other comment is feedback, and a fix-up session handles it.
+3. Review each PR: the diff, its **What changes for you** section, its **Breaking change** section when it has one (what stops working, what happens to old saves, what you should do: CLAUDE.md, "Breaking changes"), the recording link (only when the game changed) and the branch README.
+4. Comment exactly `/merge` to approve it. A breaking change (it changes `test/save_format.txt`, or the PR or a bot reply has a Breaking change section) merges only on exactly `/merge breaking`; a plain `/merge` on one gets a reply saying why. Any other comment is feedback, and a fix-up session handles it.
 5. Rescue anything in `Needs human`. The bot's comment says what went wrong and ends with a command that reopens that session where it stopped.
 
 **Three facts that explain most surprises:**
 
 - **CLAUDE.md is the program.** Each session's prompt in `automation/prompts/` is a few lines that say "follow CLAUDE.md, Autonomous mode". What a session actually does comes from CLAUDE.md's GitHub Issue Workflow, so editing `CLAUDE.md` changes how the AI behaves.
 - **Autodev updates itself.** Every tick starts with `git pull` on autodev's own clone, so a change merged into `automation/` or `CLAUDE.md` is live within about 2 minutes, with no restart. The recordings page is a program that keeps running, so it would keep its old code: when a merge has changed `test/serve_recordings.py` since the page started, the tick restarts it (`automation/autodev/recordings.py`). That's the only time autodev cuts off a video you're watching. A page you stopped stays stopped.
-- **Only your words get in.** Sessions see text written by you or the bot and nothing else, because the repo is public and a stranger's comment could carry instructions. Only your exact `/merge` merges.
+- **Only your words get in.** Sessions see text written by you or the bot and nothing else, because the repo is public and a stranger's comment could carry instructions. Only your exact `/merge` merges, and a breaking change only your exact `/merge breaking`.
 
 ## Board columns
 
@@ -78,7 +78,7 @@ flowchart LR
   subgraph ticket["Ticket: written by the grill"]
     direction LR
     TB["Blocked"] -->|unblocked| TT["Todo"] -->|worktree made| TI["In progress<br/>ticket, 3 h"] -->|PR opened| TR["In review<br/>waits for you"]
-    TR -->|"/merge"| TM["In progress<br/>merge, 45 min"] -->|merged| TD["Done"]
+    TR -->|"/merge, or /merge breaking<br/>for a breaking change"| TM["In progress<br/>merge, 45 min"] -->|merged| TD["Done"]
     TM -->|"conflict: waits for a new /merge"| TR
     TR -->|feedback| TF["In progress<br/>fix-up, 90 min"] -->|reply posted| TR
   end
@@ -93,7 +93,7 @@ flowchart LR
   class TR owner
 ```
 
-A parent you write is grilled into tickets. Each ticket waits for its blockers, gets its own session, and ends in a PR that waits for you in `In review`. Feedback starts a fix-up; `/merge` starts a merge. Any session that fails or hits its time limit, a grill included, parks its card in `Needs human`. The rules are in `automation/autodev/decide.py`.
+A parent you write is grilled into tickets. Each ticket waits for its blockers, gets its own session, and ends in a PR that waits for you in `In review`. Feedback starts a fix-up; `/merge` starts a merge (on a breaking change, only `/merge breaking` does). Any session that fails or hits its time limit, a grill included, parks its card in `Needs human`. The rules are in `automation/autodev/decide.py`.
 
 - **`Paused` is your stop switch.** Nothing new starts for that card, or for any ticket of a paused parent. A session already running finishes its run. Move the card back to `Todo` to carry on: a parent with tickets isn't grilled again, and a ticket with an open PR goes straight to review.
 - **Usage limit.** When a session hits the Claude usage limit, no session of any kind starts until 5 minutes after the reset, and the interrupted work is queued again.
@@ -106,9 +106,9 @@ A parent you write is grilled into tickets. Each ticket waits for its blockers, 
 | Role | Starts when | What it does | Runs in | Limit, effort |
 |---|---|---|---|---|
 | grill | Your new issue (no `## Parent` heading) is in `Todo` | CLAUDE.md steps 1–4. It grills the idea on its own, taking its own recommended answer each round, posts the design with a Least-confident defaults list, rewrites the issue body as a scope summary and creates the tickets. It can't edit code. | autodev's clone | 60 min, max |
-| ticket | A ticket is in `Todo` and nothing it's blocked by is open | Steps 7–11: test first, clean build, full suite, a recording with notes only if the game changed (`test/record_test.sh` refuses a branch that changes nothing in the game; a ticket that asks for one anyway gets none, and the PR says so), README and this map, code review, then a PR that @mentions you, says what changes for you and links each recording's own page. Once the PR is open, it puts the PR's number into each recording's notes (`set-pr`). | its own worktree | 3 h, xhigh |
-| fix-up | Your newest unhandled PR comment is anything but `/merge` | Handles all your unhandled comments at once, runs the tests again, records again with notes only if the game changed (the same refusal applies; the PR's number goes in by itself), pushes, and replies on the PR saying what it did about each one. | the ticket's worktree | 90 min, xhigh |
-| merge | Your newest unhandled PR comment is exactly `/merge` | Merges master in, builds, runs the unit tests and the suite on that tree, then merges with a merge commit. On a conflict it resolves it, explains on the PR, and waits for a fresh `/merge`. | the ticket's worktree | 45 min, xhigh |
+| ticket | A ticket is in `Todo` and nothing it's blocked by is open | Steps 7–11: test first, clean build, full suite, a recording with notes only if the game changed (`test/record_test.sh` refuses a branch that changes nothing in the game; a ticket that asks for one anyway gets none, and the PR says so), README and this map, code review (which also looks for a breaking change nobody declared), then a PR that @mentions you, says what changes for you, has a Breaking change section if it is one, and links each recording's own page. Once the PR is open, it puts the PR's number into each recording's notes (`set-pr`). | its own worktree | 3 h, xhigh |
+| fix-up | Your newest unhandled PR comment is anything but `/merge` or `/merge breaking` | Handles all your unhandled comments at once, runs the tests again, records again with notes only if the game changed (the same refusal applies; the PR's number goes in by itself), pushes, and replies on the PR saying what it did about each one. | the ticket's worktree | 90 min, xhigh |
+| merge | Your newest unhandled PR comment is exactly `/merge`, or exactly `/merge breaking`, which a breaking change needs | Merges master in, builds, runs the unit tests and the suite on that tree, then merges with a merge commit. On a conflict it resolves it, explains on the PR, and waits for a fresh `/merge`. | the ticket's worktree | 45 min, xhigh |
 
 At most 2 sessions run at once, all on Opus (`automation/config.json`). When more are waiting, merges go first, then fix-ups, then tickets, then new issues, so finishing work beats starting more. Within merges, fix-ups and tickets, the feature grilled first goes first, so its tickets finish before a later feature's start. A new issue is still grilled whenever a slot is free and nothing above wants it. Time limits and effort levels are set in `automation/autodev/sessions.py`.
 
@@ -117,10 +117,11 @@ At most 2 sessions run at once, all on Opus (`automation/config.json`). When mor
 | Guard | What it does |
 |---|---|
 | Bot account | Everything autodev does on GitHub is done as **MinimalEffort07-Autodev**. Its token lives in `~/.config/autodev/env` and reaches only this repo. Its PRs and comments notify you like anyone else's. |
-| `automation/bin/issue.py` | The only way a session reaches GitHub; plain `gh` is denied. It hides text from anyone but you and the bot, acts only on the session's own issue, and gives each role only the commands it needs. It refuses a PR body without Fixes #T, an @mention of you, or a "What changes for you" section. |
+| `automation/bin/issue.py` | The only way a session reaches GitHub; plain `gh` is denied. It hides text from anyone but you and the bot, acts only on the session's own issue, and gives each role only the commands it needs. It refuses a PR body without Fixes #T, an @mention of you, or a "What changes for you" section, and one whose branch changes `test/save_format.txt` without a "Breaking change" section. Its `merge-pr` merges a breaking change only on your `/merge breaking`, checked again on the exact commit it merges. |
 | Deny rules per role | `automation/settings/<role>.json`: no pushing to master, no force-push, no deleting branches, nothing on `pret/pokefirered`. Sessions load the clone's copy, so a session can't loosen its own rules by editing its worktree. |
 | Master rulesets | GitHub itself blocks force-pushes and deleting master, and the bot can change master only by merging a PR. |
 | Your `/merge` | It counts only while it's your last word on the PR. The merge is always of the exact commit that passed the suite after master was merged in; if master moves on meanwhile, the merge is refused. |
+| Your `/merge breaking` | A breaking change merges only on it (CLAUDE.md, "Breaking changes"): a PR that changes `test/save_format.txt`, whose files GitHub can't all list, or whose body or a bot reply has a `## Breaking change` heading. A plain `/merge` on one starts no session; the dispatcher replies, @mentioning you, with why and what to type. |
 
 ## How a change is proven
 
@@ -136,7 +137,9 @@ flowchart LR
 All four paths start from the same ROM. The top two prove the change and need no screen, so they run alongside anything. The bottom two make pictures for a person: a video for each PR, and GIFs for the README. `README.md`'s "Tests" section has the rules in full.
 
 - **A test passes only by proving something.** Zero assertions counts as a fail. Demos and probes say so with `fw.allow_no_assertions`, and the suite skips them: `test/suite_exclude.txt` lists each skipped test with its reason.
+- **The save format is pinned.** `test/save_format.txt` records exactly how the compiler lays out everything the game saves to flash, and `test/tests/test_save_format.lua` fails the suite when a branch's save format differs from it, so no session changes the save format without noticing. A change made on purpose is a breaking change: `python3 test/tools/save_format.py --write` updates the record, and the PR says so (CLAUDE.md, "Breaking changes").
 - **Each run gets its own folder** (`/tmp/mgba-test.XXXXXX`), so several worktrees can test at the same time. The suite deletes the folders of passing runs and keeps failures with their `run_test.log`.
+- **Recordings fast-forward except at a test's moments.** In the mGBA window a test runs at over a thousand frames a second, except at the moments it marks (`fw.show`, `fw.show_next`): outcomes you must see, each played at normal speed for about a second and named `[WATCH] …` in the log beside the game. The framework makes every speed change itself, in its frame callback, and nothing else under `test/` may. Headless, moments change nothing, so the suite and the video play the same run. `test/tests/test_recording_moments.lua` checks them headless (and, as check M8, that no other file sets the speed), and `test/tests/test_fast_forward_gui.lua` times them in the window.
 - **Recordings take turns.** `test/record_test.sh` films the whole virtual display, so it holds a machine-wide lock (`/tmp/autodev-record.lock`) and a second recording waits.
 - **Recordings are small enough to stream.** The live capture is fast but big (about 3 Mbps). Once it ends and the lock is released, `test/tools/encode_recording.sh` encodes it again, slowly and well, into `/tmp/mgba-recordings`: 5 to 8 times smaller, with the scripting log as readable as before. If that encode fails, the capture is kept as the video.
 - **Recordings carry notes.** `record_test.sh --notes FILE` takes a few lines saying which ticket, feature and PR the recording is for, what it tests, what the problem was and what you should see. It checks them before it waits for the lock, so bad notes cost a second, not a recording (`--check` only checks). Every video then gets `<name>.json` beside it, with the notes, when it was recorded, the test, the branch and commit, and the run's result; the script's last lines are the `mv` that keeps both files and the recording's own page.
@@ -159,9 +162,9 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `automation/config.json` | Names and paths: owner, bot, board title, the 2-session cap, model, clone, log and state folders. |
 | `automation/autodev/__main__.py` | The entry point the timer runs: `python3 -m autodev tick`. |
 | `automation/autodev/dispatcher.py` | **One tick.** Restarts the recordings page if a merge changed it (`automation/autodev/recordings.py`), then gathers the board, each open parent's tickets among its sub-issues, and what finished sessions left on GitHub, asks `automation/autodev/decide.py` what to do, carries it out, logs it to the journal. |
-| `automation/autodev/decide.py` | **The rules,** as one pure function: state in, list of actions out. Priority, blocking, `/merge`, crashes and usage limits all live here. |
+| `automation/autodev/decide.py` | **The rules,** as one pure function: state in, list of actions out. Priority, blocking, `/merge` and `/merge breaking`, crashes and usage limits all live here. |
 | `automation/autodev/board.py` | Reads the Projects board through GitHub's GraphQL API. |
-| `automation/autodev/github.py` | Carries out actions on GitHub, lists which of a parent's sub-issues are its tickets, and checks whether a finished session really left its design, tickets, PR or reply. |
+| `automation/autodev/github.py` | Carries out actions on GitHub, lists which of a parent's sub-issues are its tickets, checks whether a finished session really left its design, tickets, PR or reply, and says whether a ticket's PR is a breaking change, and why. |
 | `automation/autodev/gh.py` | The GitHub adapter: runs `gh api` as a subprocess, with the bot's token. |
 | `automation/autodev/sessions.py` | Starts each `claude -p` run in its own systemd unit with the role's time limit and effort, then reads back its result and any usage-limit message. |
 | `automation/autodev/registry.py` | The dispatcher's memory between ticks: which sessions it started, crash counts, the usage-limit pause. |
@@ -169,7 +172,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `automation/autodev/recordings.py` | Restarts the recordings page on a tick when its code changed since it started, so a merged change to the page shows within about 2 minutes. |
 | `automation/autodev/config.py` | Loads `automation/config.json`. |
 | `automation/bin/issue.py` | The sessions' only way to reach GitHub. |
-| `automation/autodev/issue_tool.py` | The trust and per-role rules `automation/bin/issue.py` enforces. |
+| `automation/autodev/issue_tool.py` | The trust and per-role rules `automation/bin/issue.py` enforces, the breaking-change checks on opening and merging a PR included. |
 | `automation/prompts/<role>.md` | The few lines each session starts with. They point at CLAUDE.md. |
 | `automation/settings/<role>.json` | Each role's permissions, written as deny rules. |
 | `automation/tests/` | The unit tests, with fakes for GitHub and systemd. |
@@ -184,7 +187,7 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/record_test.sh` | Runs a test in the mGBA window on a virtual display and films it to mp4. It captures fast, then encodes the video small enough to stream with `test/tools/encode_recording.sh`, after it has let the next recording start. `--notes FILE` says what the recording is for; the notes are checked before anything starts (`--check` only checks), a ticket they name starts the video's name, and every video gets a notes file beside it. An autodev session must give notes, for its own ticket, and is refused when its branch changes no file the ROM is built from (the list of those paths lives here). It ends with the `mv` that keeps both files and the recording's page. |
 | `test/serve_recordings.py` | The recordings page on port 8080, run by `autodev-recordings.service`: the videos newest first, each with its own page. A card shows its notes file: the ticket as its title, the parent and PR, the three notes, and when, the test, the branch and commit and the result. An old video given notes with `add-notes` says "notes added <date>" instead of a result. A video without a notes file gets a title from its file name. `--port 8081` previews a branch's page. `test/tests/test_recordings_page.lua` and `test/tests/test_recording_notes.lua` check it. The dispatcher restarts it when a merge changes this file, so it must stay one file that imports only Python's standard library, and it reads the notes files itself. |
 | `test/mgba-qt.sh` | Opens the patched mGBA window by hand. |
-| `test/lib/framework.lua` | The test framework: press buttons, wait frames, assert, write results. Every test loads it. |
+| `test/lib/framework.lua` | The test framework: press buttons, wait frames, assert, write results. Every test loads it. It also marks the moments a recording plays at normal speed (`fw.show`, `fw.show_next`), makes every speed change in the window itself, and logs the `[WATCH]` total at the end. |
 | `test/lib/addresses.lua` | Where game variables sit in memory, for the older tests that hard-code addresses. |
 | `test/lib/symbols.lua` | Looks addresses up by symbol name in the built `pokefirered.elf`, so tests survive the addresses moving. |
 | `test/lib/walk.lua` | Walks the player somewhere for real: plans a route over the loaded map and presses the D-pad one tile at a time. |
@@ -200,12 +203,13 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `test/lib/mt_moon_chamber.lua` | B2F's fossil chamber as the tests see it. |
 | `test/lib/mt_moon_fossil.lua` | Takes a fossil in the chamber: the flow both fossil scenarios share. |
 | `test/lib/mt_moon_tiles.lua` | Compares a generated floor's tiles with vanilla's, for the look and density checks. |
-| `test/tests/` | The tests and demos. `test/tests/mt_moon_checks/` holds the Mt. Moon property checks. `suite_fixtures/` and `framework_fixtures/` hold the small scripts that `test/tests/test_run_suite.lua` and `test/tests/test_framework_rules.lua` run to check the runners. |
+| `test/tests/` | The tests and demos. `test/tests/mt_moon_checks/` holds the Mt. Moon property checks. `suite_fixtures/` and `framework_fixtures/` hold the small scripts that `test/tests/test_run_suite.lua` and `test/tests/test_framework_rules.lua` run to check the runners; `test/tests/test_recording_moments.lua` runs two of `framework_fixtures/` too, for the `[WATCH]` total. |
 | `test/demos/` | A demo kept outside the suite. |
 | `test/tools/captioned_gif.py` | Turns a demo's captured frames into a captioned README GIF (`--font-size` for long captions). |
 | `test/tools/recording_notes.py` | A recording's notes, for `test/record_test.sh` and for old videos: `check` checks them, `ticket` gives the ticket number for the video's name, `write` writes the notes file beside the video with what the recorder knows (when, the test, the branch and commit), and `set-result` adds the run's result once the test has finished. In an autodev session it also holds the notes to the session's rules (its own ticket, a parent, the PR filled in). `set-pr NAME PR` puts a PR's number into a kept or fresh recording's notes, for a ticket session once its PR is open. `add-notes NAME NOTES` gives notes to a video kept before notes existed, without moving it on the page: its time comes from the name's stamp or the video's modification time, never from now, and the unknown facts stay null. It never touches a notes file `test/record_test.sh` wrote. Its header has the notes' rules and the file's format. |
 | `test/tools/encode_recording.sh` | Encodes one recording small enough to stream, 5 to 8 times smaller than the live capture. The settings live only here, each explained. `test/record_test.sh` and `test/tools/shrink_recordings.sh` use it. |
 | `test/tools/shrink_recordings.sh` | Shrinks the videos already kept (`~/recordings` by default) the same way, keeping their names and times, and moves each original into `originals/` there. Safe to run again: it only touches videos not shrunk yet. |
+| `test/tools/save_format.py` | Pins the save format. It compiles the save's headers with agbcc's debug information on, reads how every saved struct is laid out, and checks that against `test/save_format.txt`: exit 0 when they match, 1 when they don't (with the diff and the two ways out: undo it, or declare a breaking change), 2 when it can't run (no `tools/agbcc`, no ARM binutils, or a header missing). `--write` rewrites the record, only for a breaking change; `--root` and `--record` point it at another tree and record. `test/tests/test_save_format.lua` runs it in the suite. |
 | `test/tools/render_cave.py` | Draws a map, vanilla or a dumped generated cave, to PNG. |
 | `test/tools/dump_mtmoon_grid.lua` | Dumps generated Mt. Moon caves by seed for `test/tools/render_cave.py`. |
 | `test/tools/create_route14_battle_fixture.lua` | Saves a state inside the Route 14 double battle, for checking the colours by hand. |

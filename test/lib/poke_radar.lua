@@ -39,18 +39,22 @@
 --     control (its two halves are pr.assert_back_on_field and
 --     pr.assert_step, for a test that checks more in between);
 --   * pr.assert_object_sprites(): every object still has its own sprite;
---   * pr.raise_encounter_rate(), pr.wait_for_battle(), pr.play_battle(action):
---     a wild battle, ended by RUN or by FIGHT;
+--   * pr.raise_encounter_rate(), pr.wait_for_battle(),
+--     pr.play_battle(action, moment): a wild battle, ended by RUN or by
+--     FIGHT, its end a moment for a recording if `moment` is given;
 --   * pr.reset(), pr.start_in_grass(name) (on Route 1's grass at
 --     pr.GRASS_X, pr.GRASS_Y), pr.scenario(name, fn): a test's setup
 --     between scenarios, and pr.walk_follower(name),
 --     pr.assert_follower_sprite(name, when): the WALK follower;
 --   * pr.on_field(), pr.field_running(), pr.in_battle(): where the game's
 --     main loop is, and pr.wait_step_done(): the end of the player's step;
---   * pr.walk_on_grass_onto(label, what, is_target), pr.walk_into_patch(label),
---     pr.walk_off_grass(label): walking along the grass without spoiling
---     the patches, then into one or off the grass (issue #89), and
---     pr.live_patch_sprites(): every patch sprite left;
+--   * pr.walk_on_grass_onto(label, what, is_target, moment, frames),
+--     pr.walk_into_patch(label, moment), pr.walk_off_grass(label, moment):
+--     walking along the grass without spoiling the patches, then into one
+--     or off the grass (issue #89), the last step a moment for a recording
+--     if `moment` is given, and pr.live_patch_sprites(): every patch
+--     sprite left;
+--   * pr.moment(name, what): a moment's label, starting with the scenario;
 --   * pr.is_wild_battle() (pr.BATTLE_TYPE_TRAINER), pr.wild_species(),
 --     pr.forget_wild_species(), pr.wild_message_up(): the wild battle, its
 --     Pokemon, and its "Wild PIDGEY appeared!" on screen.
@@ -70,9 +74,11 @@ local walk = dofile(script_dir .. "walk.lua")
 
 local pr = {}
 
--- Struct offsets. The `unused_348C` field is misnamed — despite what the
--- comment in include/global.h says, MysteryGiftSave grew by 40 bytes at some
--- point and the slack region actually starts at 0x34B4. src/poke_radar.c
+-- Struct offsets. The `unused_348C` field's name gives its offset in vanilla
+-- FireRed; here the slack region starts at 0x34B4, 0x28 bytes later, because
+-- the quick-select change (48ef17586) grew SaveBlock1's registeredItem into
+-- registeredItems[20], which moved everything from pcItems on.
+-- test/save_format.txt records the real layout, and src/poke_radar.c
 -- carries a STATIC_ASSERT that pins this to 0x34B4, so if a future refactor
 -- breaks it the build will fail before the test runs.
 pr.OFF_UNUSED_348C       = 0x34B4  -- inside SaveBlock1
@@ -317,9 +323,11 @@ end
 -------------------------------------------------------------------------------
 
 -- struct Sprite (include/sprite.h), 0x44 bytes: the template it was made
--- from (a pointer) at 0x14, s16 data[8] starts at 0x2E, and bit 0 of the
--- byte at 0x3E is inUse.
+-- from (a pointer) at 0x14, the function the game calls on it every frame
+-- (its callback, a pointer) at 0x1C, s16 data[8] starts at 0x2E, and bit 0
+-- of the byte at 0x3E is inUse.
 local SPRITE_OFF_TEMPLATE = 0x14
+local SPRITE_OFF_CALLBACK = 0x1C
 local SPRITE_OFF_DATA0 = 0x2E
 
 local function sprite_addr(id)
@@ -874,8 +882,14 @@ pr.GRASS_X, pr.GRASS_Y = 12, 24
 -- on Route 1's grass at (pr.GRASS_X, pr.GRASS_Y) (with the follower, if it
 -- is out), no roaming Pokemon nearby and a Repel. The warp's map load also
 -- unlocks the field controls, so a scenario that froze the player doesn't
--- spoil the next. Returns true if the setup worked.
+-- spoil the next. A moment the last scenario left playing (fw.show_next on
+-- its last step, say) plays out first, so the warp doesn't cut it short.
+-- Returns true if the setup worked.
 function pr.start_in_grass(name)
+    for _ = 1, 180 do   -- a moment lasts at most 180 frames
+        if fw.speed() == "fast" then break end
+        fw.yield()
+    end
     fw.log("=== " .. name .. " ===")
     pr.reset(1)
     pr.set_repel(5000)
@@ -890,20 +904,22 @@ function pr.start_in_grass(name)
         name .. ": the player has control after the warp")
     fw.assert_true(follower.clear_roamers(), name .. ": no roaming Pokemon nearby")
     local x, y = mm.player_tile()
-    -- In the mGBA window (test/record_test.sh), play the rest of the
-    -- scenario in real time so a recording shows it; pr.scenario() speeds
-    -- up again. Headless, this does nothing.
-    fw.slow_down(name)
     return fw.assert_true(x == pr.GRASS_X and y == pr.GRASS_Y
             and follower.map_snapshot().behavior(x, y) == pr.MB_TALL_GRASS,
         string.format("%s: the player stands in tall grass at (%d,%d)", name, x or -1, y or -1))
+end
+
+-- A moment's label (see MOMENTS in test/lib/framework.lua): the scenario,
+-- the first word of its name (e.g. "P1" from "P1 step into a patch", "N4"
+-- from "N4 can't use, no charge"), then `what`.
+function pr.moment(name, what)
+    return name:match("^%S+") .. ": " .. what
 end
 
 -- Run scenario `fn` (called with `name`) and log its own counts.
 function pr.scenario(name, fn)
     local pass0, fail0 = fw.counts()
     fn(name)
-    fw.speed_up()
     local pass1, fail1 = fw.counts()
     fw.log(string.format("[%s] %d passed, %d failed", name, pass1 - pass0, fail1 - fail0))
 end
@@ -966,9 +982,13 @@ end
 -- keeps the patches as they are, because a step off the grass clears them
 -- and a step into one is the radar's own action; only the last step, onto
 -- the target, may do either. `what` names the target in the assertions.
--- Returns true once the player's tile is the target (the step onto it has
--- just begun: the game finishes it on its own), and the target's x, y.
-function pr.walk_on_grass_onto(label, what, is_target)
+-- `moment` (optional, a label) makes that last step a moment for a
+-- recording (fw.show_next(moment, frames), frames default 60; see MOMENTS
+-- in test/lib/framework.lua): the step and what it sets off play at normal
+-- speed. Returns true once the player's tile is the target (the step onto
+-- it has just begun: the game finishes it on its own), and the target's
+-- x, y.
+function pr.walk_on_grass_onto(label, what, is_target, moment, frames)
     if not fw.assert_true(fw.wait_until(pr.player_ready, 300, "ready to walk"),
             label .. ": the player can walk") then
         return false
@@ -1026,7 +1046,8 @@ function pr.walk_on_grass_onto(label, what, is_target)
         end
     end
     -- The last step. An object (the follower, say) may stand on the target
-    -- for a moment: the player then only bumps into it, so try again.
+    -- for a while: the player then only bumps into it, so try again.
+    if moment then fw.show_next(moment, frames) end
     for _ = 1, 10 do
         fw.wait_until(pr.player_ready, 120, "ready for the last step")
         if walk.step_onto(best.tx, best.ty) then break end
@@ -1038,23 +1059,28 @@ function pr.walk_on_grass_onto(label, what, is_target)
         best.tx, best.ty)), best.tx, best.ty
 end
 
--- Walk into the nearest live patch (pr.walk_on_grass_onto). Returns true
--- once the player's tile is the patch's, and the patch's tile.
-function pr.walk_into_patch(label)
+-- Walk into the nearest live patch (pr.walk_on_grass_onto). The step
+-- starts the patch battle, so its optional `moment` lasts PATCH_STEP_FRAMES:
+-- the step's 16, then the battle's transition, its flashes and wipe, until
+-- the screen goes black. Returns true once the player's tile is the
+-- patch's, and the patch's tile.
+local PATCH_STEP_FRAMES = 90
+function pr.walk_into_patch(label, moment)
     if not fw.assert_true(pr.patches_active(), label .. ": there are patches to walk into") then
         return false
     end
     return pr.walk_on_grass_onto(label, "a shaking patch", function(x, y)
         return pr.is_patch_tile(x, y)
-    end)
+    end, moment, PATCH_STEP_FRAMES)
 end
 
 -- Walk to the nearest tile off the tall grass (plain ground: MB_NORMAL, not
 -- solid and not a warp) without spoiling the patches on the way, and step
 -- onto it (pr.walk_on_grass_onto). A tile another object stands on (the
 -- follower, waiting behind the player, or an NPC) doesn't count: the
--- player would only bump into it.
-function pr.walk_off_grass(label)
+-- player would only bump into it. `moment` (optional): see
+-- pr.walk_on_grass_onto.
+function pr.walk_off_grass(label, moment)
     local taken = {}
     for _, o in ipairs(mm.live_objects()) do
         if not o.is_player then taken[mm.key(o.x, o.y)] = true end
@@ -1062,7 +1088,7 @@ function pr.walk_off_grass(label)
     return pr.walk_on_grass_onto(label, "plain ground off the grass", function(x, y, snap)
         return not snap.solid(x, y) and not snap.warp(x, y) and snap.behavior(x, y) == MB.MB_NORMAL
             and not taken[mm.key(x, y)]
-    end)
+    end, moment)
 end
 
 -------------------------------------------------------------------------------
@@ -1117,7 +1143,21 @@ end
 --
 -- The action menu is a 2x2 grid, gActionSelectionCursor[0]: 0 FIGHT,
 -- 1 BAG, 2 POKEMON, 3 RUN, so bit 0 is the column and bit 1 the row.
-function pr.play_battle(action)
+--
+-- `moment` (optional, a label) makes the battle's end a moment for a
+-- recording (see MOMENTS in test/lib/framework.lua): FIGHT's from the frame
+-- the wild Pokemon starts to faint (its sprite slides down, then "Wild
+-- PIDGEY fainted!"), RUN's from the frame the battle is decided ("Got away
+-- safely!" follows). Those frames (FAINT_FRAMES or RUN_FRAMES) play at
+-- normal speed and nothing is pressed meanwhile, so the watcher sees the
+-- faint or the message as the game plays it, not skipped by A. The frames
+-- returned leave out those held still after the decision: they are the
+-- test's pause for the watcher, not the game's time, and a moment must not
+-- stretch a timed check (the callers' "back on the field within 600
+-- frames"). FIGHT's moment ends before the decision anyway.
+local FAINT_FRAMES = 90   -- the slide down, then the message typed and held
+local RUN_FRAMES = 60     -- the message typed and held
+function pr.play_battle(action, moment)
     local target = action == "RUN" and 3 or 0
     local choose_action = player_choose_action_addr()
     fw.assert_true(choose_action ~= nil,
@@ -1125,6 +1165,15 @@ function pr.play_battle(action)
     local funcs = sym.addr("gBattlerControllerFuncs")
     local cursor = sym.addr("gActionSelectionCursor")
     local outcome_addr = sym.addr("gBattleOutcome")
+    -- The wild Pokemon faints: its sprite's callback is
+    -- SpriteCB_AnimFaintOpponent while it slides down, about 18 frames
+    -- (src/battle_main.c; the SpriteCB_FaintOpponentMon that starts it
+    -- lasts a single frame). gBattlerSpriteIds[1] is its sprite (battler 1
+    -- is the opponent).
+    local function wild_fainting()
+        local id = fw.read8(sym.addr("gBattlerSpriteIds") + 1)
+        return sym.is_func(fw.read32(sprite_addr(id) + SPRITE_OFF_CALLBACK), "SpriteCB_AnimFaintOpponent")
+    end
     -- gBattleOutcome still holds the last battle's outcome until
     -- BeginBattleIntro, the battle's first step on BattleMainCB2's first
     -- frame, clears it.
@@ -1133,14 +1182,33 @@ function pr.play_battle(action)
     end, 60, "battle set up")
 
     -- Every frame goes through tick(), which notes the frame the battle is
-    -- decided on.
-    local frames, decided_at = 0, nil
+    -- decided on and starts the moment (`quiet_until`: the frame it ends
+    -- on, nothing pressed until then; `held`: the frames press() held still
+    -- for it after the decision).
+    local frames, decided_at, quiet_until, held = 0, nil, nil, 0
     local function tick()
         fw.yield()
         frames = frames + 1
         if decided_at == nil and fw.read8(outcome_addr) ~= 0 then decided_at = frames end
+        if moment and quiet_until == nil then
+            local length = nil
+            if action == "RUN" and decided_at ~= nil then
+                length = RUN_FRAMES
+            elseif action ~= "RUN" and wild_fainting() then
+                length = FAINT_FRAMES
+            end
+            if length then
+                fw.show_next(moment, length)
+                quiet_until = frames + length
+            end
+        end
     end
     local function press(key, wait)
+        if quiet_until ~= nil and frames < quiet_until then
+            tick()
+            if decided_at ~= nil then held = held + 1 end
+            return
+        end
         local idx = fw.KEY[key]
         emu:addKey(idx)
         tick()
@@ -1166,10 +1234,10 @@ function pr.play_battle(action)
         end
     end
     if decided_at == nil then return 0, 0 end
-    while pr.in_battle() and frames - decided_at < 600 do
+    while pr.in_battle() and frames - decided_at - held < 600 do
         press("A", 8)
     end
-    return fw.read8(outcome_addr), frames - decided_at
+    return fw.read8(outcome_addr), frames - decided_at - held
 end
 
 -- gBattleTypeFlags bit set for a trainer battle: BATTLE_TYPE_TRAINER,

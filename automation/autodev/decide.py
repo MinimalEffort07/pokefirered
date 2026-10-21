@@ -80,6 +80,9 @@ class MergeOutcome:
     # The owner withdrew that /merge (merge_cancelled says how), so
     # issue.py's merge-pr refused to merge.
     superseded: bool = False
+    # The PR is a breaking change and the comment the session answered is a
+    # plain /merge, not /merge breaking, so merge-pr refused to merge.
+    breaking_unapproved: bool = False
 
 
 @dataclass(frozen=True)
@@ -108,6 +111,10 @@ class PullRequest:
     head: str               # its branch
     comments: tuple = ()    # PrComment, oldest first
     opened: str = ""        # when, as GitHub's ISO time
+    # Why it is a breaking change (github.breaking), so that only the
+    # owner's /merge breaking merges it; "" when it isn't one, or when its
+    # comments weren't read.
+    breaking: str = ""
 
 
 @dataclass(frozen=True)
@@ -439,9 +446,21 @@ def _newest_unhandled(state, pr):
     return left[-1] if left else None
 
 
+# The owner's approval of a PR, and the one a breaking change needs (#139).
+MERGE = "/merge"
+MERGE_BREAKING = "/merge breaking"
+
+
 def is_merge(comment):
-    """Whether a comment is the owner's approval: exactly "/merge"."""
-    return comment.body.strip() == "/merge"
+    """Whether a comment is the owner's approval: exactly "/merge" or
+    exactly "/merge breaking"."""
+    return comment.body.strip() in (MERGE, MERGE_BREAKING)
+
+
+def approves_breaking(comment):
+    """Whether a comment approves a breaking change too: exactly
+    "/merge breaking". Only this merges a PR that is one."""
+    return comment.body.strip() == MERGE_BREAKING
 
 
 def merge_cancelled(owner, comments, merge_id):
@@ -505,29 +524,49 @@ def _in_review(state, item):
     """A ticket whose PR waits for the owner. Their newest unhandled comment
     decides: "/merge" starts a merge session, anything else is feedback and
     starts a fix-up session, which handles every comment queued before it.
-    Feedback after a /merge therefore cancels it (D14)."""
+    Feedback after a /merge therefore cancels it (D14). A breaking change
+    merges only on "/merge breaking": a plain "/merge" gets a reply saying
+    so (#141)."""
     pr = state.prs.get(item.number)
     if pr is None:
         return []
     newest = _newest_unhandled(state, pr)
     if newest is None:
         return []
-    return _answer(item, pr, newest)
+    return _answer(state, item, pr, newest)
 
 
-def _answer(item, pr, comment):
-    """Start the session that answers the owner's `comment` on the PR."""
+def _answer(state, item, pr, comment):
+    """Start the session that answers the owner's `comment` on the PR, or,
+    for a plain /merge on a breaking change, say why it doesn't merge."""
+    if is_merge(comment) and pr.breaking and not approves_breaking(comment):
+        # The reply handles that /merge, so it is answered once, and the
+        # card waits in review for /merge breaking or feedback. A parked
+        # card moves there first: if the reply then fails, the /merge is
+        # still unhandled, and the next tick answers it from review.
+        moved = [] if item.status == IN_REVIEW else [SetStatus(item.number, IN_REVIEW)]
+        return moved + [Comment(pr.number, _breaking_reply(state, pr, comment))]
     role = "merge" if is_merge(comment) else "fixup"
     return [MakeWorktree(item.number, pr.head),
             Launch(role, item.number, pr=pr.number, handled_through=comment.id),
             SetStatus(item.number, IN_PROGRESS)]
 
 
+def _breaking_reply(state, pr, merge):
+    """The answer to the owner's plain /merge `merge` on breaking PR `pr`."""
+    return ("@%s this PR is a breaking change (%s), so a plain `/merge` doesn't "
+            "merge it. Read its Breaking change section, then comment exactly "
+            "`/merge breaking` to approve it and merge, or leave feedback.\n\n%s" % (
+                state.owner, pr.breaking, handled_marker(merge.id)))
+
+
 def _parked_ticket(state, item):
     """A ticket autodev parked in Needs human comes back once the owner has
     dealt with it. Their comment on its PR since it was parked is answered
-    as in review; a PR opened since it was parked (the resumed session, or
-    the owner, finished the work) sends it to review. Anything from before
+    as in review (a plain /merge on a breaking change gets its reply, and the
+    card moves to review); a PR opened since it was parked (the resumed
+    session, or the owner, finished the work) sends it to review. Anything
+    from before
     is what it was parked over, so it never starts the same work again. A
     card with no "parked" comment is the owner's own, and someone else's
     ticket stays parked for its author (D2)."""
@@ -537,7 +576,7 @@ def _parked_ticket(state, item):
         return []
     newest = _newest_unhandled(state, pr)
     if newest is not None and newest.at > since:
-        return _answer(item, pr, newest)
+        return _answer(state, item, pr, newest)
     if pr.opened > since:
         return [SetStatus(item.number, IN_REVIEW)]
     return []
@@ -573,10 +612,12 @@ def _finished(state, session):
         # Merged is merged, even if the session then failed or ran out of
         # time before it could say so.
         return _merged(state, issue) + [Finish(session.role, issue)]
-    if session.role == "merge" and outcome.superseded:
+    if session.role == "merge" and (outcome.superseded or outcome.breaking_unapproved):
         # The owner withdrew their /merge, usually by saying more after it
-        # (D14), so merge-pr refused. Whatever the session then reported, the
-        # card goes back to review, where a fix-up picks new comments up.
+        # (D14), or it was a plain /merge on a breaking change (#141), so
+        # merge-pr refused. Whatever the session then reported, the card goes
+        # back to review, where a fix-up picks new comments up, or the reply
+        # to a plain /merge explains.
         return _limit_pause(session) + [SetStatus(issue, IN_REVIEW),
                                         Finish(session.role, issue)]
     result = session.result

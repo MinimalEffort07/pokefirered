@@ -39,7 +39,6 @@ end
 
 fw.run(function()
     fw.log("=== Warp to Route 1 grass (programmatic fixture builder) ===")
-    fw.speed_up()
 
     local sel = cs.find_selection_press()
     if not sel then
