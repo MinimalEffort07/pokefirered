@@ -1,25 +1,39 @@
 #!/usr/bin/env python3
-"""The save format record: write it, and check the tree against it.
+"""The save format and saved-ID records: write them, and check the tree
+against them.
 
 A save is the bytes of a few C structs copied to the cartridge's flash
 chip. A build reads a save back through its own copy of those structs, so a
 save made before a change to one of them is read from the wrong places
 afterwards. This tool writes down exactly how the compiler lays the save
 out, in test/save_format.txt (the "record"), and checks a tree against it.
-test/tests/test_save_format.lua runs it in the suite. CLAUDE.md's
-"Breaking changes" section says what to do when it fails.
+
+A save also stores IDs by number: flags, vars, items, species, moves,
+maps and more. A build reads those numbers back through its own headers,
+so a save made before an ID changed number reads it as something else.
+The tool writes every saved ID down by name and number too, in
+test/save_ids.txt (the "ID record"; see SAVED IDS below).
+
+test/tests/test_save_format.lua and test/tests/test_save_ids.lua run it in
+the suite. CLAUDE.md's "Breaking changes" section says what to do when it
+fails.
 
   python3 test/tools/save_format.py
-      Check the tree against the record. Exit 0 when they match; exit 1,
-      printing the differences and what to do, when they don't; exit 2,
+      Check the tree against both records. Exit 0 when both match; exit 1,
+      printing the differences and what to do, when one doesn't; exit 2,
       saying what's missing, when it can't run.
   python3 test/tools/save_format.py --write
-      Write the tree's save format into the record. Only for a change made
-      on purpose: a breaking change, which its PR must say it is.
-  --root DIR      the tree to read (default: the repo this tool is in). It
-                  needs include/ and tools/agbcc, as `make firered` does.
-  --record FILE   the record (default: test/save_format.txt in the repo this
-                  tool is in).
+      Write the tree's save format and saved IDs into the records. For the
+      save format, only for a change made on purpose: a breaking change,
+      which its PR must say it is. For the IDs, it adds a new ID; a changed
+      or gone one is a breaking change.
+  --root DIR         the tree to read (default: the repo this tool is in).
+                     It needs include/ and tools/agbcc, as `make firered`
+                     does, and the headers `make firered` generates.
+  --record FILE      the save format record (default: test/save_format.txt
+                     in the repo this tool is in).
+  --ids-record FILE  the ID record (default: test/save_ids.txt in the repo
+                     this tool is in).
 
 HOW IT WORKS. The C compiler already knows the exact layout: with -g it
 writes it into the object file as DWARF debug information, a standard
@@ -45,6 +59,19 @@ that includes the save's headers, and reads the result:
   4. It writes them as plain text, one section per type, in a fixed order,
      so the same tree always gives the same bytes.
 
+SAVED IDS. The names come from the headers in ID_KINDS below: every
+`#define` and enum member that starts with its kind's prefix, except the
+ones a save never stores (see left_out). Their numbers come from the
+compiler, the same way as the flash constants: a second probe includes the
+headers and holds an enum with one member per name, set to it. The record
+lists one `NAME number` line per ID, kind by kind, each kind in number
+order, so a new ID only adds a line. Checking compares the names and
+numbers:
+  - a recorded ID whose number changed, or that is gone (removed or
+    renamed: the record can't tell a rename from a new meaning), is a
+    breaking change;
+  - a new ID isn't, but fails the check too, until --write adds it.
+
 It needs Python's standard library only.
 """
 
@@ -62,6 +89,7 @@ from pathlib import Path
 # The repo this tool is in: test/tools/save_format.py -> the repo root.
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_RECORD = REPO / "test" / "save_format.txt"
+DEFAULT_IDS_RECORD = REPO / "test" / "save_ids.txt"
 TOOL_COMMAND = "python3 test/tools/save_format.py"
 
 # The headers the probe includes: every root type and constant is in one.
@@ -156,6 +184,72 @@ RECORD_HEADER = """\
 # name used, with what it stands for.
 """
 
+# Each kind of ID a save stores, by number: its prefix, and the header
+# (under include/) its names come from. The record lists the kinds in this
+# order.
+ID_KINDS = [
+    ("FLAG_", "constants/flags.h"),
+    ("VAR_", "constants/vars.h"),
+    ("ITEM_", "constants/items.h"),
+    ("SPECIES_", "constants/species.h"),
+    ("NATIONAL_DEX_", "constants/pokedex.h"),
+    ("MOVE_", "constants/moves.h"),
+    ("TRAINER_", "constants/opponents.h"),
+    ("OBJ_EVENT_GFX_", "constants/event_objects.h"),
+    ("GAME_STAT_", "constants/game_stat.h"),
+    # `make firered` generates these four from the maps' and region map's
+    # JSON files, so a tree has them only once it has been built.
+    ("MAP_", "constants/map_groups.h"),
+    ("LAYOUT_", "constants/layouts.h"),
+    ("MAPSEC_", "constants/region_map_sections.h"),
+    ("LOCALID_", "constants/map_event_ids.h"),
+]
+GENERATED_HEADERS = [header for _, header in ID_KINDS[-4:]]
+
+# A placeholder is a name that is only its prefix and a number, such as
+# FLAG_0x020, VAR_0x402A or ITEM_034: a slot nothing uses yet.
+PLACEHOLDER = re.compile(r"0x[0-9A-Fa-f]+|\d+")
+
+# Names with a kind's prefix that are the size of its list, not an ID:
+# each grows whenever an ID is added at the end of the list.
+LIST_SIZES = {"MAP_GROUPS_COUNT", "MAPSEC_COUNT", "NATIONAL_DEX_COUNT"}
+
+# The name the ID probe gives each ID's enum member.
+ID_PREFIX = "SAVE_IDS_PROBE_"
+
+IDS_RECORD_HEADER = """\
+# The saved IDs: every flag, var, item, species, Pokedex number, move,
+# trainer, object graphics ID, game stat, map, layout, map section and
+# object local ID, by name and number. A save stores them by number.
+# test/tools/save_format.py writes this file, and
+# test/tests/test_save_ids.lua fails the suite when the tree no longer
+# matches it.
+#
+# Never edit it by hand: run
+#     python3 test/tools/save_format.py --write
+# and commit this file. A new ID only adds a line, and isn't a breaking
+# change. A recorded ID whose number changed, or that is gone (removed or
+# renamed), is a breaking change (CLAUDE.md, "Breaking changes"): make one
+# only on purpose, and say so in the PR. Removing any line from this file
+# makes a PR a breaking change. After a merge conflict in it, run --write
+# again on the merged tree.
+#
+# The names are each #define and enum member starting FLAG_ (in
+# include/constants/flags.h), VAR_ (vars.h), ITEM_ (items.h), SPECIES_
+# (species.h), NATIONAL_DEX_ (pokedex.h), MOVE_ (moves.h), TRAINER_
+# (opponents.h), OBJ_EVENT_GFX_ (event_objects.h), GAME_STAT_
+# (game_stat.h), and, in the headers `make firered` generates, MAP_
+# (map_groups.h), LAYOUT_ (layouts.h), MAPSEC_ (region_map_sections.h)
+# and LOCALID_ (map_event_ids.h).
+# Left out: placeholders, names that are only a prefix and a number (such
+# as FLAG_0x020, VAR_0x402A, ITEM_034), so giving one its first use adds a
+# new ID; names containing UNUSED; the sizes of lists (MAP_GROUPS_COUNT,
+# MAPSEC_COUNT, NATIONAL_DEX_COUNT); and function-like macros.
+#
+# One line per ID: its name and its number, in decimal. The kinds come in
+# the order above, each in number order.
+"""
+
 # Exit codes.
 MATCHES, DIFFERS, CANT_RUN = 0, 1, 2
 
@@ -240,13 +334,14 @@ def run_step(what, command, root, stdin_text=None):
     return result.stdout
 
 
-def compile_probe(root):
-    """readelf's text dump of the probe's debug information."""
+def compile_probe(root, probe):
+    """readelf's text dump of the debug information of `probe`, a C
+    source."""
     tools = find_tools(root)
     with tempfile.TemporaryDirectory(prefix="save_format.") as work:
         work = Path(work)
         source = work / "probe.c"
-        source.write_text(probe_source())
+        source.write_text(probe)
         preprocessed = run_step(
             "the preprocessor (cc -E)",
             [tools["cc"], "-E"] + CPP_FLAGS + [str(source)], root)
@@ -550,7 +645,100 @@ def describe(dies):
 
 def save_format(root):
     """The tree's save format, as the record's text."""
-    return describe(parse_dies(compile_probe(root)))
+    return describe(parse_dies(compile_probe(root, probe_source())))
+
+
+# ---------------------------------------------------------------------------
+# Saved IDs
+# ---------------------------------------------------------------------------
+
+def without_comments(text):
+    """C source `text` with its comments blanked out, keeping its lines."""
+    return re.sub(r"/\*.*?\*/|//[^\n]*",
+                  lambda m: "\n" * m.group().count("\n") + " ", text, flags=re.DOTALL)
+
+
+def left_out(prefix, name):
+    """Why a save never stores `name`, of the kind with `prefix`, or None
+    when it does."""
+    if PLACEHOLDER.fullmatch(name[len(prefix):]):
+        return "a placeholder"
+    if "UNUSED" in name:
+        return "unused"
+    if name in LIST_SIZES:
+        return "a list's size"
+    return None
+
+
+def header_names(prefix, text):
+    """The names in header `text` that start with `prefix`, in order: each
+    #define with a value (a function-like macro has "(" right after its
+    name, so it isn't one) and each enum member."""
+    text = without_comments(text)
+    names = re.findall(r"^[ \t]*#[ \t]*define[ \t]+(\w+)[ \t]+\S", text, re.MULTILINE)
+    for body in re.findall(r"\benum\b[^{};]*\{([^}]*)\}", text):
+        names += re.findall(r"(?:^|,)\s*(\w+)", body)
+    return [name for name in names if name.startswith(prefix)]
+
+
+def id_names(root):
+    """Every saved ID's name in tree `root`, by kind: a list of (kind's
+    index in ID_KINDS, name). CantRun when a header is missing."""
+    include = root / "include"
+    missing = [h for h in GENERATED_HEADERS if not (include / h).is_file()]
+    if missing:
+        raise CantRun("- {} {} missing. `make firered` generates {}: build "
+                      "first with make firered.".format(
+                          ", ".join("include/" + h for h in missing),
+                          "is" if len(missing) == 1 else "are",
+                          "it" if len(missing) == 1 else "them"))
+    found, seen = [], set()
+    for kind, (prefix, header) in enumerate(ID_KINDS):
+        path = include / header
+        if not path.is_file():
+            raise CantRun("- include/{} is missing".format(header))
+        for name in header_names(prefix, path.read_text()):
+            if name not in seen and not left_out(prefix, name):
+                seen.add(name)
+                found.append((kind, name))
+    return found
+
+
+def ids_probe_source(names):
+    """The ID probe's C source: the headers, and an enum giving each name in
+    `names` a member of its own, set to it, for the compiler to work out."""
+    lines = ['#include "global.h"']
+    lines += ['#include "{}"'.format(header) for _, header in ID_KINDS]
+    lines.append("")
+    lines.append("enum SaveIdsProbe {")
+    lines += ["    {}{} = ({}),".format(ID_PREFIX, name, name) for name in names]
+    lines.append("};")
+    lines.append("enum SaveIdsProbe saveIdsProbe;")
+    return "\n".join(lines) + "\n"
+
+
+def saved_ids(root):
+    """The tree's saved IDs, as a list of (name, number) in the record's
+    order: kind by kind, each in number order."""
+    names = id_names(root)
+    dies = parse_dies(compile_probe(root, ids_probe_source([n for _, n in names])))
+    numbers = {}
+    for die in dies.values():
+        name = die.name() or ""
+        if die.tag == "DW_TAG_enumerator" and name.startswith(ID_PREFIX):
+            numbers[name[len(ID_PREFIX):]] = die.number("DW_AT_const_value")
+    ids = []
+    for kind, name in names:
+        if numbers.get(name) is None:
+            raise CantRun("- the ID probe's enum has no value for {}".format(name))
+        ids.append((kind, numbers[name], name))
+    return [(name, number) for _, number, name in sorted(ids)]
+
+
+def ids_record_text(root):
+    """The tree's saved IDs, as the ID record's text."""
+    return IDS_RECORD_HEADER + "\n" + "".join(
+        "{} {}\n".format(name, number) for name, number in saved_ids(root))
 
 
 # ---------------------------------------------------------------------------
@@ -586,12 +774,14 @@ def shown_path(path):
 
 
 def write_command(args):
-    """The --write command for the tree and record this run used."""
+    """The --write command for the tree and records this run used."""
     command = TOOL_COMMAND + " --write"
     if args.root is not None:
         command += " --root " + str(args.root)
     if args.record is not None:
         command += " --record " + str(args.record)
+    if args.ids_record is not None:
+        command += " --ids-record " + str(args.ids_record)
     return command
 
 
@@ -627,47 +817,154 @@ def explain_difference(record_name, old, new, args):
     ])
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Check the tree's save format against its record, "
-                    "test/save_format.txt, or write it there.")
-    parser.add_argument("--write", action="store_true",
-                        help="write the tree's save format into the record")
-    parser.add_argument("--root", type=Path,
-                        help="the tree to read (default: this repo)")
-    parser.add_argument("--record", type=Path,
-                        help="the record (default: test/save_format.txt in this repo)")
-    args = parser.parse_args(argv)
+def read_ids(record_name, text):
+    """An ID record's IDs, {name: number}. CantRun on a line that isn't
+    `NAME number`."""
+    ids = {}
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line or line.startswith("#"):
+            continue
+        match = re.fullmatch(r"(\w+) (\d+)", line)
+        if not match:
+            raise CantRun("- line {} of {} isn't an ID's name and number: {!r}. "
+                          "Rewrite the record with: {}".format(
+                              number, record_name, line, TOOL_COMMAND + " --write"))
+        ids[match.group(1)] = int(match.group(2))
+    return ids
 
-    root = (args.root or REPO).resolve()
-    record = args.record or DEFAULT_RECORD
+
+def explain_ids_difference(record_name, old, new, args):
+    """What a mismatch of the saved IDs prints: each changed, gone and new
+    ID under a heading saying whether it is a breaking change, then what it
+    means and the ways out."""
+    old_ids, new_ids = read_ids(record_name, old), read_ids(record_name, new)
+    changed = sorted(n for n in old_ids if n in new_ids and old_ids[n] != new_ids[n])
+    gone = sorted(n for n in old_ids if n not in new_ids)
+    added = sorted(n for n in new_ids if n not in old_ids)
+    lines = ["The saved IDs no longer match {}.".format(record_name), ""]
+    if changed:
+        lines.append("Changed number (a breaking change):")
+        lines += ["  {}  {} in the record, {} now".format(n, old_ids[n], new_ids[n])
+                  for n in changed]
+    if gone:
+        lines.append("Gone, removed or renamed (a breaking change):")
+        lines += ["  {}  {} in the record".format(n, old_ids[n]) for n in gone]
+    if added:
+        lines.append("New (not a breaking change: run --write to add it):")
+        lines += ["  {}  {}".format(n, new_ids[n]) for n in added]
+    if changed or gone:
+        return "\n".join(lines + [
+            "",
+            "What this means: a save stores these IDs by number. A save made",
+            "before this change would read a changed or gone ID as whatever has",
+            "its number now, with no error.",
+            "",
+            "There are two ways out:",
+            "  1. Undo the change. To add an ID, give it a free number, or give a",
+            "     placeholder (such as FLAG_0x020 or VAR_0x402A) its first use:",
+            "     either is a new ID, not a breaking change.",
+            "  2. Treat it as a breaking change, which the owner must approve. Run",
+            "       " + write_command(args),
+            "     commit {}, and say so in the PR, in a".format(record_name),
+            "     \"## Breaking change\" section.",
+            "",
+            "See CLAUDE.md, \"Breaking changes\": what counts, and the compatible",
+            "ways to prefer.",
+        ])
+    if added:
+        return "\n".join(lines + [
+            "",
+            "New IDs aren't a breaking change: no save made before holds them.",
+            "Add them to the record with",
+            "  " + write_command(args),
+            "and commit {}. That only adds lines to it.".format(record_name),
+        ])
+    # The same IDs and numbers, but not the text --write gives: an edit by
+    # hand, or a record an older tool wrote.
+    return "\n".join(lines + [
+        "Every ID in it has the same number, but it isn't the text the tool",
+        "writes (its header, or the order of its lines). Rewrite it with",
+        "  " + write_command(args),
+    ])
+
+
+class Record:
+    """One of the tool's records: what it holds (`what`, as messages name
+    it), what a match prints (`matches`, given the record's name), the
+    argument that points at it and its default path, what makes its text
+    from a tree, and what a mismatch prints."""
+
+    def __init__(self, what, matches, arg, default, make, explain):
+        self.what, self.matches = what, matches
+        self.arg, self.default = arg, default
+        self.make, self.explain = make, explain
+
+
+# The records, in the order a run writes or checks them.
+RECORDS = [
+    Record("the save format", "The save format matches {}.", "record",
+           DEFAULT_RECORD, save_format, explain_difference),
+    Record("the saved IDs", "The saved IDs match {}.", "ids_record",
+           DEFAULT_IDS_RECORD, ids_record_text, explain_ids_difference),
+]
+
+
+def check_record(spec, root, args):
+    """Write or check one record (a Record); print what happened. Returns
+    the exit code."""
+    record = getattr(args, spec.arg) or spec.default
     record_name = shown_path(record)
-
     try:
-        new = save_format(root)
+        new = spec.make(root)
         if args.write:
             record.write_text(new)
-            print("Wrote the save format of {} into {}.".format(root, record_name))
+            print("Wrote {} of {} into {}.".format(spec.what, root, record_name))
             return MATCHES
         if not record.is_file():
             raise CantRun("- there is no record at {}. Write one with: {}".format(
                 record_name, write_command(args)))
         old = record.read_text()
+        if old == new:
+            print(spec.matches.format(record_name))
+            return MATCHES
+        print(spec.explain(record_name, old, new, args))
+        return DIFFERS
     except CantRun as problem:
-        print("save_format.py can't check the save format:\n{}".format(problem))
+        print("save_format.py can't check {}:\n{}".format(spec.what, problem))
         return CANT_RUN
     except Exception:  # a bug, or debug information it can't read
         # Python's own exit code for a crash is 1, which here means "the
-        # save format differs", so a crash is reported as can't run.
-        print("save_format.py can't check the save format: it failed.")
+        # record differs", so a crash is reported as can't run.
+        print("save_format.py can't check {}: it failed.".format(spec.what))
         traceback.print_exc(file=sys.stdout)
         return CANT_RUN
 
-    if old == new:
-        print("The save format matches {}.".format(record_name))
-        return MATCHES
-    print(explain_difference(record_name, old, new, args))
-    return DIFFERS
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Check the tree's save format and saved IDs against their "
+                    "records, test/save_format.txt and test/save_ids.txt, or "
+                    "write them there.")
+    parser.add_argument("--write", action="store_true",
+                        help="write the tree's save format and saved IDs into the records")
+    parser.add_argument("--root", type=Path,
+                        help="the tree to read (default: this repo)")
+    parser.add_argument("--record", type=Path,
+                        help="the save format record (default: test/save_format.txt "
+                             "in this repo)")
+    parser.add_argument("--ids-record", type=Path,
+                        help="the ID record (default: test/save_ids.txt in this repo)")
+    args = parser.parse_args(argv)
+
+    root = (args.root or REPO).resolve()
+    codes = []
+    for i, spec in enumerate(RECORDS):
+        if i:
+            print()
+        codes.append(check_record(spec, root, args))
+    # Can't run outweighs differs: a check that couldn't run may hide a
+    # difference.
+    return max(codes)
 
 
 if __name__ == "__main__":
