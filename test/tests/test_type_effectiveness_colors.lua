@@ -42,12 +42,15 @@
 --     Water = NOT_VERY, Grass = SUPER.
 --
 -- MOMENTS (what a recording plays at normal speed; see MOMENTS in
--- test/lib/framework.lua): one per sub-test, held on the FIGHT menu once
--- its colours are checked (fw.show). A: Water green and Grass amber against
--- Charmander. C: the cursor on Squirtle and the colours swapped. D: the
--- cursor back on Charmander and the colours back with it. B: the reopened
--- menu with Squirtle's colours. Everything between them fast-forwards, so
--- in the video each change is a cut from one moment to the next.
+-- test/lib/framework.lua): one per sub-test, while the move names show
+-- their colours. A and B hold on the move menu once its colours are
+-- checked (fw.show): A, Water green and Grass amber against Charmander; B,
+-- the reopened menu with Squirtle's colours. C and D play the change
+-- itself (fw.show_next), each 90 frames from just before its key presses
+-- until a second after: C, the cursor on Charmander, then LEFT to
+-- Squirtle and the colours swap; D, B back to the move menu, then A, and
+-- the cursor and colours snap back to Charmander. Everything else
+-- fast-forwards.
 --
 -- HOW TO RUN:
 --   Headless: bash test/run_test.sh test/tests/test_type_effectiveness_colors.lua
@@ -135,6 +138,12 @@ fw.run(function()
     fw.assert_eq(cursor_before, ADDR.BATTLER_OPPONENT_LEFT,
         "C: cursor starts on left opponent (battler 1)")
 
+    -- The moment's 90 frames: 30 with the cursor on Charmander, the 2 of
+    -- the LEFT press, 5 before the check below, then 53 of Squirtle's
+    -- colours.
+    fw.show_next("C: LEFT to Squirtle, and the colours swap", 90)
+    fw.wait_frames(30)
+
     -- DPAD_LEFT decrements the sTargetIdentities ring:
     --   OPPONENT_LEFT (index 3) -> OPPONENT_RIGHT (index 2) = battler 3
     fw.press("LEFT")
@@ -154,7 +163,7 @@ fw.run(function()
     fw.assert_eq(c1, ADDR.EFF_COLOR_SUPER,    "C: Grass move = super-effective vs Water (slot 1)")
 
     fw.screenshot(fw.out_path("mgba-type-eff-sub-c.png"))
-    fw.show("C: LEFT to Squirtle, and the colours swap")
+    fw.wait_frames(53)  -- the rest of the moment
 
     -- ----------------------------------------------------------------
     -- Sub-test D: cancel, then pick a move again
@@ -166,6 +175,9 @@ fw.run(function()
     -- ----------------------------------------------------------------
     fw.log("--- Sub-test D: cancel and pick a move again, colors follow the reset cursor ---")
 
+    -- The moment's 90 frames: the 54 of B, the move menu, A and target
+    -- selection opening, then 36 of Charmander's colours back.
+    fw.show_next("D: B then A again, and the colours snap back to Charmander's", 90)
     fw.press("B")       -- cancel target selection -> move selection
     fw.wait_frames(20)
     fw.press("A")       -- pick move slot 0 again -> target selection
@@ -185,7 +197,7 @@ fw.run(function()
     fw.assert_eq(d1, ADDR.EFF_COLOR_NOT_VERY, "D: Grass move = not-very-effective vs Fire again (slot 1)")
 
     fw.screenshot(fw.out_path("mgba-type-eff-sub-d.png"))
-    fw.show("D: B then A again, and the colours snap back to Charmander's")
+    fw.wait_frames(36)  -- the rest of the moment
 
     -- ----------------------------------------------------------------
     -- Sub-test B: absent-opponent fallback

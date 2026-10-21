@@ -84,9 +84,6 @@ local MAP_ROUTE1 = (ADDR.MAP_GROUP_KANTO * 256) + ADDR.MAP_NUM_ROUTE1
 -- wall to wall and the tall grass the roamers spawn in is around it.
 local START_X, START_Y = 14, 12
 
--- gBattleOutcome when the player got away (include/constants/battle.h).
-local B_OUTCOME_RAN = 4
-
 -- ---------- read helpers ----------
 
 local function map_packed()
@@ -157,7 +154,9 @@ local STEPS = {
 -- lowest distance is the step. A tree or a ledge is solid to the search
 -- (a ledge can only be jumped one way), so the walk goes round them.
 -- Returns that tile and the walk's length in steps (1: the step into r
--- itself), or nil if nothing reaches r right now.
+-- itself), or nil if nothing reaches r right now. Like walk.plan, but
+-- without the gap walk.lua keeps round roaming Pokemon: here walking
+-- into one is the point.
 local function next_step_toward(r)
     local px, py = mm.player_tile()
     if px == nil then return nil end
@@ -175,7 +174,7 @@ local function next_step_toward(r)
     for _, s in ipairs(STEPS) do
         local nx, ny = px + s.dx, py + s.dy
         local nd = dist[mm.key(nx, ny)]
-        if nd and not solid[mm.key(nx, ny)] and (best_d == nil or nd < best_d) then
+        if nd and (best_d == nil or nd < best_d) then
             best, best_d = { x = nx, y = ny }, nd
         end
     end
@@ -209,7 +208,7 @@ fw.run(function()
         fw.finish()
         return
     end
-    fw.wait_frames(60)
+    fw.wait_frames(60)  -- let the loaded state settle before reading it
 
     fw.assert_eq(map_packed(), MAP_ROUTE1,
         "loaded state has the player on Route 1")
@@ -232,9 +231,8 @@ fw.run(function()
         "the player has control on Route 1")
     fw.show("Route 1 loaded: the player in the middle of the route")
 
-    -- Walk back and forth so the viewer can see the player moving AND
-    -- so the periodic spawn timer (60 frames) gets multiple opportunities
-    -- to populate gRoamers (loading the map spawns some at once, but a
+    -- Walk back and forth so the periodic spawn timer (60 frames) gets
+    -- multiple opportunities to populate gRoamers (loading the map spawns some at once, but a
     -- spawn can miss when the tile it picks is taken).
     fw.log(">>> Walking around to trigger periodic roamer spawns...")
     for round = 1, 6 do
@@ -375,7 +373,7 @@ fw.run(function()
     if battle_started then
         fw.assert_true(pr.wait_for_battle(600), "the roamer's battle began")
         local outcome = pr.play_battle("RUN")
-        fw.assert_eq(outcome, B_OUTCOME_RAN, "the player got away from the roamer's battle")
+        fw.assert_eq(outcome, pr.B_OUTCOME_RAN, "the player got away from the roamer's battle")
         -- (gBattleTypeFlags keeps the battle's bits after it ends, so
         -- this waits for control alone.)
         fw.assert_true(fw.wait_until(walk.ready, 600, "control back after running"),

@@ -21,8 +21,8 @@
 --   - gBattleTypeFlags & BATTLE_TYPE_WILD is set
 --
 -- For end-to-end verification on a real route (spawn-on-load, cap, warp
--- cleanup, flyby), see test_roaming_route1.lua. That test requires manual
--- iteration on navigation logic if it stalls.
+-- cleanup, flyby), see test_roaming_route1.lua. It needs a Route 1
+-- savestate fixture, so the suite leaves it out.
 --
 -- MOMENT (what a recording plays at normal speed; see MOMENTS in
 -- test/lib/framework.lua): the walk into the roamer, through the start of
