@@ -128,7 +128,7 @@ fw.run(function()
     walk_to(28, 29)
     -- The player's jump, then Pikachu's (it takes off about 70 frames after
     -- DOWN and lands about 30 later).
-    fw.show_next("Beat 2: the player jumps the ledge, and Pikachu jumps it after them", 100)
+    fw.show_next("Beat 2: the player jumps the ledge, and Pikachu jumps it after them", 115)
     fw.hold_until("DOWN", function()
         local _, y = follower.player()
         return y == 31
@@ -177,7 +177,8 @@ fw.run(function()
     capture.caption("…and catches up when you land")
     local rejoined = follower.wait_rejoin(watch, 180)
     if rejoined then
-        -- On the frame it appears, so the 90 frames below start with it.
+        -- On the frame it appears, so the moment is the first 60 of the 90
+        -- frames below.
         fw.show_next("Beat 4: Pikachu appears beside the player, who has landed west of the pond")
     end
     fw.assert_true(rejoined, string.format(

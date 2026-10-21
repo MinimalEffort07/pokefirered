@@ -113,11 +113,13 @@
 -- MOMENTS (issue #119, see test/lib/framework.lua). In the mGBA window
 -- (bash test/record_test.sh) the test fast-forwards, warps and setup
 -- included, except at each scenario's crux. A swap is a motion, so its
--- moment is an fw.show_next marked just before the key press that causes
--- it, long enough to see both steps and where each ends up. fw.show_next
--- adds no frames, so the frame counts the scenarios assert stay the same.
--- The 8 runs each of W6 and W8 get one representative: W6's first seed, and
--- W8's first run (of each kind) that bumps into a moving Pikachu.
+-- moment is an fw.show_next, mostly marked just before the key press that
+-- causes it, and long enough to see both steps and where each ends up but
+-- no longer, so the next scenario's warp fast-forwards. fw.show_next adds
+-- no frames, so the frame counts the scenarios assert stay the same. The 8
+-- runs each of W6 and W8 get one representative: W6's first seed, and W8's
+-- first run (of each kind) that bumps into a moving Pikachu, marked at the
+-- bump, since which run bumps isn't known beforehand.
 --
 -- HOW TO RUN:
 --   bash test/run_test.sh test/tests/test_follower_swap.lua
@@ -313,8 +315,8 @@ local function w1()
 
     -- Walk back in: hold UP into Pikachu. The moment lasts until the
     -- screen has faded out on the cave mouth (the map changes about 90
-    -- frames after UP); the cave itself takes 230 more frames to fade in,
-    -- fast-forwarded.
+    -- frames after UP). The cave's own fade-in isn't waited for: it takes
+    -- over 200 frames more, and W3 warps away at once.
     fw.show_next("W1: Pikachu and the player swap, and the player walks back into the cave", 100)
     key_down("UP")
     local entered = watch.run_until(180, function() return on_map(DIGLETT_N) end)
@@ -341,9 +343,9 @@ local function w2()
     local watch = follower.new_watch(name)
 
     -- The moment lasts until the house has faded in and the player has
-    -- control there (about 135 frames after UP), and the wait below keeps
+    -- control there (about 133 frames after UP), and the wait below keeps
     -- the next scenario's warp out of it.
-    fw.show_next("W2: Pikachu and the player swap at the door, and the player's house loads", 140)
+    fw.show_next("W2: Pikachu and the player swap at the door, and the player's house loads", 135)
     key_down("UP")
     local entered = watch.run_until(180, function() return on_map(HOUSE_1F) end)
     key_up("UP")
@@ -353,7 +355,8 @@ local function w2()
         "W2: the map becomes the player's house 1F within 180 frames of holding UP%s",
         entered and (" (" .. entered .. " frames)") or ""))
     if entered then
-        fw.wait_until(walk.ready, 120, "W2: in the house with control")
+        fw.assert_true(fw.wait_until(walk.ready, 120, "W2: in the house with control"),
+            "W2: the player has control in the house")
     end
 end
 
@@ -382,7 +385,8 @@ local function w3()
     follower.set_rng(SEED)
     local watch = follower.new_watch(name)
 
-    fw.show_next("W3: Pikachu and the player swap places at a run, and the player runs on up the path")
+    -- Until the player reaches (8,9), about 40 frames.
+    fw.show_next("W3: Pikachu and the player swap places at a run, and the player runs on up the path", 50)
     local took = up_the_path(watch, { "B", "UP" }, 90)
     watch.finish()
     check_swap(name, watch, "running", 8, 14, 8, 13)
@@ -406,7 +410,8 @@ local function w4()
     follower.set_rng(SEED)
     local watch = follower.new_watch(name)
 
-    fw.show_next("W4: Pikachu and the player swap places on the bicycle, and the player rides on")
+    -- Until the player reaches (8,9), about 26 frames.
+    fw.show_next("W4: Pikachu and the player swap places on the bicycle, and the player rides on", 40)
     local took = up_the_path(watch, { "UP" }, 90)
     watch.finish()
     check_swap(name, watch, "cycling", 8, 14, 8, 13)
@@ -450,8 +455,9 @@ local function w5()
         "W5: 120 frames later the map is still the house and Pikachu is still on the doormat (4,8)"
         .. " (Pikachu on (%s,%s))", tostring(fx), tostring(fy)))
 
-    -- RIGHT: swap back, the player onto the doormat.
-    fw.show_next("W5: Pikachu and the player swap back, the player onto the doormat")
+    -- RIGHT: swap back, the player onto the doormat (the turn and the
+    -- swap take about 24 frames).
+    fw.show_next("W5: Pikachu and the player swap back, the player onto the doormat", 35)
     hold_until_swapped(watch, "RIGHT", 2, 90)
     check_swap(name .. " RIGHT", watch, "walking", 3, 8, 4, 8)
 
@@ -486,7 +492,7 @@ local function w6(seed, show)
     if show then
         -- From Pikachu hurrying down the path until the player reaches (8,6)
         -- with Pikachu behind them (113 frames).
-        fw.show_next(name .. ": head-on, Pikachu and the player swap and Pikachu ends up south of the player", 120)
+        fw.show_next(name .. ": head-on, Pikachu and the player swap and Pikachu ends up south of the player", 115)
     end
     key_down("UP")
     local reached = watch.run(240, function()
@@ -580,7 +586,9 @@ end
 -------------------------------------------------------------------------------
 -- W9: rock stairs, walking and running
 -------------------------------------------------------------------------------
-local function w9(how, keys)
+-- `frames`: the length of the swap's moment, the swap's steps (STEP_FRAMES)
+-- after about 9 frames of turning, and a few more to see where each ends.
+local function w9(how, keys, frames)
     local name = "W9 (" .. how .. ")"
     mm.set_flag(FLAG_SYS_B_DASH)
     -- (11,16) is a rock-stairs tile; the open rows above and below it,
@@ -589,7 +597,7 @@ local function w9(how, keys)
     if not check_start(name, 11, 16, follower.DIR_SOUTH, 11, 15) then return end
     follower.set_rng(SEED)
     local watch = follower.new_watch(name)
-    fw.show_next(name .. ": Pikachu and the player swap places on rock stairs")
+    fw.show_next(name .. ": Pikachu and the player swap places on rock stairs", frames)
     hold_until_swapped(watch, keys, 1, 90)
     watch.finish()
     check_swap(name, watch, how, 11, 16, 11, 15)
@@ -665,9 +673,8 @@ end
 
 -- L1 and L2: the player on (x,29) facing south above the ledge (x,30),
 -- Pikachu put on its landing tile (x,31). Press DOWN: the player jumps the
--- ledge, and Pikachu steps aside onto (ex,31), the player's `side`. `label`
--- names the jump's moment.
-local function make_way_ledge(name, x, side, ex, label)
+-- ledge, and Pikachu steps aside onto (ex,31), the player's `side`.
+local function make_way_ledge(name, x, side, ex)
     if not arrive(name, VIRIDIAN, x, 29) then return nil end
     -- After the warp the player faces south and Pikachu is behind them.
     if not check_start(name, x, 29, follower.DIR_SOUTH, x, 28) then return nil end
@@ -679,7 +686,8 @@ local function make_way_ledge(name, x, side, ex, label)
     -- DOWN until the jump starts: its first frame is the one the player's
     -- tile becomes the ledge (the 2-tile jump moves it onto the ledge as it
     -- starts and onto the landing tile halfway).
-    fw.show_next(label)
+    fw.show_next(string.format(
+        "%s: Pikachu hops aside to the player's %s as the player jumps the ledge onto its tile", name, side))
     key_down("DOWN")
     local takeoff = watch.run(30, function(n)
         local t = watch.player_tiles[n]
@@ -697,14 +705,12 @@ local function make_way_ledge(name, x, side, ex, label)
 end
 
 local function l1()
-    make_way_ledge("L1", 28, "left", 29,
-        "L1: Pikachu hops aside to the player's left as the player jumps the ledge onto its tile")
+    make_way_ledge("L1", 28, "left", 29)
 end
 
 -- L2: the ledge (19,30), whose landing tile's left, (20,31), is a sign.
 local function l2()
-    local watch = make_way_ledge("L2", 19, "right", 18,
-        "L2: Pikachu hops aside to the player's right (a sign is on the left) as the player jumps the ledge")
+    local watch = make_way_ledge("L2", 19, "right", 18)
     if watch then
         fw.assert_true(watch.snap.solid(20, 31), "L2: the player's left, the sign (20,31), is solid")
     end
@@ -847,8 +853,8 @@ fw.run(function()
             .. " of a step, bumps, and swaps once its step has ended (%d did)",
             how, #SPREAD_SEEDS, bumps))
     end
-    w9("walking on rock stairs", "UP")
-    w9("running on rock stairs", { "B", "UP" })
+    w9("walking on rock stairs", "UP", 40)
+    w9("running on rock stairs", { "B", "UP" }, 30)
     l1()
     l2()
     l3()
