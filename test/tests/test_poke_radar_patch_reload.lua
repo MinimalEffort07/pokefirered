@@ -66,6 +66,18 @@
 --      patches 2 and 3, the radar's own, were stopped. It runs last,
 --      because WALK leaves the follower out for good.
 --
+-- MOMENTS (what a recording plays at normal speed; see MOMENTS in
+-- test/lib/framework.lua). Everything else fast-forwards, the save, reset,
+-- title screen and CONTINUE of R3 included. Each label starts with its
+-- scenario:
+--   R1, R2, R3 the patches shaking on their tiles again, back on the field
+--      with no menu open (fw.show), and the step into a patch and the
+--      battle's transition (pr.walk_into_patch's moment).
+--   R4 the field in Pallet Town with no patches, and Route 1's grass with
+--      none back (fw.show).
+--   R5 the step off the grass: the patches go, the player and PIKACHU stay
+--      (fw.show_next).
+--
 -- HOW TO RUN:
 --   bash test/run_test.sh test/tests/test_poke_radar_patch_reload.lua
 -------------------------------------------------------------------------------
@@ -209,9 +221,10 @@ local function close_start_menu(name)
 end
 
 -- Walk into a stored patch tile: the patch battle starts (a wild battle
--- within 300 frames of the step, #89). RUN ends it.
+-- within 300 frames of the step, #89). RUN ends it. The step and the
+-- battle's transition are a moment (pr.walk_into_patch).
 local function assert_patch_battle(name)
-    local stepped, x, y = pr.walk_into_patch(name)
+    local stepped, x, y = pr.walk_into_patch(name, pr.moment(name, "a step into a patch starts the battle"))
     if not stepped then return end
     local started = pr.wait_for_battle(300)
     if not fw.assert_true(started, string.format(
@@ -250,6 +263,7 @@ local function menu_round_trip(name, entry, task, what, shot)
     assert_patches_back(name, before, 0)
     fw.screenshot(fw.out_path(shot))
     if not close_start_menu(name) then return end
+    fw.show(pr.moment(name, "back from " .. what .. ", the four patches shake on their tiles again"))
     assert_patch_battle(name)
 end
 
@@ -280,6 +294,7 @@ local function r3(name)
     fw.log(string.format("[%s] control %d frames after the field's first frame", name, seen))
     assert_patches_back(name, before, seen, live_at)
     fw.screenshot(fw.out_path("mgba-poke-radar-reload-continue.png"))
+    fw.show(pr.moment(name, "after CONTINUE, the four patches shake on their tiles again"))
     -- Move the roaming Pokemon out of the walk's way. One saved with the
     -- game comes back after CONTINUE as an object the roaming code no
     -- longer tracks, so the game never removes it (a roaming-Pokemon
@@ -314,11 +329,13 @@ local function r4(name)
     local ok, id = pr.object_sprite_ok(player_object_index())
     fw.assert_true(ok, string.format("%s: the player's sprite (id %d) is in use and linked to its object", name, id))
     pr.assert_not_frozen(name .. ", in Pallet Town", 120)
+    fw.show(pr.moment(name, "in Pallet Town: no shaking patches"))
     if not fw.assert_true(warp.warp_to_pos(ADDR.MAP_GROUP_KANTO, ADDR.MAP_NUM_ROUTE1, pr.GRASS_X, pr.GRASS_Y),
             name .. ": warped back to Route 1's grass") then
         return
     end
     assert_no_patches(name, "back on Route 1")
+    fw.show(pr.moment(name, "back on Route 1's grass: still no patches"))
 end
 
 -- R5: stored ids that aren't the radar's own patches are forgotten, not
@@ -335,7 +352,10 @@ local function r5(name)
         name, pr.get_patch_sprite_id(0), player_id, pr.get_patch_sprite_id(1), follower_id, own[1], own[2]))
     emu:write8(pr.base() + pr.OFF_PATCH_SPRITE_ID + 0, player_id)
     emu:write8(pr.base() + pr.OFF_PATCH_SPRITE_ID + 1, follower_id)
-    if not pr.walk_off_grass(name) then return end
+    if not pr.walk_off_grass(name,
+            pr.moment(name, "a step off the grass: the patches go, the player and PIKACHU stay")) then
+        return
+    end
     -- The radar acts when the step ends.
     fw.assert_true(pr.wait_step_done(), name .. ": the step off the grass finished")
     local ok
