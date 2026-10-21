@@ -789,8 +789,9 @@ struct ExternalEventFlags
  * The record is the source of truth: these comments are only a guide.
  * Everything from pcItems on sits 0x28 bytes later than in vanilla FireRed,
  * because the quick-select change (48ef17586) grew registeredItem into
- * registeredItems[20], so a field's name (unused_348C) can give its vanilla
- * offset. Changing this struct changes the save format: see CLAUDE.md,
+ * registeredItems[20]. A member named after its offset, such as unused_348C,
+ * still has its vanilla offset in its name, not its real one (0x34B4).
+ * Changing this struct changes the save format: see CLAUDE.md,
  * "Breaking changes". */
 struct SaveBlock1
 {

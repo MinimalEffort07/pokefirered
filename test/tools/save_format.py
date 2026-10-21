@@ -31,7 +31,9 @@ that includes the save's headers, and reads the result:
      constants as an enum, so the compiler works out their values.
   2. It is compiled the way `make firered` compiles a C file for FireRed
      v1.0 with agbcc: the host `cc -E` with the Makefile's flags, then
-     tools/agbcc/bin/agbcc with -g, then arm-none-eabi-as.
+     tools/agbcc/bin/agbcc with -g, then arm-none-eabi-as. It leaves out the
+     Makefile's tools/preproc step, which only turns string literals into
+     the game's own character encoding: no layout depends on it.
      agbcc leaves the DWARF abbreviation table (the table of the debug
      entries' shapes) without its closing zero byte, and readelf refuses
      the file without it, so the tool adds that byte to the assembly.
@@ -54,6 +56,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 
 # The repo this tool is in: test/tools/save_format.py -> the repo root.
@@ -353,15 +356,32 @@ def parse_dies(text):
 # Describing the save format
 # ---------------------------------------------------------------------------
 
-KIND = {
+# The C keyword for each debug entry tag that is a struct, union or enum.
+C_KEYWORD = {
     "DW_TAG_structure_type": "struct",
     "DW_TAG_union_type": "union",
     "DW_TAG_enumeration_type": "enum",
 }
 
 
-def hex_size(size):
+def bytes_text(size):
+    """A size as the record writes it: "36 bytes (0x24)"."""
     return "{} byte{} (0x{:X})".format(size, "" if size == 1 else "s", size)
+
+
+def array_counts(die):
+    """An array type's element counts, one per dimension (None for [])."""
+    counts = []
+    for sub in die.children:
+        if sub.tag == "DW_TAG_subrange_type":
+            upper = sub.number("DW_AT_upper_bound")
+            if upper is None:
+                counts.append(None)
+            else:
+                # A zero-length array's upper bound is -1, which readelf may
+                # print as 0xffffffff.
+                counts.append(0 if upper >= 0xFFFFFFFF else upper + 1)
+    return counts
 
 
 class Layout:
@@ -369,81 +389,52 @@ class Layout:
 
     def __init__(self, dies):
         self.dies = dies
-        self.names = {}       # offset of a struct/union/enum -> its name
-        self.queue = []       # offsets of types still to describe
-        self.seen = set()
+        self.names = {}       # offset of each struct/union/enum met -> its name
+        self.queue = []       # offsets of those still to describe
         self.typedefs = {}    # typedef name -> what it stands for
 
     # -- types as written -------------------------------------------------
 
-    def type_string(self, ref, where):
+    def type_string(self, ref, where, follow=True):
         """The type at offset `ref` as C writes it: a typedef's name,
         `struct X`, an element type with its array sizes. `where` names the
-        place it sits, for a type without a name of its own. Every struct,
-        union, enum and typedef met on the way is queued for a section."""
+        place it sits, for a type without a name of its own. With `follow`,
+        every struct, union, enum and typedef met on the way is queued for a
+        section of its own. What a pointer points at is written with `follow`
+        off: the save holds the pointer's 4 bytes, never what it points at."""
         if ref is None:
             return "void"
         die = self.dies[ref]
         tag = die.tag
         if tag == "DW_TAG_typedef":
             name = die.name()
-            if name not in self.typedefs:
+            if follow and name not in self.typedefs:
                 self.typedefs[name] = None  # mark first: a typedef may refer back
                 target = die.type_ref()
                 text = self.type_string(target, name)
                 self.typedefs[name] = "{}, {}".format(text, self.size_text(target))
             return name
-        if tag in KIND:
+        if tag in C_KEYWORD:
+            if not follow:
+                return "{} {}".format(C_KEYWORD[tag], die.name() or where)
             if ref not in self.names:
                 self.names[ref] = die.name() or where
-            if ref not in self.seen:
-                self.seen.add(ref)
                 self.queue.append(ref)
-            return "{} {}".format(KIND[tag], self.names[ref])
+            return "{} {}".format(C_KEYWORD[tag], self.names[ref])
         if tag == "DW_TAG_base_type":
             return die.name()
         if tag == "DW_TAG_const_type":
-            return "const " + self.type_string(die.type_ref(), where)
+            return "const " + self.type_string(die.type_ref(), where, follow)
         if tag == "DW_TAG_volatile_type":
-            return "volatile " + self.type_string(die.type_ref(), where)
+            return "volatile " + self.type_string(die.type_ref(), where, follow)
         if tag == "DW_TAG_array_type":
-            dims = ""
-            for sub in die.children:
-                if sub.tag != "DW_TAG_subrange_type":
-                    continue
-                upper = sub.number("DW_AT_upper_bound")
-                if upper is None:
-                    dims += "[]"
-                else:
-                    # A zero-length array's upper bound is -1, which
-                    # readelf may print as 0xffffffff.
-                    dims += "[{}]".format(0 if upper >= 0xFFFFFFFF else upper + 1)
-            return self.type_string(die.type_ref(), where) + dims
+            dims = "".join("[]" if n is None else "[{}]".format(n) for n in array_counts(die))
+            return self.type_string(die.type_ref(), where, follow) + dims
         if tag == "DW_TAG_pointer_type":
-            return self.pointer_string(die.type_ref(), where) + " *"
+            return self.type_string(die.type_ref(), where, follow=False) + " *"
         if tag == "DW_TAG_subroutine_type":
             return "function"
         return "<{}>".format(tag)
-
-    def pointer_string(self, ref, where):
-        """What a pointer points at, written without queueing it: the save
-        holds the pointer's 4 bytes, never what it points at."""
-        if ref is None:
-            return "void"
-        die = self.dies[ref]
-        if die.tag in KIND:
-            return "{} {}".format(KIND[die.tag], die.name() or where + "*")
-        if die.tag in ("DW_TAG_typedef", "DW_TAG_base_type"):
-            return die.name()
-        if die.tag == "DW_TAG_const_type":
-            return "const " + self.pointer_string(die.type_ref(), where)
-        if die.tag == "DW_TAG_volatile_type":
-            return "volatile " + self.pointer_string(die.type_ref(), where)
-        if die.tag == "DW_TAG_pointer_type":
-            return self.pointer_string(die.type_ref(), where) + " *"
-        if die.tag == "DW_TAG_subroutine_type":
-            return "function"
-        return "<{}>".format(die.tag)
 
     def size_of(self, ref):
         """The size in bytes of the type at `ref`, or None if it has none."""
@@ -459,27 +450,24 @@ class Layout:
             return 4
         if die.tag == "DW_TAG_array_type":
             size = self.size_of(die.type_ref())
-            for sub in die.children:
-                upper = sub.number("DW_AT_upper_bound")
-                if size is None or upper is None:
+            for count in array_counts(die):
+                if size is None or count is None:
                     return None
-                size *= 0 if upper >= 0xFFFFFFFF else upper + 1
+                size *= count
             return size
         return None
 
     def size_text(self, ref):
         size = self.size_of(ref)
-        return "no size" if size is None else hex_size(size)
+        return "no size" if size is None else bytes_text(size)
 
     # -- sections -----------------------------------------------------------
 
     def section(self, ref):
         """The lines describing one struct, union or enum."""
         die = self.dies[ref]
-        kind, name = KIND[die.tag], self.names[ref]
-        if "DW_AT_declaration" in die.attrs:
-            return ["{} {}, never defined".format(kind, name)]
-        lines = ["{} {}, {}".format(kind, name, hex_size(die.number("DW_AT_byte_size", 0)))]
+        kind, name = C_KEYWORD[die.tag], self.names[ref]
+        lines = ["{} {}, {}".format(kind, name, bytes_text(die.number("DW_AT_byte_size", 0)))]
         if kind == "enum":
             for child in die.children:
                 if child.tag == "DW_TAG_enumerator":
@@ -515,7 +503,7 @@ def find_root_types(dies):
         variable = variables.get(ROOT_VARIABLE.format(i))
         pointer = variable and dies.get(variable.type_ref())
         target = pointer and dies.get(pointer.type_ref())
-        if not target or target.tag not in KIND or "DW_AT_declaration" in target.attrs:
+        if not target or target.tag not in C_KEYWORD or "DW_AT_declaration" in target.attrs:
             raise CantRun(
                 "- the probe can't see {0}'s definition. If it moved to another "
                 "header, add that header to PROBE_HEADERS in "
@@ -552,7 +540,7 @@ def describe(dies):
         ref = layout.queue.pop(0)
         sections[ref] = layout.section(ref)
     others = sorted((ref for ref in sections if ref not in roots),
-                    key=lambda ref: (layout.names[ref], KIND[dies[ref].tag]))
+                    key=lambda ref: (layout.names[ref], C_KEYWORD[dies[ref].tag]))
     blocks = [constant_lines(dies)]
     blocks += [sections[ref] for ref in roots + others]
     blocks.append(["typedefs"] + ["  {} = {}".format(name, layout.typedefs[name])
@@ -667,6 +655,12 @@ def main(argv=None):
         old = record.read_text()
     except CantRun as problem:
         print("save_format.py can't check the save format:\n{}".format(problem))
+        return CANT_RUN
+    except Exception:  # a bug, or debug information it can't read
+        # Python's own exit code for a crash is 1, which here means "the
+        # save format differs", so a crash is reported as can't run.
+        print("save_format.py can't check the save format: it failed.")
+        traceback.print_exc(file=sys.stdout)
         return CANT_RUN
 
     if old == new:

@@ -10,7 +10,9 @@
 --   build is read back by the structs of the next. If a member moved, the
 --   newer build reads every value after it from the wrong place, and nothing
 --   says so: an old save still passes its checksums. That happened once
---   already (CLAUDE.md, "Breaking changes"). So the save format is written
+--   already, when the quick-select change (48ef17586) moved everything in
+--   SaveBlock1 from pcItems on (see the comment above struct SaveBlock1 in
+--   include/global.h). So the save format is written
 --   down, exactly as the compiler lays it out, in test/save_format.txt, and
 --   this test fails the suite when a branch's save format no longer matches
 --   it. A change made on purpose updates the record with
@@ -26,7 +28,7 @@
 --        changes and no line of SaveBlock1 does (ItemSlot stays 4 bytes),
 --        so the tool reads nested types, and changes that keep the size.
 --   S4   SaveBlock1's reserved bytes given a use (u8 newThing; then 399
---        unused bytes): exit 1.
+--        unused bytes): exit 1, the diff adding a line naming newThing.
 --   S5   A u8 added at the end of struct PokeRadar, which is laid over
 --        those reserved bytes: exit 1, shown under struct PokeRadar.
 --   S6   SECTOR_SIGNATURE changed in include/save.h: exit 1.
@@ -42,7 +44,13 @@
 --   repo's include/ folder, made by `mktemp -d`, with tools/agbcc linked in)
 --   with one edit made to the copy. The repo's own files are never changed.
 --   Each edit is checked to have happened, so a scenario can't pass on an
---   unchanged copy. The copies are removed at the end.
+--   unchanged copy. run_test.sh points TMPDIR at the run's own folder, so
+--   mktemp makes the copies there. They are removed at the end; a test that
+--   stops early leaves them in its run folder, like its other files.
+--
+-- EXIT CODES ARE CHECKED WITH WHAT WAS PRINTED: the tool exits 1 only for
+--   "the save format differs" (a crash is reported as 2, can't run), and
+--   each exit-1 scenario also checks the diff shows its change.
 --
 -- HOW A TEST CAN RUN A PROGRAM: mGBA's Lua has the standard io library, so
 --   io.popen starts each command as a separate process and reads what it
@@ -302,6 +310,8 @@ fw.run(function()
     end, "S4")
     code, output = run_tool(on_tree(s4_tree))
     expect_exit(code, output, 1, "S4 reserved bytes")
+    fw.assert_true(any_line_has(diff_lines(output, "+"), { "newThing" }),
+        "S4 the diff adds a line naming newThing")
 
     fw.log("=== S5: a u8 added at the end of struct PokeRadar ===")
     local s5_tree = scratch_tree()
