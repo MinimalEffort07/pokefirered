@@ -13,6 +13,32 @@ Pokemon FireRed decompilation (forked from pret/pokefirered) with custom feature
 - **What the suite checks.** `test/tests/test_system_map.lua` fails when a script is missing from the map, or when the map names a file that doesn't exist. A script is any `.sh`, `.py`, `.pl` or `.lua` file directly in the top level, `.github/calcrom/`, `automation/`, `automation/bin/`, `automation/autodev/`, `test/`, `test/lib/` or `test/tools/`. Whether each line still says what its script does is for the code review (step 10).
 - **Every PR says what changes for the owner.** Its body has a `## What changes for you` section (step 11). `issue.py open-pr` refuses an autodev PR body without one.
 
+## Breaking changes
+
+A **breaking change** is any change to the save format, even one old saves survive, or anything else that stops something made before from working the way it did. It covers:
+1. **The save format**: the layout of everything the game writes to flash.
+   - `struct SaveBlock1`, `struct SaveBlock2` and `struct PokemonStorage`, and every type inside them: party and box Pokémon, object events, items, mail, the quest log and the rest.
+   - The Hall of Fame (`struct HallofFameTeam`) and the Trainer Tower e-Reader data (`struct EReaderTrainerTowerSet`).
+   - The flash sector (`struct SaveSector`, its signature and its sizes).
+   - Any struct laid over reserved bytes (`struct PokeRadar` over `unused_348C`).
+
+   Giving reserved or filler bytes a use, renaming a member and growing a struct at its end all count. So does a change to how `src/save.c` and `src/load_save.c` write and read the save: the sector table, the checksum, which fields are encrypted, and what loading does to old data.
+2. **A saved ID changing meaning**: renumbering or removing a flag, var, item, species, move, map, layout, map section, trainer, object-event graphics ID, object local ID or game stat. Adding one at a free number isn't breaking, nor is giving a placeholder flag or var (`FLAG_0x…`, `VAR_0x…`) its first use.
+3. **A saved value meaning something else**: what a var holds, the Poke Radar state, the player's graphics ID.
+4. **The multiplayer link**: what two GBAs send each other (`src/multiplayer.c`). Builds from either side of a change must still play together.
+5. **What this machine keeps**: recording notes files in `~/recordings`, autodev's session records and `paused-until`, and `automation/config.json`. Newer code must still read what older code wrote.
+6. **What autodev reads back from GitHub**: its comment markers, the `## Parent` and `## Blocked by` headings, the board's Status names, branch names and the PR comment commands.
+7. **What the owner types**: removing or renaming a command, option, make target, environment variable or comment command that the README, the system map or this file documents.
+
+**Not breaking:** adding something new; a change that still reads the old form, or converts it; mGBA savestates and other test fixtures (each is good only for the build that made it); the addresses tests hard-code; memory that isn't saved; the ROM's own layout; a refactor that behaves the same; Mt. Moon building a different cave from the same seed (Continue rebuilds the cave from the saved seed, and the safety net, S9, moves the player onto floor).
+
+**Prefer the compatible way**: reserved bytes, a free flag or var, a new ID at the end of its list, code that reads both the old and the new form. Only when there's none is it a breaking change. Then the design, the ticket and the PR all say so (step 11), and **it merges only with the owner's explicit approval**.
+
+**The save format record.** `test/save_format.txt` is the save format exactly as agbcc lays it out: every struct, union, enum and typedef a save holds, with each member's offset and type, and the flash format's constants. `test/tools/save_format.py` writes it, and checks the tree against it; `test/tests/test_save_format.lua` fails the suite when they differ.
+- **The record changes only through `python3 test/tools/save_format.py --write`**, never by hand, and only for a breaking change, committed in the PR that declares it.
+- **A merge conflict in the record** is resolved by running `--write` on the merged tree.
+- **A new struct laid over reserved bytes** joins the tool's `ROOTS` in the same PR, so the record covers it.
+
 ## Build Commands
 
 Targets live in `Makefile`; variable defaults live in `config.mk`. Add `-j$(nproc)` to any build.
@@ -230,7 +256,7 @@ Leave `pr:` out: the PR doesn't exist yet, so step 11 adds its number. `record_t
 Add or update the feature description and include a demo GIF if the feature has visible in-game behaviour. Update `docs/SYSTEM_MAP.md` too when the change touches anything on it (see "System map").
 
 **10. Code review**
-Invoke the `mattpocock-skills:code-review` skill against `master` and address its findings. Give the review this file's "System map" section as one of its standards: `docs/SYSTEM_MAP.md` must still describe everything the change touched.
+Invoke the `mattpocock-skills:code-review` skill against `master` and address its findings. Give the review this file's "System map" and "Breaking changes" sections as standards: `docs/SYSTEM_MAP.md` must still describe everything the change touched, and a breaking change the PR doesn't declare is a finding.
 
 **11. Create a PR**
 
@@ -238,6 +264,8 @@ Invoke the `mattpocock-skills:code-review` skill against `master` and address it
 gh pr create --title "Fix #<T>: <short description>" --body "..."
 ```
 PR body must reference the ticket and parent issue numbers, summarise what changed, and list what was tested. It also has a `## What changes for you` section: two or three plain sentences telling the owner what is different for them, such as a new command, a new board behaviour, a new rule for tests or a feature to try. When nothing is, it says `Nothing: internal only.`
+
+A PR that is a breaking change (see "Breaking changes") also has a `## Breaking change` section. It says what stops working and what happens to a save made before, why there was no compatible way, and what the owner should do. Its "What changes for you" says so too.
 
 With a recording, the PR body links each recording's own page: one `Recording: http://100.76.129.86:8080/r/<name>` line per recording, with `<name>` as `record_test.sh` printed it. Once the PR exists and you know its number, put it into each recording's notes, so its card links the PR:
 ```bash

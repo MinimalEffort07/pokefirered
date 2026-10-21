@@ -354,11 +354,12 @@ fw.run(function()
     expect_exit(code, output, 2, "S9 no agbcc")
     fw.assert_true(has(output, "agbcc"), "S9 the output names agbcc")
 
-    -- Remove the scratch folders. Each is checked to be one mktemp made
-    -- (mktemp's names end in tmp. and ten letters or digits), so a mistake
-    -- here can never remove anything else.
+    -- Remove the scratch folders. Each is checked to be one mktemp made (a
+    -- full path whose last name is tmp. and ten letters or digits), so a
+    -- mistake here can never remove anything else.
     for _, dir in ipairs(scratch_dirs) do
-        if dir:match("^/.+/tmp%.%w+$") then
+        local name = dir:match("^/.+/([^/]+)$")
+        if name and name:match("^tmp%.%w+$") then
             os.execute("rm -rf " .. sh_quote(dir))
         end
     end
