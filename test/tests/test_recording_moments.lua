@@ -32,7 +32,8 @@
 --       at any depth, other than test/lib/framework.lua calls
 --       setFastForward, slow_down or speed_up (see M8 BELOW). The check
 --       proves itself first, on planted lines in a scratch file in this
---       run's own folder, and on the framework's own call.
+--       run's own folder, and on the framework's own call. And the
+--       framework has no fw.slow_down or fw.speed_up any more.
 --   M10 A test library loading its own copy of the framework mid-test
 --       doesn't end a moment that is playing (the M6 fixture checks that it
 --       doesn't lose the count either).
@@ -52,9 +53,12 @@
 -- variable first. Comments are skipped, the way
 -- test/tests/test_no_fixed_tmp_paths.lua skips them: a name there is only
 -- talk about the call. Strings are skipped too: a name in a log message, or
--- in the lines M8 plants below, isn't a call. Like that test, the scan goes
--- line by line and doesn't understand Lua's multi-line [[...]] strings or
--- --[[...]] comments, which no file here uses.
+-- in the lines M8 plants below, isn't a call. (So a call written through a
+-- string, emu["setFastForward"](emu, 1), would get past it: M8 guards
+-- against the plain calls a test would write, not against hiding one.)
+-- Like that test, the scan goes line by line and doesn't understand Lua's
+-- multi-line [[...]] strings or --[[...]] comments, which no file here
+-- uses. A file it can't read counts as a failure, so it can't hide one.
 --
 -- The fixtures are in test/tests/framework_fixtures/ (two_moments.lua and
 -- no_moments.lua). As in test/tests/test_framework_rules.lua, io.popen
@@ -209,7 +213,7 @@ end
 
 -- M8 on the tree: speed_calls_in on every .lua file under test/, at any
 -- depth, except SPEED_OWNER. Returns how many files it read and a
--- "file:line name" string for every use it found.
+-- "file:line name" string for every use it found (or "file: can't be read").
 local function speed_calls_in_tree()
     -- List the files from the project root, so paths read "test/...".
     local pipe = io.popen("cd '" .. project_dir .. "' && find test -type f -name '*.lua' | sort")
@@ -223,6 +227,8 @@ local function speed_calls_in_tree()
                 for _, use in ipairs(found) do
                     uses[#uses + 1] = string.format("%s:%d %s", file, use.line, use.name)
                 end
+            else
+                uses[#uses + 1] = file .. ": can't be read"
             end
         end
     end
@@ -233,12 +239,12 @@ end
 -- Lines M8 plants in a scratch file, with the name each one must be flagged
 -- for (nil: not flagged).
 local PLANTED = {
-    { text = 'fw.slow_down("x")',                     flag = "slow_down" },
-    { text = '-- fw.slow_down("x")',                  flag = nil },
-    { text = 'emu:setFastForward(1)',                 flag = "setFastForward" },
+    { text = 'fw.slow_down("x")',                       flag = "slow_down" },
+    { text = '-- fw.slow_down("x")',                    flag = nil },
+    { text = 'emu:setFastForward(1)',                   flag = "setFastForward" },
     { text = 'local up = fw.speed_up  -- called later', flag = "speed_up" },
-    { text = 'fw.log("no fw.slow_down here")',         flag = nil },
-    { text = 'local slow_downhill = 1',               flag = nil },
+    { text = 'fw.log("no fw.slow_down here")',          flag = nil },
+    { text = 'local slow_downhill = 1',                 flag = nil },
 }
 
 -- M1 and M2: fw.show(label, frames) holds for `frames` frames at normal speed.
