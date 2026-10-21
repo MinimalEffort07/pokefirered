@@ -65,6 +65,12 @@
 --       --font-size 15
 -- (15, not the default 18: beat 1's caption is too long for the bar at 18.)
 -- captions.tsv in the frame directory says which caption each frame has.
+--
+-- MOMENTS (issue #119, see test/lib/framework.lua). In the mGBA window
+-- (bash test/record_test.sh) the demo fast-forwards, warps between beats
+-- included, except at one moment per beat, which plays at normal speed.
+-- Moments change only the window's speed, never the frames, so the GIF's
+-- frame dumps are the same either way.
 -------------------------------------------------------------------------------
 
 local script_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or ""
@@ -142,7 +148,6 @@ fw.run(function()
     follower.set_rng(SEED)
     fw.wait_frames(20)
 
-    fw.slow_down("Follower swap demo")
     capture.start()
 
     -- 1. Out of the cave: DOWN onto the exit, let go once the warp starts.
@@ -167,7 +172,7 @@ fw.run(function()
         return px == 17 and py == 12 and walk.ready()
     end, 300, "the player out of the cave with control")
     local cleared = follower.clear_roamers()
-    fw.wait_frames(60)
+    fw.show("Beat 1: Pikachu waits on the cave mouth (17,11), the player out on (17,12)", 60)
     watch.detach()
     local f = follower.read()
     fw.assert_true(out and cleared and f ~= nil and f.x == 17 and f.y == 11, string.format(
@@ -176,6 +181,9 @@ fw.run(function()
 
     -- 2. Back in: UP into Pikachu, swap, through the cave mouth.
     capture.caption("Walk into it and you swap places")
+    -- Until the screen has faded out on the cave mouth (the map changes
+    -- about 90 frames after UP).
+    fw.show_next("Beat 2: Pikachu and the player swap, and the player walks back into the cave", 100)
     emu:addKey(fw.KEY.UP)
     local entered = watch.run_until(180, function() return on_map(DIGLETT_N) end)
     emu:clearKey(fw.KEY.UP)
@@ -201,6 +209,7 @@ fw.run(function()
     capture.caption("…even at a run")
     capture.resume()
     watch.run(40)
+    fw.show_next("Beat 3: Pikachu and the player swap places at a run, and the player runs on up the path")
     emu:addKey(fw.KEY.B)
     emu:addKey(fw.KEY.UP)
     local start = watch.frame_no
@@ -238,6 +247,7 @@ fw.run(function()
     capture.caption("Jump down onto it and it hops aside")
     capture.resume()
     watch.run(40)
+    fw.show_next("Beat 4: Pikachu hops aside to the player's left as the player jumps the ledge onto its tile")
     emu:addKey(fw.KEY.DOWN)
     local jump = watch.run(30, function(n)
         local t = watch.player_tiles[n]
@@ -283,6 +293,10 @@ fw.run(function()
         watch.finish()
         return stop()
     end
+    -- From Pikachu waiting on the shore until it has stepped aside: 30
+    -- frames here, then the turn, the last tile of water and the hop (about
+    -- 80 frames in all).
+    fw.show_next("Beat 5: Pikachu waits on the shore and steps aside as the player comes ashore onto its tile", 90)
     watch.run(30)
     -- Back east and ashore onto (17,28).
     local start5 = watch.frame_no
