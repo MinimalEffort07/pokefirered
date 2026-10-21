@@ -74,8 +74,9 @@
 -- each portrait moment starts as measure_portrait() finds it there. The
 -- moments in B, D, E and F play frames the test waits anyway (D's surf is
 -- a fw.show in place of the 60-frame wait it had), so they change none of
--- the frames the game sees; A and C hold the outcome on screen (fw.show)
--- after their checks, which adds their frames at the end of the sub-test.
+-- the frames the game sees. A and C hold the outcome on screen (fw.show)
+-- after a check, which adds 60 frames to the sub-test; A first waits 60
+-- more for the sign to finish typing.
 --
 -- Run:    bash test/run_test.sh test/tests/test_slaveless_hm_obstacle.lua
 -- Record: bash test/record_test.sh test/tests/test_slaveless_hm_obstacle.lua
@@ -638,9 +639,9 @@ fw.run(function()
     -- tree at tile 11,23; tree is at tile 11,24), then A to confirm.
     fw.hold("DOWN", 8)
     fw.wait_frames(60)
-    fw.press("A")     -- dismiss the sign-style "can't cut" message
+    fw.press("A")     -- the sign "This tree looks like it can be CUT down!" types out
     fw.wait_frames(60)
-    fw.press("A")     -- extra press in case dialog needs two A taps to clear
+    fw.press("A")     -- does nothing: the sign is still typing
     fw.wait_frames(60)
 
     sb1 = fw.read32(ADDR.gSaveBlock1Ptr)
@@ -742,9 +743,10 @@ fw.run(function()
     fw.screenshot(fw.out_path("mgba-slaveless-b-appeared.png"))
     fw.press("A")         -- A3: dismiss appeared message → animation starts
     local outdoor_pixels = measure_portrait("mgba-slaveless-b-silhouette.png")
-    -- The portrait rests for 30 frames and slides out, and the tree is cut
-    -- down by about 115 frames after it comes to rest.
-    fw.show_next("B: the mysterious POKéMON on the outdoor banner, then the tree is cut down", 120)
+    -- The portrait rests for 30 frames and slides out, the tree is cut
+    -- down from about 50 frames after it came to rest and is gone at about
+    -- 115; the moment ends half a second after that.
+    fw.show_next("B: the mysterious POKéMON on the outdoor banner, then the tree is cut down", 150)
     check("B: mysterious POKéMON visible on the outdoor banner",
         outdoor_pixels >= MIN_VISIBLE_PORTRAIT_PIXELS)
     fw.wait_frames(600)   -- full animation + tree removal

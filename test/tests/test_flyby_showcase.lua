@@ -36,8 +36,8 @@
 -- test/lib/framework.lua): the rest fast-forwards, the watching included.
 -- At each stop, the first flyby to come on screen is a moment: the next
 -- FLYBY_MOMENT_FRAMES frames play at normal speed while it crosses (a bird
--- flies a pixel a frame, so it takes about 5 seconds to cross the whole
--- 240-pixel screen; the moment shows the first two). The watch is a timed
+-- flies a pixel a frame, so it takes 4 seconds to cross the 240-pixel-wide
+-- screen; the moment shows the first two). The watch is a timed
 -- stretch, so the moment is a fw.show_next, cut short if the watch ends
 -- first. A stop where no flyby appears has no moment.
 --
@@ -86,10 +86,11 @@ local function read_flyby(slot_index)
     return sid, anim
 end
 
--- True when sprite `sid` is on the screen. A flyby spawns off screen, 48
--- pixels past the left or right edge, and flies in. struct Sprite starts
--- with its OAM entry (the GBA's per-sprite hardware attributes), which the
--- sprite code rewrites every frame with the sprite's on-screen position;
+-- True when sprite `sid` is on the screen. A flyby spawns off screen, its
+-- centre 48 pixels past the left or right edge, and flies in. struct
+-- Sprite starts with its OAM entry (the GBA's per-sprite hardware
+-- attributes), which the sprite code rewrites every frame with the
+-- sprite's on-screen position;
 -- attribute 1 (u16 at +2) holds the x of its top-left corner in bits 0-8.
 -- That x is 9 bits wide and wraps, so a sprite partly past the left edge
 -- reads 512 minus the overhang: counting only 0 to 223 means the bird's

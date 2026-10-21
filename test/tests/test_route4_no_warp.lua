@@ -385,7 +385,9 @@ local function check_no_warp(name, local_id, sides)
     fw.assert_true(closed, name .. ": dialog closed and script ended")
 
     set_phase("Dialog closed: watching for a warp")
-    fw.show_next(name .. ": the dialog has closed and the screen stays on Route 4, with no fade to Oak's Lab")
+    if closed then
+        fw.show_next(name .. ": the dialog has closed and the screen stays on Route 4, with no fade to Oak's Lab")
+    end
     local left_at = nil
     local left_to = nil
     for i = 1, WATCH_FRAMES do

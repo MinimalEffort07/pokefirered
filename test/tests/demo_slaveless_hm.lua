@@ -106,10 +106,10 @@ fw.run(function()
     fw.press("A")          -- YES → "A mysterious POKéMON appeared and used CUT!"
     fw.wait_frames(260)
     fw.press("A")          -- dismiss → silhouette on the banner, tree cut
-    -- The banner slides in about 28 frames after A; the tree is cut down
-    -- about 145 frames after that.
+    -- The banner slides in about 28 frames after A; the tree is gone
+    -- about 145 frames after that, and the moment ends half a second later.
     fw.wait_frames(28)
-    fw.show_next("CUT: the grey silhouette on the banner, then the tree is cut down", 150)
+    fw.show_next("CUT: the grey silhouette on the banner, then the tree is cut down", 180)
     fw.wait_frames(252)
 
     -- 2. SURF: walk to the pond edge at tile (15,25) and face the water.
