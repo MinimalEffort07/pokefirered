@@ -23,7 +23,9 @@ IN_PROGRESS = "In progress"
 IN_REVIEW = "In review"
 NEEDS_HUMAN = "Needs human"
 DONE = "Done"
-PAUSED = "Paused"           # the owner's stop switch (#48, "Board")
+# The owner's stop switch (#48, "Board"), and where a breaking design waits
+# for the owner's approval (#143).
+PAUSED = "Paused"
 
 
 # ── What the dispatcher knows ─────────────────────────────────────────────
@@ -257,9 +259,13 @@ def plan(state):
     # A paused parent stops all of its tickets from starting (a paused
     # ticket stops itself, since nothing starts from Paused). So does one
     # still being grilled: the board adds each ticket as the grill creates
-    # it, before the grill has finished.
+    # it, before the grill has finished. Its grill session holds them until
+    # it is finished with, whatever the card says, so a breaking design's
+    # tickets can't start on the tick it ends, before its parent is Paused
+    # (#143).
     held = {i.number for i in state.items if i.status in (PAUSED, GRILLING)
             or (i.status == TODO and ("grill", i.number) in state.requeued)}
+    held |= {s.issue for s in state.sessions if s.role == "grill"}
     places = _places(state)
     # (priority, group) for each group that launches a session, or holds a
     # slot for one

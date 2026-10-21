@@ -20,7 +20,8 @@ from autodev.worktrees import branch_prefix
 # (CLAUDE.md, "Autonomous mode"), which is how the dispatcher finds it.
 DESIGN_MARKER = "<!-- autodev:design -->"
 # A design that is a breaking change carries this beside the design marker
-# (CLAUDE.md, step 3), so its parent waits in Paused for the owner (#143).
+# (CLAUDE.md, "Autonomous mode"), so its parent waits in Paused for the
+# owner (#143).
 BREAKING_MARKER = "<!-- autodev:breaking -->"
 
 SET_STATUS = """
@@ -114,17 +115,19 @@ class GitHub:
     # ── reading a finished grill ──────────────────────────────────────────
 
     def grill_outcome(self, parent, reported):
-        """What GitHub shows for `parent` after its grill session ended.
-        `reported` is the ticket numbers the session listed in its result;
-        the parent's sub-issues are checked too, in case it missed one."""
+        """What GitHub shows for `parent` after its grill session ended:
+        whether the bot posted the design comment, and whether that marks
+        the design a breaking change, and the parent's tickets. `reported`
+        is the ticket numbers the session listed in its result; the
+        parent's sub-issues are checked too, in case it missed one."""
         repo = self.config.repo
         comments = self.gh.rest_list("repos/%s/issues/%d/comments" % (repo, parent))
-        designs = [c["body"] for c in comments if c["user"]["login"] == self.config.bot
-                   and DESIGN_MARKER in (c["body"] or "")]
-        # Only the design comment can mark the design breaking, and only
-        # outside code: written in code, the marker is text describing it.
-        # A re-queued grill may have posted two; either one holds the parent.
-        breaking = any(BREAKING_MARKER in prose(body) for body in designs)
+        design_bodies = [c["body"] for c in comments
+                         if c["user"]["login"] == self.config.bot
+                         and DESIGN_MARKER in (c["body"] or "")]
+        # Only the design comment can mark the design breaking. A re-queued
+        # grill may have posted two; either one holds the parent.
+        breaking = any(has_marker(body, BREAKING_MARKER) for body in design_bodies)
         subs = self.gh.rest_list("repos/%s/issues/%d/sub_issues" % (repo, parent))
         linked = {s["number"] for s in subs}
         tickets = []
@@ -145,7 +148,7 @@ class GitHub:
                 open_blockers=any(self._issue(b)["state"] == "open"
                                   for b in blockers),
             ))
-        return GrillOutcome(design_comment=bool(designs), tickets=tickets,
+        return GrillOutcome(design_comment=bool(design_bodies), tickets=tickets,
                             breaking=breaking)
 
     # ── a ticket's PR ─────────────────────────────────────────────────────
@@ -262,6 +265,15 @@ def prose(body):
     notifies a mention, closes an issue nor shows a heading written inside
     code."""
     return re.sub(r"```.*?```|`[^`]*`", "", body or "", flags=re.DOTALL)
+
+
+def has_marker(body, marker):
+    """Whether `body` carries the hidden `marker` outside code: written in
+    code, it is text describing the marker. Unlike prose(), a code span
+    here ends with its line, so a stray backtick earlier in a long comment
+    can't pair with one after the marker and hide it: in doubt, it counts."""
+    text = re.sub(r"```.*?```", "", body or "", flags=re.DOTALL)
+    return marker in re.sub(r"`[^`\n]*`", "", text)
 
 
 # ── breaking changes ─────────────────────────────────────────────────────

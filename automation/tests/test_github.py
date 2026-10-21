@@ -51,7 +51,7 @@ class DesignComment(unittest.TestCase):
                                   ISSUES + "/61/sub_issues": []}, [])
                 self.assertEqual(result.design_comment, expected)
 
-    def test_D1_only_the_bots_design_comment_can_mark_the_design_breaking(self):
+    def test_143_D1_only_the_bots_design_comment_can_mark_it_breaking(self):
         # #143: a breaking design holds its parent in Paused, so the marker
         # counts only where the grill puts it, next to the design marker.
         breaking = ("Design...\n## Breaking change\n\nOld saves stop loading.\n"
@@ -74,6 +74,11 @@ class DesignComment(unittest.TestCase):
             ([comment("MinimalEffort07-Autodev",
                       "The hidden marker `<!-- autodev:breaking -->`.\n"
                       "<!-- autodev:design -->\n\n<!-- autodev -->")], False),
+            # A stray backtick earlier on can't hide the real marker by
+            # pairing with one after it: in doubt, the design is held.
+            ([comment("MinimalEffort07-Autodev",
+                      "Run `make.\n<!-- autodev:design -->\n<!-- autodev:breaking -->"
+                      "\nThen `make check`.\n\n<!-- autodev -->")], True),
         ]:
             with self.subTest(comments=comments):
                 result = outcome({ISSUES + "/61/comments": comments,
