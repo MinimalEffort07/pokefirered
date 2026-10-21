@@ -24,6 +24,11 @@
 -- cleanup, flyby), see test_roaming_route1.lua. That test requires manual
 -- iteration on navigation logic if it stalls.
 --
+-- MOMENT (what a recording plays at normal speed; see MOMENTS in
+-- test/lib/framework.lua): the walk into the roamer, through the start of
+-- the wild-battle transition (fw.show_next, see step 3a). Everything else
+-- fast-forwards.
+--
 -- HOW TO RUN:
 --   bash test/run_test.sh test/tests/test_roaming_bump.lua
 -------------------------------------------------------------------------------
@@ -134,19 +139,6 @@ fw.run(function()
 
     -- ---------- 2. Inject roamer south of player ----------
 
-    -- Drop to real-time speed so a GUI tester can watch the next steps:
-    -- the injected roamer becomes "live" in memory, the player presses
-    -- DOWN, the bump triggers a wild battle, and the battle intro
-    -- transition plays out. This is the visually meaningful part.
-    --
-    -- Note: because we inject the OE struct fields directly without
-    -- going through SpawnSpecialObjectEventParameterized, the roamer
-    -- has NO sprite loaded -- so the Pikachu won't actually be visible
-    -- on screen. What you WILL see is the player walking south, getting
-    -- bumped (collision), and the wild battle transition starting on
-    -- an apparently empty tile. That's the bump pipeline working.
-    fw.slow_down("watch player bump into invisible roamer -> wild battle")
-
     -- Place the roamer 1 tile south of the player. The player faces
     -- south by default after Oak's speech shrink animation, so the
     -- first DOWN press will attempt to walk south (no facing-turn
@@ -178,6 +170,18 @@ fw.run(function()
     -- injected tile (engine returns COLLISION_IMPASSABLE first and
     -- our hook never fires). We log the result and fall through to
     -- the direct dispatch path below.
+    --
+    -- The moment: because we inject the OE struct fields directly without
+    -- going through SpawnSpecialObjectEventParameterized, the roamer has
+    -- NO sprite loaded, so the Pikachu isn't visible on screen. What a
+    -- watcher sees is the player pressing south into an apparently empty
+    -- tile and the wild battle transition starting there. The moment's 90
+    -- frames: 20 of the player standing, facing the roamer's tile, then
+    -- the press. The bump comes on the press's first frames and the
+    -- transition about 13 frames later, so the rest of the moment plays
+    -- its first second.
+    fw.show_next("the player steps south into the invisible roamer, and a wild battle starts", 90)
+    fw.wait_frames(20)
     local battle_started = false
     for attempt = 1, 6 do
         fw.hold("DOWN", 30)

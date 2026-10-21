@@ -41,6 +41,14 @@
 --     gMultiUsePlayerCursor = 0xFF proves the menu really reopened.
 --     Water = NOT_VERY, Grass = SUPER.
 --
+-- MOMENTS (what a recording plays at normal speed; see MOMENTS in
+-- test/lib/framework.lua): one per sub-test, held on the FIGHT menu once
+-- its colours are checked (fw.show). A: Water green and Grass amber against
+-- Charmander. C: the cursor on Squirtle and the colours swapped. D: the
+-- cursor back on Charmander and the colours back with it. B: the reopened
+-- menu with Squirtle's colours. Everything between them fast-forwards, so
+-- in the video each change is a cut from one moment to the next.
+--
 -- HOW TO RUN:
 --   Headless: bash test/run_test.sh test/tests/test_type_effectiveness_colors.lua
 --   GUI:      Load in mgba-qt via Tools > Scripting > Load script
@@ -79,9 +87,6 @@ fw.run(function()
         return
     end
 
-    -- From here on the test is visual: run at real-time in the GUI so a
-    -- human watching can see the move menu colours change.
-    fw.slow_down("visual battle test — runs at real-time")
     fw.wait_frames(30)  -- let the move menu finish drawing
 
     -- ----------------------------------------------------------------
@@ -110,6 +115,7 @@ fw.run(function()
     fw.assert_eq(a1, ADDR.EFF_COLOR_NOT_VERY, "A: Grass move = not-very-effective vs Fire (slot 1)")
 
     fw.screenshot(fw.out_path("mgba-type-eff-sub-a.png"))
+    fw.show("A: Water green and Grass amber against Charmander")
 
     -- ----------------------------------------------------------------
     -- Sub-test C: real-time color update when cursor moves targets
@@ -148,6 +154,7 @@ fw.run(function()
     fw.assert_eq(c1, ADDR.EFF_COLOR_SUPER,    "C: Grass move = super-effective vs Water (slot 1)")
 
     fw.screenshot(fw.out_path("mgba-type-eff-sub-c.png"))
+    fw.show("C: LEFT to Squirtle, and the colours swap")
 
     -- ----------------------------------------------------------------
     -- Sub-test D: cancel, then pick a move again
@@ -178,6 +185,7 @@ fw.run(function()
     fw.assert_eq(d1, ADDR.EFF_COLOR_NOT_VERY, "D: Grass move = not-very-effective vs Fire again (slot 1)")
 
     fw.screenshot(fw.out_path("mgba-type-eff-sub-d.png"))
+    fw.show("D: B then A again, and the colours snap back to Charmander's")
 
     -- ----------------------------------------------------------------
     -- Sub-test B: absent-opponent fallback
@@ -216,6 +224,7 @@ fw.run(function()
     fw.assert_eq(b1, ADDR.EFF_COLOR_SUPER,    "B: Grass move = super-effective vs absent-left / Water-right (slot 1)")
 
     fw.screenshot(fw.out_path("mgba-type-eff-sub-b.png"))
+    fw.show("B: the reopened menu shows Squirtle's colours")
 
     fw.log("=== All sub-tests complete ===")
     fw.finish()
