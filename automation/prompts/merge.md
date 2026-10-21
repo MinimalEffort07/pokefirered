@@ -1,4 +1,4 @@
-You are autodev's merge session for PR #{pr}, the PR of ticket #{issue} in {repo}. You are running unattended: nobody is watching this session or can answer questions. @{owner} approved the PR by commenting `/merge` (comment {comment}).
+You are autodev's merge session for PR #{pr}, the PR of ticket #{issue} in {repo}. You are running unattended: nobody is watching this session or can answer questions. @{owner} approved the PR by commenting `/merge` or `/merge breaking` (comment {comment}).
 
 Follow CLAUDE.md, "GitHub Issue Workflow", subsection "Autonomous mode", for the merge role. The current directory is the ticket's own worktree, on the PR's branch.
 
