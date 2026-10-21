@@ -280,12 +280,18 @@ def has_marker(body, marker):
 #
 # A breaking change (CLAUDE.md, "Breaking changes") merges only on the
 # owner's exact "/merge breaking" (#139). The save format record catches a
-# change to how the save is laid out; the rest only a session can see, so
-# it declares them in a "## Breaking change" section.
+# change to how the save is laid out, and the saved-ID record a saved ID
+# that changed number or is gone; the rest only a session can see, so it
+# declares them in a "## Breaking change" section.
 
 # The save format, as agbcc lays it out (test/tools/save_format.py). Any
 # change to it is a breaking change.
 SAVE_FORMAT = "test/save_format.txt"
+
+# Every saved ID, one "NAME number" line each (test/tools/save_format.py).
+# A new ID only adds a line; a line removed is an ID renumbered or gone,
+# which is a breaking change (#142).
+SAVE_IDS = "test/save_ids.txt"
 
 # GitHub's compare lists at most this many of the files a branch changes,
 # so a list this long may not be all of them.
@@ -313,11 +319,21 @@ def changed_files(gh, repo, head):
 
 def record_change(files):
     """Why a branch whose changed_files are `files` is a breaking change by
-    the save format record, or "": it adds, changes, removes or renames
-    it."""
+    the records, or "": it adds, changes, removes or renames the save format
+    record, or it removes a line from the saved-ID record (GitHub counts
+    each file's "deletions"), removes it or renames it."""
+    files = files or []
     if any(f["filename"] == SAVE_FORMAT or f.get("previous_filename") == SAVE_FORMAT
-           for f in files or []):
+           for f in files):
         return "it changes `%s`" % SAVE_FORMAT
+    for f in files:
+        if f.get("previous_filename") == SAVE_IDS and f["filename"] != SAVE_IDS:
+            return "it removes a line from `%s`" % SAVE_IDS
+        if f["filename"] == SAVE_IDS:
+            if f.get("deletions") is None:
+                return "GitHub doesn't say whether it removes a line from `%s`" % SAVE_IDS
+            if f["deletions"]:
+                return "it removes a line from `%s`" % SAVE_IDS
     return ""
 
 
@@ -329,17 +345,18 @@ def has_breaking_section(text):
 
 def breaking_reason(config, files, body, said):
     """Why a ticket's PR is a breaking change, or "" if it isn't one: its
-    branch's `files` (changed_files) change the save format record, or
-    GitHub couldn't list them all, or its `body` or one of the bot's
-    replies or reviews among `said` (PrComment) has a "## Breaking change"
-    section. The owner's own comments don't count: only the PR's own words
-    do."""
+    branch's `files` (changed_files) are breaking by the records
+    (record_change), or GitHub couldn't list them all, or its `body` or one
+    of the bot's replies or reviews among `said` (PrComment) has a
+    "## Breaking change" section. The owner's own comments don't count:
+    only the PR's own words do."""
     reason = record_change(files)
     if reason:
         return reason
     if files is None or len(files) >= COMPARE_FILE_LIMIT:
         return ("GitHub can't list all of its changed files, so autodev can't "
-                "tell whether it changes `%s`" % SAVE_FORMAT)
+                "tell whether it changes `%s` or removes a line from `%s`"
+                % (SAVE_FORMAT, SAVE_IDS))
     if has_breaking_section(body):
         return "its body has a Breaking change section"
     if any(c.author == config.bot and has_breaking_section(c.body) for c in said):

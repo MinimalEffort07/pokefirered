@@ -164,8 +164,10 @@ NOTE_CHANGES = REPO + "/compare/master...issue-68-note"
 COMMIT_CHANGES = REPO + "/compare/master...abc123"
 
 
-def changes(*names):
-    return {"files": [{"filename": n, "status": "modified"} for n in names]}
+def changes(*files):
+    """A compare response listing `files`: names, or GitHub's own records."""
+    return {"files": [f if isinstance(f, dict) else {"filename": f, "status": "modified"}
+                      for f in files]}
 
 
 class OpeningPRs(unittest.TestCase):
@@ -209,6 +211,25 @@ class OpeningPRs(unittest.TestCase):
         with self.assertRaises(issue_tool.Refused):
             issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note", PR_BODY)
         self.assertEqual(gh.writes, [])
+
+    def test_C7_a_branch_that_removes_a_line_from_the_id_record_needs_the_section(self):
+        # A saved ID renumbered or gone is a breaking change (#142).
+        removes = {"filename": "test/save_ids.txt", "status": "modified",
+                   "additions": 1, "deletions": 1}
+        gh = FakeRest({NOTE_CHANGES: changes("include/constants/items.h", removes)})
+        with self.assertRaises(issue_tool.Refused) as refused:
+            issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note", PR_BODY)
+        self.assertIn("removes a line from `test/save_ids.txt`", str(refused.exception))
+        self.assertIn("\"## Breaking change\" section", str(refused.exception))
+        self.assertEqual(gh.writes, [])
+        body = PR_BODY.replace(WHAT_CHANGES, WHAT_CHANGES + BREAKING)
+        self.assertEqual(issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note",
+                                            body)["number"], 95)
+        # A new ID only adds a line: no section needed.
+        adds = dict(removes, deletions=0)
+        gh = FakeRest({NOTE_CHANGES: changes("include/constants/items.h", adds)})
+        self.assertEqual(issue_tool.open_pr(gh, CONFIG, 68, "T", "issue-68-note",
+                                            PR_BODY)["number"], 95)
 
     def test_B10_a_section_the_record_doesnt_flag_is_fine(self):
         # Some breaks only a session can see: a var's meaning, the link.

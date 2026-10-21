@@ -17,7 +17,7 @@ from autodev.gh import GhError
 from autodev.github import GitHub
 from autodev.registry import Registry
 from autodev.sessions import SessionConfig
-from tests.test_issue_tool import FakeRest, comment, issue, timeline
+from tests.test_issue_tool import FakeRest, changes, comment, issue, timeline
 
 CONFIG = Config(owner="MinimalEffort07", repo="MinimalEffort07/pokefirered",
                 board_title="pokefirered autodev", bot="MinimalEffort07-Autodev")
@@ -179,12 +179,6 @@ def pr(number, ref, author="MinimalEffort07-Autodev",
 COMPARE = "repos/MinimalEffort07/pokefirered/compare/master...abc123"
 
 
-def changes(*files):
-    """A compare response listing `files`: names, or GitHub's own records."""
-    return {"files": [f if isinstance(f, dict) else {"filename": f, "status": "modified"}
-                      for f in files]}
-
-
 NOTHING_BREAKS = {COMPARE: changes("automation/README.md")}
 
 
@@ -310,11 +304,45 @@ class BreakingPRs(unittest.TestCase):
             "test/tools/save_format.py", "test/tests/test_save_format.lua",
             {"filename": "test/save_format.txt.orig", "status": "added"})), "")
 
+    def test_C7_a_pr_that_removes_a_line_from_the_id_record_is_breaking(self):
+        # A recorded saved ID whose number changed, or that is gone, loses
+        # its line in test/save_ids.txt (#142); GitHub counts the lines a
+        # branch removes from each file.
+        ids = "test/save_ids.txt"
+        for change in [
+                # ITEM_POTION renumbered: its line goes, a new one comes.
+                {"filename": ids, "status": "modified", "additions": 1, "deletions": 1},
+                {"filename": ids, "status": "modified", "additions": 0, "deletions": 3},
+                {"filename": ids, "status": "removed", "additions": 0, "deletions": 4749},
+                # Moved away, the record no longer stands where it's checked.
+                {"filename": "test/old_ids.txt", "status": "renamed",
+                 "previous_filename": ids, "additions": 0, "deletions": 0}]:
+            with self.subTest(change=change):
+                self.assertEqual(self.breaking(changes("README.md", change)),
+                                 "it removes a line from `test/save_ids.txt`")
+        # Without GitHub's count, it can't tell, so it counts as breaking.
+        self.assertEqual(
+            self.breaking(changes({"filename": ids, "status": "modified"})),
+            "GitHub doesn't say whether it removes a line from `test/save_ids.txt`")
+
+    def test_C7_a_pr_that_only_adds_lines_to_the_id_record_breaks_nothing(self):
+        # A new ID only adds a line, and isn't a breaking change.
+        for change in [
+                {"filename": "test/save_ids.txt", "status": "modified",
+                 "additions": 2, "deletions": 0},
+                # The PR that first adds the record.
+                {"filename": "test/save_ids.txt", "status": "added",
+                 "additions": 4749, "deletions": 0}]:
+            with self.subTest(change=change):
+                self.assertEqual(self.breaking(changes("include/constants/items.h",
+                                                       change)), "")
+
     def test_a_pr_whose_files_github_cant_all_list_is_breaking(self):
         # The compare lists at most 300 files, so 300 may not be all.
         many = ["src/file_%d.c" % n for n in range(300)]
         cant_tell = ("GitHub can't list all of its changed files, so autodev "
-                     "can't tell whether it changes `test/save_format.txt`")
+                     "can't tell whether it changes `test/save_format.txt` or "
+                     "removes a line from `test/save_ids.txt`")
         for compare in (changes(*many), {"files": None}, {}):
             with self.subTest(files=len(compare.get("files") or [])):
                 self.assertEqual(self.breaking(compare), cant_tell)
