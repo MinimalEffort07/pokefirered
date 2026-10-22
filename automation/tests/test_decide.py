@@ -279,6 +279,90 @@ class FinishedGrills(unittest.TestCase):
                 ])
 
 
+class BreakingDesigns(unittest.TestCase):
+    """#143: a design that is a breaking change waits in Paused for the
+    owner before any of its tickets start. #143 numbers its scenarios D1 to
+    D5, so these tests say 143 to tell them from #48's."""
+
+    # #70 is on the board and nothing blocks it; #71 isn't on the board yet,
+    # and waits on an open issue.
+    TICKETS = [
+        Ticket(70, linked=True, on_board=True, status="Todo", open_blockers=False),
+        Ticket(71, linked=False, on_board=False, status=None, open_blockers=True),
+    ]
+    HELD = Comment(61, (
+        "@MinimalEffort07 the design for #61 is a breaking change (see its "
+        "Breaking change section), so its tickets wait. Move the card to "
+        "`Todo` to approve it and start them. To change the plan, edit or "
+        "close its tickets first.\n\n<!-- autodev -->"))
+
+    def run_finished(self, breaking, parent_status="Grilling"):
+        # The grill has just ended. The board added #70's card as the grill
+        # created it, so it sits in Todo, ready to launch.
+        return decide(State(
+            owner=OWNER, bot=BOT,
+            items=[item(61, status=parent_status), ticket(70, "Todo", parent=61)],
+            sessions=[finished_grill({"outcome": "done"})],
+            outcomes={61: GrillOutcome(design_comment=True, tickets=self.TICKETS,
+                                       breaking=breaking)},
+            resume_command=RESUME))
+
+    def test_143_D2_a_breaking_design_waits_in_paused_for_the_owner(self):
+        # The tickets are placed as for any design, but the parent waits in
+        # Paused, not In progress, and #70 doesn't start. Status first, so
+        # a retry never comments twice.
+        self.assertEqual(self.run_finished(breaking=True), [
+            LinkSubIssue(61, 71),
+            PlaceOnBoard(71, "Blocked"),
+            SetStatus(61, "Paused"),
+            self.HELD,
+            Finish("grill", 61),
+        ])
+
+    def test_143_its_tickets_wait_even_if_the_card_never_said_grilling(self):
+        # Moving the card to Grilling failed when the grill launched, so it
+        # still says Todo as the grill ends. Its grill session still holds
+        # #70 back on that tick, before the card is Paused.
+        self.assertEqual(self.run_finished(breaking=True, parent_status="Todo"), [
+            LinkSubIssue(61, 71),
+            PlaceOnBoard(71, "Blocked"),
+            SetStatus(61, "Paused"),
+            self.HELD,
+            Finish("grill", 61),
+        ])
+
+    def test_143_D3_moving_the_held_parent_to_todo_approves_it(self):
+        # While the parent waits in Paused, neither ticket starts. Moved to
+        # Todo, it goes to In progress without a second grill (D8), and the
+        # ticket nothing blocks starts on that tick; #71 still waits on #55.
+        tickets = [ticket(70, "Todo", parent=61),
+                   ticket(71, "Blocked", parent=61, blocked_by=[55])]
+        self.assertEqual(decide(state([item(61, status="Paused")] + tickets)), [])
+        self.assertEqual(decide(state([item(61, status="Todo")] + tickets)), [
+            SetStatus(61, "In progress"),
+            MakeWorktree(70, "issue-70-do-the-thing"),
+            Launch("ticket", 70), SetStatus(70, "In progress"),
+        ])
+
+    def test_143_D4_a_design_without_the_marker_goes_to_in_progress(self):
+        self.assertEqual(self.run_finished(breaking=False), [
+            LinkSubIssue(61, 71),
+            PlaceOnBoard(71, "Blocked"),
+            SetStatus(61, "In progress"),
+            Finish("grill", 61),
+        ])
+
+    def test_143_D5_a_breaking_design_the_owner_paused_while_grilling_stays_paused(self):
+        # Its card is Paused already, so no Status is set at all, and the
+        # comment still says what Todo will mean.
+        self.assertEqual(self.run_finished(breaking=True, parent_status="Paused"), [
+            LinkSubIssue(61, 71),
+            PlaceOnBoard(71, "Blocked"),
+            self.HELD,
+            Finish("grill", 61),
+        ])
+
+
 def finished_ticket(result, ended_by="success"):
     return Session("ticket", 68, "sid-68", running=False, result=result,
                    ended_by=ended_by, cwd="/clone-worktrees/issue-68")

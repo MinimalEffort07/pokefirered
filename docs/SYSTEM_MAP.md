@@ -56,7 +56,7 @@ Read it top to bottom; each column is one actor. The dispatcher never does the w
 **Where you come in:**
 
 1. Write an issue and add it to the **pokefirered autodev** board.
-2. Skim the design comment the grill session posts, starting with its **Least-confident defaults** list. Set the card to `Paused` if you want to stop work and rethink.
+2. Skim the design comment the grill session posts, starting with its **Least-confident defaults** list. Set the card to `Paused` if you want to stop work and rethink. A breaking design (one with a **Breaking change** section) waits in `Paused` for you, and the bot @mentions you: read that section, then move the card to `Todo` to approve it and start its tickets, or edit or close its tickets first to change the plan.
 3. Review each PR: the diff, its **What changes for you** section, its **Breaking change** section when it has one (what stops working, what happens to old saves, what you should do: CLAUDE.md, "Breaking changes"), the recording link (only when the game changed) and the branch README.
 4. Comment exactly `/merge` to approve it. A breaking change (it changes `test/save_format.txt`, removes a line from `test/save_ids.txt`, or the PR or a bot reply has a Breaking change section) merges only on exactly `/merge breaking`; a plain `/merge` on one gets a reply saying why. Any other comment is feedback, and a fix-up session handles it.
 5. Rescue anything in `Needs human`. The bot's comment says what went wrong and ends with a command that reopens that session where it stopped.
@@ -74,6 +74,7 @@ flowchart LR
   subgraph parent["Parent issue: yours"]
     direction LR
     PT["Todo"] -->|next tick| PG["Grilling<br/>grill, 60 min"] -->|tickets made| PI["In progress<br/>tickets in flight"] -->|every ticket closed| PD["Done"]
+    PG -->|"tickets made,<br/>breaking design"| PP["Paused<br/>waits for you"] -->|you move it to Todo| PI
   end
   subgraph ticket["Ticket: written by the grill"]
     direction LR
@@ -90,12 +91,13 @@ flowchart LR
   TF -.-> NH
   NH -.->|back once its PR is open| TR
   classDef owner stroke:#c22a35,stroke-width:2px
-  class TR owner
+  class TR,PP owner
 ```
 
-A parent you write is grilled into tickets. Each ticket waits for its blockers, gets its own session, and ends in a PR that waits for you in `In review`. Feedback starts a fix-up; `/merge` starts a merge (on a breaking change, only `/merge breaking` does). Any session that fails or hits its time limit, a grill included, parks its card in `Needs human`. The rules are in `automation/autodev/decide.py`.
+A parent you write is grilled into tickets; a breaking design's parent waits in `Paused` until you approve it. Each ticket waits for its blockers, gets its own session, and ends in a PR that waits for you in `In review`. Feedback starts a fix-up; `/merge` starts a merge (on a breaking change, only `/merge breaking` does). Any session that fails or hits its time limit, a grill included, parks its card in `Needs human`. The rules are in `automation/autodev/decide.py`.
 
 - **`Paused` is your stop switch.** Nothing new starts for that card, or for any ticket of a paused parent. A session already running finishes its run. Move the card back to `Todo` to carry on: a parent with tickets isn't grilled again, and a ticket with an open PR goes straight to review.
+- **A breaking design waits in `Paused`.** When the bot's design comment carries the hidden `<!-- autodev:breaking -->` marker (CLAUDE.md, "Autonomous mode", grill role), the dispatcher places the tickets as usual but moves the parent to `Paused` instead of `In progress`, and @mentions you. Moving it to `Todo` approves the design: it goes to `In progress` and its unblocked tickets start. Each of its PRs that is itself a breaking change still merges only on `/merge breaking`.
 - **Usage limit.** When a session hits the Claude usage limit, no session of any kind starts until 5 minutes after the reset, and the interrupted work is queued again.
 - **Crashes.** The first crash re-queues the work. A second crash in a row for the same role and issue parks it in `Needs human`.
 - **Closing a ticket yourself** counts as done: its worktree is removed and the tickets it blocked move on.
@@ -163,9 +165,9 @@ Each script, by its path from the repo root. `test/tests/test_system_map.lua` ch
 | `automation/config.json` | Names and paths: owner, bot, board title, the 2-session cap, model, clone, log and state folders. |
 | `automation/autodev/__main__.py` | The entry point the timer runs: `python3 -m autodev tick`. |
 | `automation/autodev/dispatcher.py` | **One tick.** Restarts the recordings page if a merge changed it (`automation/autodev/recordings.py`), then gathers the board, each open parent's tickets among its sub-issues, and what finished sessions left on GitHub, asks `automation/autodev/decide.py` what to do, carries it out, logs it to the journal. |
-| `automation/autodev/decide.py` | **The rules,** as one pure function: state in, list of actions out. Priority, blocking, `/merge` and `/merge breaking`, crashes and usage limits all live here. |
+| `automation/autodev/decide.py` | **The rules,** as one pure function: state in, list of actions out. Priority, blocking, holding a breaking design in `Paused`, `/merge` and `/merge breaking`, crashes and usage limits all live here. |
 | `automation/autodev/board.py` | Reads the Projects board through GitHub's GraphQL API. |
-| `automation/autodev/github.py` | Carries out actions on GitHub, lists which of a parent's sub-issues are its tickets, checks whether a finished session really left its design, tickets, PR or reply, and says whether a ticket's PR is a breaking change, and why. |
+| `automation/autodev/github.py` | Carries out actions on GitHub, lists which of a parent's sub-issues are its tickets, checks whether a finished session really left its design (and whether that design is a breaking change), tickets, PR or reply, and says whether a ticket's PR is a breaking change, and why. |
 | `automation/autodev/gh.py` | The GitHub adapter: runs `gh api` as a subprocess, with the bot's token. |
 | `automation/autodev/sessions.py` | Starts each `claude -p` run in its own systemd unit with the role's time limit and effort, then reads back its result and any usage-limit message. |
 | `automation/autodev/registry.py` | The dispatcher's memory between ticks: which sessions it started, crash counts, the usage-limit pause. |

@@ -23,7 +23,9 @@ IN_PROGRESS = "In progress"
 IN_REVIEW = "In review"
 NEEDS_HUMAN = "Needs human"
 DONE = "Done"
-PAUSED = "Paused"           # the owner's stop switch (#48, "Board")
+# The owner's stop switch (#48, "Board"), and where a breaking design waits
+# for the owner's approval (#143).
+PAUSED = "Paused"
 
 
 # ── What the dispatcher knows ─────────────────────────────────────────────
@@ -64,6 +66,9 @@ class GrillOutcome:
     """What GitHub shows on a parent after its grill session ended."""
     design_comment: bool    # the bot posted the design comment
     tickets: list           # Ticket for each ticket the session reported
+    # The design comment marks the design a breaking change (#143), so its
+    # parent waits in Paused for the owner's approval.
+    breaking: bool = False
 
 
 @dataclass(frozen=True)
@@ -254,9 +259,13 @@ def plan(state):
     # A paused parent stops all of its tickets from starting (a paused
     # ticket stops itself, since nothing starts from Paused). So does one
     # still being grilled: the board adds each ticket as the grill creates
-    # it, before the grill has finished.
+    # it, before the grill has finished. Its grill session holds them until
+    # it is finished with, whatever the card says, so a breaking design's
+    # tickets can't start on the tick it ends, before its parent is Paused
+    # (#143).
     held = {i.number for i in state.items if i.status in (PAUSED, GRILLING)
             or (i.status == TODO and ("grill", i.number) in state.requeued)}
+    held |= {s.issue for s in state.sessions if s.role == "grill"}
     places = _places(state)
     # (priority, group) for each group that launches a session, or holds a
     # slot for one
@@ -737,8 +746,25 @@ def _grill_done(state, session, outcome):
     if not outcome.tickets:
         return ("the grill session said it was done, but GitHub shows no "
                 "tickets"), []
-    return None, (_place_tickets(session.issue, outcome.tickets)
-                  + [SetStatus(session.issue, IN_PROGRESS)])
+    parent = session.issue
+    placed = _place_tickets(parent, outcome.tickets)
+    if outcome.breaking:
+        # A breaking design waits for the owner before any ticket starts
+        # (#143): a paused parent holds its tickets, and moving it to Todo
+        # is the usual resume (D8). Status first, so a retry of this group
+        # never posts the comment twice.
+        return None, placed + [SetStatus(parent, PAUSED),
+                               Comment(parent, _breaking_hold(state, parent))]
+    return None, placed + [SetStatus(parent, IN_PROGRESS)]
+
+
+def _breaking_hold(state, parent):
+    """The comment on a parent whose design is a breaking change."""
+    return _bot_comment(
+        "@%s the design for #%d is a breaking change (see its Breaking change "
+        "section), so its tickets wait. Move the card to `Todo` to approve it "
+        "and start them. To change the plan, edit or close its tickets first."
+        % (state.owner, parent))
 
 
 def _ticket_done(state, session, outcome):

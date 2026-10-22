@@ -51,6 +51,40 @@ class DesignComment(unittest.TestCase):
                                   ISSUES + "/61/sub_issues": []}, [])
                 self.assertEqual(result.design_comment, expected)
 
+    def test_143_D1_only_the_bots_design_comment_can_mark_it_breaking(self):
+        # #143: a breaking design holds its parent in Paused, so the marker
+        # counts only where the grill puts it, next to the design marker.
+        breaking = ("Design...\n## Breaking change\n\nOld saves stop loading.\n"
+                    "<!-- autodev:design -->\n<!-- autodev:breaking -->\n\n"
+                    "<!-- autodev -->")
+        for comments, expected in [
+            ([comment("MinimalEffort07-Autodev", breaking)], True),
+            ([comment("MinimalEffort07-Autodev", DESIGN)], False),
+            ([], False),
+            # The marker in another of the bot's comments, or in someone
+            # else's comment beside the bot's design, doesn't count.
+            ([comment("MinimalEffort07-Autodev", DESIGN),
+              comment("MinimalEffort07-Autodev",
+                      "A note.\n<!-- autodev:breaking -->\n\n<!-- autodev -->")], False),
+            ([comment("MinimalEffort07-Autodev", DESIGN),
+              comment("MinimalEffort07", breaking)], False),
+            ([comment("someone-else", breaking)], False),
+            # A design that only writes the marker in code, as #139's did
+            # when describing it, shows it as text: it isn't the marker.
+            ([comment("MinimalEffort07-Autodev",
+                      "The hidden marker `<!-- autodev:breaking -->`.\n"
+                      "<!-- autodev:design -->\n\n<!-- autodev -->")], False),
+            # A stray backtick earlier on can't hide the real marker by
+            # pairing with one after it: in doubt, the design is held.
+            ([comment("MinimalEffort07-Autodev",
+                      "Run `make.\n<!-- autodev:design -->\n<!-- autodev:breaking -->"
+                      "\nThen `make check`.\n\n<!-- autodev -->")], True),
+        ]:
+            with self.subTest(comments=comments):
+                result = outcome({ISSUES + "/61/comments": comments,
+                                  ISSUES + "/61/sub_issues": []}, [])
+                self.assertEqual(result.breaking, expected)
+
 
 class Tickets(unittest.TestCase):
     def test_reported_and_linked_issues_are_checked_against_their_parent(self):
